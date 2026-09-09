@@ -87,9 +87,11 @@ type JobRecord struct {
 // charging twice. That property is what makes durable retry the right
 // answer here instead of a compensating write.
 type PendingDebit struct {
-	Sender   []byte `json:"sender"`
-	WorkID   string `json:"work_id"`
-	DebitSeq uint64 `json:"debit_seq"`
+	AccountAuthorization bool   `json:"account_authorization,omitempty"`
+	AuthorizationBytes   []byte `json:"authorization_bytes,omitempty"`
+	Sender               []byte `json:"sender"`
+	WorkID               string `json:"work_id"`
+	DebitSeq             uint64 `json:"debit_seq"`
 	// Units is the amount THIS debit is for — the final flush, which on
 	// a long exchange is less than the exchange's total.
 	Units uint64 `json:"units"`
@@ -108,7 +110,11 @@ type PendingDebit struct {
 	// still outstanding.
 	PaymentBytes      []byte `json:"payment_bytes,omitempty"`
 	FundedValueWei    string `json:"funded_value_wei,omitempty"`
+	ReservedValueWei  string `json:"reserved_value_wei,omitempty"`
+	AccountFundingWei string `json:"account_funding_wei,omitempty"`
+	AccountVersion    uint64 `json:"account_version,omitempty"`
 	ActualUnits       uint64 `json:"actual_units"`
+	MeasuredUnits     uint64 `json:"measured_units,omitempty"`
 	WorkUnitName      string `json:"work_unit_name,omitempty"`
 	TerminationReason string `json:"termination_reason,omitempty"`
 	JobID             string `json:"job_id,omitempty"`
@@ -465,6 +471,18 @@ func (s *Store) SettleJob(requestID, settlement string) error {
 		rec.State = JobTerminal
 		rec.Settlement = settlement
 		rec.Pending = nil
+		if rec.EndedAt.IsZero() {
+			rec.EndedAt = time.Now().UTC()
+		}
+		return nil
+	})
+}
+
+// SettleJobWithUnits closes pending accounting and replaces the provisional
+// "units accepted so far" value with the terminal ledger-accepted total.
+func (s *Store) SettleJobWithUnits(requestID string, units uint64, settlement string) error {
+	return s.mutateJob(requestID, func(rec *JobRecord) error {
+		rec.State, rec.WorkUnits, rec.Settlement, rec.Pending = JobTerminal, units, settlement, nil
 		if rec.EndedAt.IsZero() {
 			rec.EndedAt = time.Now().UTC()
 		}

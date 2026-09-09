@@ -48,8 +48,45 @@ type fakePayment struct {
 	// pricing reads the offering under test at call time, so a test that
 	// changes the price after the harness is built still gets a fake
 	// that bills the way the real ledger would.
-	pricing      func() (*big.Int, uint64)
-	debitedUnits uint64
+	pricing         func() (*big.Int, uint64)
+	debitedUnits    uint64
+	accountAdvances []payment.AdvanceAuthorizationRequest
+	accountSettles  []payment.SettleAuthorizationRequest
+}
+
+func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
+	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
+}
+
+func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(req.AuthorizationBytes, &auth); err != nil || auth.GetPayload() == nil {
+		return nil, errors.New("bad authorization")
+	}
+	payer := append([]byte(nil), auth.GetPayload().GetPayer()...)
+	reserved := new(big.Int)
+	if req.Reservation != nil {
+		reserved.Set(req.Reservation)
+	}
+	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
+}
+func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accountAdvances = append(f.accountAdvances, req)
+	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: big.NewInt(30), CumulativeBilled: big.NewInt(30), Reserved: new(big.Int).Set(req.TargetReserved)}, nil
+}
+func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.accountSettles = append(f.accountSettles, req)
+	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(970)}, Billed: big.NewInt(30), Released: big.NewInt(20)}, nil
+}
+func (f *fakePayment) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
+	return &payment.WholesaleAccount{Available: big.NewInt(1000)}, nil
+}
+func (f *fakePayment) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+	return nil, nil
 }
 
 func newFakePayment() *fakePayment {
@@ -337,6 +374,56 @@ func TestOpenHappyPath(t *testing.T) {
 	}
 	if rec.WorkID == "" || rec.RunnerSessionID != "rns_1" {
 		t.Fatalf("binding incomplete: %+v", rec)
+	}
+}
+
+func TestAccountBackedSessionUsesBoundedRunwayAndSettles(t *testing.T) {
+	h := newHarness(t)
+	payer, payee := bytes.Repeat([]byte{0x11}, 20), bytes.Repeat([]byte{0x22}, 20)
+	payload := &pb.SpendAuthorizationPayload{
+		AuthorizationId: "auth-session-1", RequestId: "req-account-1", SessionId: "gws-account-1",
+		Payer: payer, Payee: payee, Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
+		MaxDebitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: 100,
+	}
+	wire, err := proto.Marshal(&pb.SpendAuthorization{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	opened, err := h.engine.Open(context.Background(), OpenRequest{
+		RequestID: "req-account-1", GatewaySessionID: "gws-account-1",
+		SessionParams: json.RawMessage(`{"room_hint":"account"}`), AuthorizationBytes: wire,
+		InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "cap-account",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.store.Get(opened.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.AccountAuthorizationID != "auth-session-1" || rec.AuthorizationReservedWei != "50" || h.pay.openCalls != 0 {
+		t.Fatalf("account session binding=%+v legacy_open_calls=%d", rec, h.pay.openCalls)
+	}
+	if _, err := h.engine.ProcessEvent(context.Background(), opened.SessionID, usageEvent("account-tick-1", 1, 3)); err != nil {
+		t.Fatal(err)
+	}
+	if len(h.pay.accountAdvances) != 1 || h.pay.accountAdvances[0].CumulativeUnits != 3 || h.pay.accountAdvances[0].TargetReserved.Cmp(big.NewInt(50)) != 0 {
+		t.Fatalf("account advances=%+v", h.pay.accountAdvances)
+	}
+	over := uint64(120)
+	outcome, err := h.engine.ProcessEvent(context.Background(), opened.SessionID, Event{EventID: "account-tick-cap", Sequence: 2, EventType: "session.usage.tick", UsageUnit: "participant_minutes", UsageTot: &over})
+	if err != nil || !outcome.Terminal {
+		t.Fatalf("cap-crossing event outcome=%+v err=%v", outcome, err)
+	}
+	if len(h.pay.accountAdvances) != 2 || h.pay.accountAdvances[1].CumulativeUnits != 100 || h.pay.accountAdvances[1].TargetReserved.Sign() != 0 {
+		t.Fatalf("cap-crossing advance=%+v", h.pay.accountAdvances)
+	}
+	if len(h.pay.accountSettles) != 1 || h.pay.accountSettles[0].AuthorizationID != "auth-session-1" || h.pay.accountSettles[0].ActualUnits != 100 {
+		t.Fatalf("account settlements=%+v", h.pay.accountSettles)
+	}
+	rec, err = h.store.Get(opened.SessionID)
+	if err != nil || rec.CloseReason != ReasonAuthorizationExhausted {
+		t.Fatalf("closed session=%+v err=%v", rec, err)
 	}
 }
 

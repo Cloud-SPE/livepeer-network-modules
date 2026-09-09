@@ -82,7 +82,7 @@ func (s *Store) HasJobRecord(requestID string) (bool, string, error) {
 const nonAdmissionBucket = "non_admissions"
 
 // RecordNonAdmission durably stores a signed non-admission record for a
-// request id, and refuses if any job record exists.
+// request id, and refuses if any job or session admission state exists.
 //
 // The check and the write are ONE transaction on purpose. Checking then
 // signing leaves a window in which an exchange is admitted between the
@@ -107,6 +107,11 @@ func (s *Store) RecordNonAdmission(requestID, envelope string, observedAt time.T
 		jobs := tx.Bucket([]byte(jobsBucket))
 		if jobs != nil && jobs.Get([]byte(requestID)) != nil {
 			return ErrExists
+		}
+		for _, bucket := range []string{openReservationsBucket, openRequestsBucket, admittedBucket} {
+			if b := tx.Bucket([]byte(bucket)); b != nil && b.Get([]byte(requestID)) != nil {
+				return ErrExists
+			}
 		}
 		b, err := tx.CreateBucketIfNotExists([]byte(nonAdmissionBucket))
 		if err != nil {

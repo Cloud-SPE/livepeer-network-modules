@@ -11,7 +11,9 @@ var protocolTagRE = regexp.MustCompile(`^[a-z][a-z0-9-]*/v[0-9]+$`)
 
 // Headers validates the required Livepeer-* request headers per
 // livepeer-network-protocol/headers/livepeer-headers.md (v1):
-// Capability, Offering, Payment, Protocol, and Request-Id.
+// Capability, Offering, Protocol, Request-Id, and exactly one payment mode:
+// legacy Livepeer-Payment or account-backed Livepeer-Authorization (with an
+// optional Livepeer-Payment top-up).
 //
 // Missing headers → 400 with a descriptive message body.
 // Protocol malformed → 505 + Livepeer-Error: protocol_unsupported.
@@ -23,13 +25,16 @@ func Headers(next http.Handler) http.Handler {
 		for _, h := range []string{
 			livepeerheader.Capability,
 			livepeerheader.Offering,
-			livepeerheader.Payment,
 			livepeerheader.RequestID,
 		} {
 			if r.Header.Get(h) == "" {
 				livepeerheader.WriteBadRequest(w, "missing required header: "+h)
 				return
 			}
+		}
+		if r.Header.Get(livepeerheader.Payment) == "" && r.Header.Get(livepeerheader.Authorization) == "" {
+			livepeerheader.WriteBadRequest(w, "missing required payment mode: "+livepeerheader.Payment+" or "+livepeerheader.Authorization)
+			return
 		}
 		proto := r.Header.Get(livepeerheader.Protocol)
 		if proto == "" {

@@ -1,8 +1,8 @@
 ---
 spec_name: paid-job
-version: 1.0.15-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-08-18
+last_updated: 2026-09-08
 ---
 
 # Protocol: `paid-job/v1`
@@ -61,7 +61,14 @@ Required headers:
 | `Livepeer-Capability` | Capability id. |
 | `Livepeer-Offering` | Offering id. |
 | `Livepeer-Request-Id` | UUID. The idempotency key (§4). |
-| `Livepeer-Payment` | Base64 payment envelope. |
+| `Livepeer-Payment` | Base64 funding tickets. Required on the legacy path; optional shortfall funding when `Livepeer-Authorization` is present. |
+| `Livepeer-Authorization` | Single-purpose spend authorization for the wholesale-account path. |
+
+An account-authorized job follows
+[`wholesale-account.md`](./wholesale-account.md). The broker atomically admits
+and reserves the authorization before forwarding. Its request ID, route,
+quote, maximum, and request digest are part of the authorization scope. A
+legacy payment-only job retains the v1 behavior below during migration.
 
 The body is the workload payload, passed to the backend verbatim. The broker
 MUST NOT interpret or rewrite it; capability-specific concerns (model ids,
@@ -407,6 +414,14 @@ assertion, not on a broker's refusal — a broker that received the
 envelope can retain and submit it later, so its refusal describes its own
 intentions — and not on a non-admission record.
 
+This paragraph governs the legacy ticket-session envelope. In negotiated
+wholesale-account mode, the payer-signed authorization *does* bind the request
+id and expires irrevocably; after that expiry, a signed non-admission record
+for the same request id is sufficient to release the payer application's
+authorization hold because no reusable account value moved merely by issuing
+the authorization. It does not refund a ticket: any optional ticket already
+accepted remains reusable credit in the stable payer-payee account.
+
 The last of those is the one worth spelling out, because it is the case
 that looks closed and is not. `Livepeer-Request-Id` is **not
 cryptographically bound into `payment_bytes`**: the signed envelope
@@ -628,6 +643,7 @@ Executable fixtures every broker implementation MUST pass:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-09-09 | Adds the negotiated wholesale-account path: one exact job authorization reserves reusable payer-payee credit, an optional payment funds only account shortfall, and actual settlement releases the remainder. Legacy payment-only v1 remains available before each payer crosses the migration fence. |
 | 1.0.15-draft | 2026-08-21 | §5.3.0: `SETTLED` MUST require an original signed settlement and not merely a terminal state — a crash leftover closed out at its deadline was reported as SETTLED with a zero status, telling a consumer the exchange cost nothing. Adds `ADMITTED_OUTCOME_UNKNOWN` and `ADMITTED_EVIDENCE_EXPIRED` to the normative table, distinguishes the three ways of being admitted without a settlement, and states that status codes are per surface while the outcome body is the contract. Also: crash leftovers close on their own deadline rather than the retention cutoff, which had left short-deadline jobs in flight for the whole retention window. Raised by LOC. |
 | 1.0.14-draft | 2026-08-21 | §5.3.1 corrected: non-admission is audit and dispute evidence, never refund authority, and the instruction to act on it after expiry is removed — both contradicted §5.3. Retention restated as an OPERATIONAL rule (conservative-charge deadline + consumer outage window + margin); deriving it from maximum envelope spendable life was not implementable, since governance can revive tickets and that quantity has no finite bound. Adds per-evidence retention clocks, forbids evicting in-flight and accounting-pending records as terminal, and requires the FACT of admission to outlive the detailed record — otherwise eviction manufactures false non-admission evidence. Raised by LOC and the OpenAI gateway team. |
 | 1.0.13-draft | 2026-08-21 | Add §5.3.0: `GET /v1/exchange/{request_id}` returns an exchange's outcome keyed on the id the CONSUMER issued — settled with the original signed settlement, accounting-pending or in-flight with a stable polling identity, a durable non-admission, or NO_RECORD. Every other lookup was keyed on something the customer holds, so a customer that withheld the settlement could force a conservative full charge the broker had evidence against. The non-admission endpoint now returns the outcome on conflict rather than a bare 409. Raised by LOC. |

@@ -181,6 +181,64 @@ func TestCreatePayment_HappyPath(t *testing.T) {
 	}
 }
 
+func TestCreateSpendAuthorizationIsDurablyIdempotentAndScopeBound(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+	now := time.Now().UTC()
+	req := &pb.CreateSpendAuthorizationRequest{
+		Payee: bytes.Repeat([]byte{0x22}, 20), AuthorizationId: "authorization-1", RequestId: "request-1",
+		Protocol: "paid-job/v1", BrokerUri: "https://broker.example/",
+		ChainId: 42161, Denomination: "wei",
+		AcceptedPrice: baseAcceptedPrice("custom:any", "offer", "widgets", 10, 1),
+		MaxDebitWei:   &pb.BigUInt{Value: big.NewInt(100).Bytes()}, MaxTotalUnits: 10,
+		NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano),
+		RequestDigest: bytes.Repeat([]byte{0x44}, 32),
+	}
+	first, err := client.CreateSpendAuthorization(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := client.CreateSpendAuthorization(context.Background(), proto.Clone(req).(*pb.CreateSpendAuthorizationRequest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first.GetAuthorizationBytes(), second.GetAuthorizationBytes()) {
+		t.Fatal("idempotent authorization replay changed wire bytes")
+	}
+	changed := proto.Clone(req).(*pb.CreateSpendAuthorizationRequest)
+	changed.MaxTotalUnits = 9
+	if _, err := client.CreateSpendAuthorization(context.Background(), changed); status.Code(err) != codes.AlreadyExists {
+		t.Fatalf("changed scope error=%v", err)
+	}
+}
+
+func TestCreatePaymentFundsOnlyAccountShortfall(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+	req := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 999, "https://broker.example")
+	req.AccountFunding = &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(70).Bytes()}}
+	res, err := client.CreatePayment(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := new(big.Int).SetBytes(res.GetAccountShortfallWei().GetValue()); got.Int64() != 30 {
+		t.Fatalf("shortfall=%s", got)
+	}
+	if got := new(big.Int).SetBytes(res.GetFundedValueWei().GetValue()); got.Int64() != 30 {
+		t.Fatalf("funded=%s", got)
+	}
+
+	zero := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 999, "https://broker.example")
+	zero.AccountFunding = &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}}
+	res, err = client.CreatePayment(context.Background(), zero)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.GetPaymentBytes()) != 0 || res.GetTicketsCreated() != 0 {
+		t.Fatalf("zero shortfall minted payment: %+v", res)
+	}
+}
+
 func TestCreatePayment_NonceAdvances(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()

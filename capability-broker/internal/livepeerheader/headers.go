@@ -12,6 +12,13 @@ const (
 	Capability = "Livepeer-Capability"
 	Offering   = "Livepeer-Offering"
 	Payment    = "Livepeer-Payment"
+	// Authorization is a payer-signed, single-purpose reservation for
+	// exactly this job or logical session. When present Payment is an
+	// optional account top-up rather than a per-invocation requirement.
+	Authorization = "Livepeer-Authorization"
+	// CallerProof proves possession of the optional caller_public_key in a
+	// spend authorization; it never substitutes for the payer signature.
+	CallerProof = "Livepeer-Caller-Proof"
 	// Protocol carries the protocol tag, e.g. "paid-job/v1". Replaces
 	// the pre-v1 Livepeer-Mode + Livepeer-Spec-Version pair.
 	Protocol = "Livepeer-Protocol"

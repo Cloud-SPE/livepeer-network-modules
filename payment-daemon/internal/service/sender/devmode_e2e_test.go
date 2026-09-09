@@ -2,6 +2,7 @@ package sender_test
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -101,6 +102,91 @@ func TestDevModeSenderAndReceiverExchangeAPayment(t *testing.T) {
 	}
 	if len(pend) != 1 {
 		t.Fatalf("pending redemptions = %d; want 1", len(pend))
+	}
+}
+
+// This is the cross-component economic invariant: a ticket funds the stable
+// payer-payee account once, two unrelated single-purpose jobs draw actual
+// usage from it, and the second job needs no replacement ticket.
+func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
+	recipient := bytes20(0xd1)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	mintReq := devModeCreateRequest(recipient, "account-float-1", baseURL)
+	mintReq.AccountFunding = &pb.AccountFundingIntent{
+		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100_000).Bytes()},
+		ObservedAvailableWei: &pb.BigUInt{},
+	}
+	minted, err := payer.CreatePayment(ctx, mintReq)
+	if err != nil {
+		t.Fatalf("mint account shortfall: %v", err)
+	}
+	if new(big.Int).SetBytes(minted.GetAccountShortfallWei().GetValue()).Int64() != 100_000 {
+		t.Fatalf("shortfall=%s", new(big.Int).SetBytes(minted.GetAccountShortfallWei().GetValue()))
+	}
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{WorkId: minted.GetWorkId(), Capability: "openai:chat-completions", Offering: "model-a", PricePerWorkUnitWei: big.NewInt(1000).Bytes(), PerUnits: 1, WorkUnit: "tokens"}); err != nil {
+		t.Fatalf("price funding generation: %v", err)
+	}
+	funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+	if err != nil || new(big.Int).SetBytes(funded.GetCreditedValueWei().GetValue()).Sign() <= 0 {
+		t.Fatalf("fund stable account: result=%+v err=%v", funded, err)
+	}
+	fundingReplay, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+	if err != nil || !fundingReplay.GetReplayed() || new(big.Int).SetBytes(fundingReplay.GetCreditedValueWei().GetValue()).Sign() != 0 {
+		t.Fatalf("funding replay=%+v err=%v", fundingReplay, err)
+	}
+
+	makeAuth := func(id string, maxUnits uint64) []byte {
+		t.Helper()
+		now := time.Now().UTC()
+		bodyDigest := sha256.Sum256([]byte("exact-job-body"))
+		res, err := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{
+			Payee: recipient, AuthorizationId: id, RequestId: "request-" + id,
+			Protocol: "paid-job/v1", AcceptedPrice: proto.Clone(mintReq.GetAcceptedPrice()).(*pb.AcceptedPrice),
+			MaxDebitWei:   &pb.BigUInt{Value: new(big.Int).Mul(big.NewInt(1000), new(big.Int).SetUint64(maxUnits)).Bytes()},
+			MaxTotalUnits: maxUnits, NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano),
+			ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano), RequestDigest: bodyDigest[:],
+			BrokerUri: "https://broker.example", ChainId: 42161, Denomination: "wei",
+		})
+		if err != nil {
+			t.Fatalf("create authorization %s: %v", id, err)
+		}
+		return res.GetAuthorizationBytes()
+	}
+
+	first, err := payee.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: makeAuth("job-one", 100)})
+	if err != nil {
+		t.Fatalf("admit funded authorization: %v", err)
+	}
+	if new(big.Int).SetBytes(first.GetCreditedValueWei().GetValue()).Sign() != 0 {
+		t.Fatal("funding-free admission reported new ticket value")
+	}
+	credited := new(big.Int).SetBytes(first.GetAccount().GetCreditedValueWei().GetValue())
+	if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: first.GetAccount().GetPayer(), AuthorizationId: "job-one", ActualUnits: 1, SettlementSeq: 1}); err != nil {
+		t.Fatalf("settle first authorization: %v", err)
+	}
+
+	second, err := payee.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: makeAuth("job-two", 10)})
+	if err != nil {
+		t.Fatalf("admit from residual credit: %v", err)
+	}
+	if new(big.Int).SetBytes(second.GetCreditedValueWei().GetValue()).Sign() != 0 {
+		t.Fatal("funding-free admission reported new ticket value")
+	}
+	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: second.GetAccount().GetPayer(), AuthorizationId: "job-two", ActualUnits: 1, SettlementSeq: 1})
+	if err != nil {
+		t.Fatalf("settle second authorization: %v", err)
+	}
+	if got := new(big.Int).SetBytes(settled.GetAccount().GetCreditedValueWei().GetValue()); got.Cmp(credited) != 0 {
+		t.Fatalf("reusing credit changed total credited: %s -> %s", credited, got)
+	}
+	if got := new(big.Int).SetBytes(settled.GetAccount().GetDebitedValueWei().GetValue()); got.Int64() != 2_000 {
+		t.Fatalf("actual wholesale debit=%s; want 2000", got)
 	}
 }
 

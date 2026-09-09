@@ -390,7 +390,10 @@ func (m *Mock) CloseSession(_ context.Context, sender []byte, workID string) err
 	if !ok {
 		return errors.New("session not found")
 	}
-	if !bytesEqual(sess.sender, sender) {
+	// An empty sender means OpenSession recreated an unsealed identity
+	// during recovery but ProcessPayment could not reassert the old payer.
+	// Closing that orphan is safe and is what the real store does by work_id.
+	if len(sess.sender) != 0 && !bytesEqual(sess.sender, sender) {
 		return errors.New("sender mismatch")
 	}
 	sess.closed = true

@@ -61,14 +61,15 @@ var ErrMintIncomplete = errors.New("store: mint_request_id was reserved but neve
 // MintRecord is the recorded response for one mint intent, replayed
 // verbatim on retry.
 type MintRecord struct {
-	Fingerprint    []byte    `json:"fingerprint"`
-	PaymentBytes   []byte    `json:"payment_bytes"`
-	TicketsCreated uint32    `json:"tickets_created"`
-	ExpectedValue  []byte    `json:"expected_value,omitempty"`
-	FundedValueWei []byte    `json:"funded_value_wei,omitempty"`
-	QuoteRefJSON   []byte    `json:"quote_ref_json,omitempty"`
-	WorkID         string    `json:"work_id"`
-	CreatedAt      time.Time `json:"created_at"`
+	Fingerprint         []byte    `json:"fingerprint"`
+	PaymentBytes        []byte    `json:"payment_bytes"`
+	TicketsCreated      uint32    `json:"tickets_created"`
+	ExpectedValue       []byte    `json:"expected_value,omitempty"`
+	FundedValueWei      []byte    `json:"funded_value_wei,omitempty"`
+	AccountShortfallWei []byte    `json:"account_shortfall_wei,omitempty"`
+	QuoteRefJSON        []byte    `json:"quote_ref_json,omitempty"`
+	WorkID              string    `json:"work_id"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 type mintTombstone struct {

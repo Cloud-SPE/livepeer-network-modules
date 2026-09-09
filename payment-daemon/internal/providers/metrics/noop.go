@@ -17,13 +17,14 @@ func (*Noop) IncGRPCRequest(string, string, string)     {}
 func (*Noop) ObserveGRPC(string, string, time.Duration) {}
 func (*Noop) SetGRPCInFlight(string, string, int)       {}
 
-func (*Noop) IncSessionEvent(string)      {}
-func (*Noop) IncTicket(string)            {}
-func (*Noop) IncTicketRejected(string)    {}
-func (*Noop) IncWinningTicket()           {}
-func (*Noop) AddCreditedEVGwei(float64)   {}
-func (*Noop) IncDebit(string)             {}
-func (*Noop) AddWorkUnitsDebited(float64) {}
+func (*Noop) IncSessionEvent(string)                                       {}
+func (*Noop) IncTicket(string)                                             {}
+func (*Noop) IncTicketRejected(string)                                     {}
+func (*Noop) IncWinningTicket()                                            {}
+func (*Noop) AddCreditedEVGwei(float64)                                    {}
+func (*Noop) IncDebit(string)                                              {}
+func (*Noop) AddWorkUnitsDebited(float64)                                  {}
+func (*Noop) SetWholesaleAccountTotals(float64, float64, float64, float64) {}
 
 func (*Noop) IncRedemption(string)            {}
 func (*Noop) ObserveRedemption(time.Duration) {}

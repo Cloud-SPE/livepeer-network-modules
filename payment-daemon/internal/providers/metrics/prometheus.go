@@ -30,6 +30,7 @@ type Prometheus struct {
 	creditedEVGwei   prometheus.Counter
 	debits           *prometheus.CounterVec
 	workUnitsDebited prometheus.Counter
+	wholesaleAccount *prometheus.GaugeVec
 
 	// Settlement
 	redemptions     *prometheus.CounterVec
@@ -126,6 +127,7 @@ func NewPrometheus() *Prometheus {
 	p.creditedEVGwei = counter("credited_ev_gwei_total", "Cumulative credited expected value in gwei.")
 	p.debits = counterVec("debits_total", "DebitBalance calls, labeled by result.", "result")
 	p.workUnitsDebited = counter("work_units_debited_total", "Cumulative work units debited.")
+	p.wholesaleAccount = gaugeVec("wholesale_account_value_wei", "Aggregate stable wholesale-account value by ledger position (wei).", "position")
 
 	// Settlement
 	p.redemptions = counterVec("redemptions_total", "Redemption attempt outcomes, labeled by result.", "result")
@@ -199,6 +201,11 @@ func (p *Prometheus) IncDebit(result string) { p.debits.WithLabelValues(unset(re
 func (p *Prometheus) AddWorkUnitsDebited(units float64) {
 	if units > 0 {
 		p.workUnitsDebited.Add(units)
+	}
+}
+func (p *Prometheus) SetWholesaleAccountTotals(credited, reserved, debited, available float64) {
+	for position, value := range map[string]float64{"credited": credited, "reserved": reserved, "debited": debited, "available": available} {
+		p.wholesaleAccount.WithLabelValues(position).Set(value)
 	}
 }
 

@@ -126,6 +126,24 @@ func TestUnpricedSessionRefusesToBill(t *testing.T) {
 	}
 }
 
+func TestCloseSessionCanRetireUnsealedRecoveryIdentity(t *testing.T) {
+	st := openTestStore(t)
+	if _, _, err := st.OpenSession(Session{
+		WorkID: "lost-state", Capability: "c", Offering: "o",
+		PricePerWorkUnitWei: "1", PerUnits: 1, WorkUnit: "tokens",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	closed, err := st.CloseSession([]byte("old payer"), "lost-state")
+	if err != nil || closed {
+		t.Fatalf("close unsealed session: already=%v err=%v", closed, err)
+	}
+	sess, err := st.GetByWorkID("lost-state")
+	if err != nil || !sess.Closed {
+		t.Fatalf("unsealed session not closed: %+v err=%v", sess, err)
+	}
+}
+
 // TestOpenSessionPricesOnceThenRefusesToMove: the ticket-params call
 // creates the session unpriced, the broker's open fills it in, and no
 // later open may move it — re-pricing a live session bills already-funded

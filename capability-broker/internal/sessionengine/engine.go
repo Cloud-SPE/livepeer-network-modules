@@ -20,7 +20,9 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/google/uuid"
+	"google.golang.org/protobuf/proto"
 )
 
 // ProtocolError is a claim/request the protocol rejects; it advances no
@@ -45,14 +47,15 @@ func (e *RetryableError) Unwrap() error { return e.Err }
 
 // Terminal close reasons (stable, machine-readable).
 const (
-	ReasonGatewayClose   = "gateway_close"
-	ReasonRunnerEnded    = "runner_ended"
-	ReasonRunnerFailed   = "runner_failed"
-	ReasonLeaseExpired   = "lease_expired"
-	ReasonHeartbeatLost  = "heartbeat_lost"
-	ReasonInsufficient   = "insufficient_balance"
-	ReasonRecoveryFailed = "recovery_failed"
-	ReasonOpenFailed     = "open_failed"
+	ReasonGatewayClose           = "gateway_close"
+	ReasonRunnerEnded            = "runner_ended"
+	ReasonRunnerFailed           = "runner_failed"
+	ReasonLeaseExpired           = "lease_expired"
+	ReasonHeartbeatLost          = "heartbeat_lost"
+	ReasonInsufficient           = "insufficient_balance"
+	ReasonAuthorizationExhausted = "authorization_exhausted"
+	ReasonRecoveryFailed         = "recovery_failed"
+	ReasonOpenFailed             = "open_failed"
 	// ReasonPaymentUnrecoverable ends a session whose payment identity
 	// cannot be recovered — a rotation that could not settle, or one
 	// that exhausted its bound. It names the consequence, not the
@@ -220,12 +223,14 @@ func (e *Engine) sessionMu(id string) *sync.Mutex {
 
 // OpenRequest is one session-open, post header validation.
 type OpenRequest struct {
-	RequestID        string
-	GatewaySessionID string
-	SessionParams    json.RawMessage
-	PaymentBytes     []byte
-	Spec             *OfferingSpec
-	CapacityRef      string
+	RequestID             string
+	GatewaySessionID      string
+	SessionParams         json.RawMessage
+	PaymentBytes          []byte
+	AuthorizationBytes    []byte
+	InitialReservationWei *big.Int
+	Spec                  *OfferingSpec
+	CapacityRef           string
 }
 
 // OpenResult is returned to the gateway. Credential and Grants carry
@@ -275,6 +280,15 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	// Stub payments carry no ticket params; the request id stands in,
 	// exactly as the job path does.
 	workID, sharedIdentity := payment.DerivePayeeWorkID(req.PaymentBytes)
+	var accountPayload *pb.SpendAuthorizationPayload
+	if len(req.AuthorizationBytes) > 0 {
+		var auth pb.SpendAuthorization
+		if err := proto.Unmarshal(req.AuthorizationBytes, &auth); err != nil || auth.GetPayload() == nil {
+			return nil, protoErr("payment_invalid", "account authorization is malformed")
+		}
+		accountPayload = auth.GetPayload()
+		workID, sharedIdentity = accountPayload.GetAuthorizationId(), true
+	}
 	if !sharedIdentity {
 		workID = req.RequestID
 	}
@@ -301,6 +315,8 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 				return nil, protoErr("request_id_reuse", "request id reused with different open content")
 			}
 			return nil, protoErr("open_in_flight", "an open with this request id is in flight; retry")
+		case errors.Is(err, sessionstore.ErrNonAdmissionIssued):
+			return nil, protoErr("request_id_reuse", "broker already issued non-admission evidence for this request id")
 		default:
 			return nil, err
 		}
@@ -313,60 +329,95 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	}
 
 	// Payment first: no funded runway, no runner binding.
-	if _, err := e.cfg.Payment.OpenSession(ctx, payment.OpenSessionRequest{
-		WorkID:              workID,
-		Capability:          req.Spec.Capability,
-		Offering:            req.Spec.Offering,
-		PricePerWorkUnitWei: req.Spec.PricePerWorkUnitWei,
-		PerUnits:            req.Spec.PerUnits,
-		WorkUnit:            req.Spec.WorkUnit,
-	}); err != nil {
-		releaseReservation()
-		return nil, &RetryableError{Err: fmt.Errorf("payment open: %w", err)}
-	}
-	// The payee session exists from here: record it so a crash before
-	// the session record lands can still close it.
-	if err := recordStage(func(r *sessionstore.OpenReservation) {
-		r.Stage, r.WorkID, r.SharedIdentity, r.CapacityRef, r.BackendRef = sessionstore.ReservationPaid, workID, sharedIdentity, req.CapacityRef, req.Spec.BackendRef
-	}); err != nil {
-		_ = e.closePayeeSession(ctx, sharedIdentity, nil, workID)
-		e.release(req.CapacityRef)
-		releaseReservation()
-		return nil, &RetryableError{Err: fmt.Errorf("record open stage: %w", err)}
-	}
-	payRes, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
-		WorkID:       workID,
-		PaymentBytes: req.PaymentBytes,
-	})
-	if err != nil {
-		_ = e.closePayeeSession(ctx, sharedIdentity, nil, workID)
-		e.release(req.CapacityRef)
-		releaseReservation()
-		return nil, protoErr("payment_invalid", "payment rejected: %v", err)
-	}
-	// A daemon that rejects every ticket returns no error — it reports
-	// the rejection in the result. Opening anyway produces a session
-	// with no funded runway that dies at the first lease check, which
-	// reads as a broker fault rather than the payment fault it is.
-	if err := rejectionErr(payRes); err != nil {
-		_ = e.closePayeeSession(ctx, sharedIdentity, payRes.Sender, workID)
-		e.release(req.CapacityRef)
-		releaseReservation()
-		return nil, err
+	var payRes *payment.ProcessPaymentResult
+	if accountPayload != nil {
+		ac, ok := e.cfg.Payment.(payment.AccountClient)
+		if !ok {
+			releaseReservation()
+			return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
+		}
+		admitted, err := ac.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: req.AuthorizationBytes, PaymentBytes: req.PaymentBytes, Reservation: req.InitialReservationWei})
+		if err != nil {
+			releaseReservation()
+			return nil, protoErr("payment_invalid", "authorization admission rejected: %v", err)
+		}
+		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) {
+			releaseReservation()
+			return nil, &RetryableError{Err: errors.New("payment daemon returned an invalid account admission")}
+		}
+		payRes = &payment.ProcessPaymentResult{Sender: append([]byte(nil), accountPayload.GetPayer()...), CreditedEV: admitted.Credited, Balance: admitted.Account.Available}
+		if err := recordStage(func(r *sessionstore.OpenReservation) {
+			r.Stage, r.WorkID, r.SharedIdentity, r.CapacityRef, r.BackendRef, r.Sender = sessionstore.ReservationPaid, workID, true, req.CapacityRef, req.Spec.BackendRef, payRes.Sender
+			r.AccountAuthorization = true
+		}); err != nil {
+			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: payRes.Sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
+			releaseReservation()
+			return nil, &RetryableError{Err: fmt.Errorf("record account admission: %w", err)}
+		}
+	} else {
+		if _, err := e.cfg.Payment.OpenSession(ctx, payment.OpenSessionRequest{
+			WorkID:              workID,
+			Capability:          req.Spec.Capability,
+			Offering:            req.Spec.Offering,
+			PricePerWorkUnitWei: req.Spec.PricePerWorkUnitWei,
+			PerUnits:            req.Spec.PerUnits,
+			WorkUnit:            req.Spec.WorkUnit,
+		}); err != nil {
+			releaseReservation()
+			return nil, &RetryableError{Err: fmt.Errorf("payment open: %w", err)}
+		}
+		// The payee session exists from here: record it so a crash before
+		// the session record lands can still close it.
+		if err := recordStage(func(r *sessionstore.OpenReservation) {
+			r.Stage, r.WorkID, r.SharedIdentity, r.CapacityRef, r.BackendRef = sessionstore.ReservationPaid, workID, sharedIdentity, req.CapacityRef, req.Spec.BackendRef
+		}); err != nil {
+			_ = e.closePayeeSession(ctx, sharedIdentity, nil, workID)
+			e.release(req.CapacityRef)
+			releaseReservation()
+			return nil, &RetryableError{Err: fmt.Errorf("record open stage: %w", err)}
+		}
+		var err error
+		payRes, err = e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
+			WorkID:       workID,
+			PaymentBytes: req.PaymentBytes,
+		})
+		if err != nil {
+			_ = e.closePayeeSession(ctx, sharedIdentity, nil, workID)
+			e.release(req.CapacityRef)
+			releaseReservation()
+			return nil, protoErr("payment_invalid", "payment rejected: %v", err)
+		}
+		// A daemon that rejects every ticket returns no error — it reports
+		// the rejection in the result. Opening anyway produces a session
+		// with no funded runway that dies at the first lease check, which
+		// reads as a broker fault rather than the payment fault it is.
+		if err := rejectionErr(payRes); err != nil {
+			_ = e.closePayeeSession(ctx, sharedIdentity, payRes.Sender, workID)
+			e.release(req.CapacityRef)
+			releaseReservation()
+			return nil, err
+		}
+		sender := payRes.Sender
+		if err := recordStage(func(r *sessionstore.OpenReservation) { r.Sender = sender }); err != nil {
+			_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
+			e.release(req.CapacityRef)
+			releaseReservation()
+			return nil, &RetryableError{Err: fmt.Errorf("record open stage: %w", err)}
+		}
 	}
 	sender := payRes.Sender
-	if err := recordStage(func(r *sessionstore.OpenReservation) { r.Sender = sender }); err != nil {
-		_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
-		e.release(req.CapacityRef)
-		releaseReservation()
-		return nil, &RetryableError{Err: fmt.Errorf("record open stage: %w", err)}
-	}
 
 	failClosed := func(stage string, cause error, runnerSessionID string) error {
 		if runnerSessionID != "" {
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, runnerSessionID, ReasonOpenFailed)
 		}
-		_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
+		if accountPayload != nil {
+			if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
+				_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: accountPayload.GetAuthorizationId(), ActualUnits: 0, SettlementSeq: 1})
+			}
+		} else {
+			_ = e.closePayeeSession(ctx, sharedIdentity, sender, workID)
+		}
 		e.release(req.CapacityRef)
 		releaseReservation()
 		return fmt.Errorf("sessionengine: open failed at %s (failed closed): %w", stage, cause)
@@ -395,6 +446,12 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	}
 
 	lease := e.leaseFrom(ctx, now, sender, workID, req.Spec)
+	if accountPayload != nil {
+		lease = now.Add(req.Spec.heartbeat() * time.Duration(req.Spec.missed()))
+		if max := now.Add(req.Spec.leaseMax()); lease.After(max) {
+			lease = max
+		}
+	}
 
 	rec := &sessionstore.Record{
 		SessionID:             sessionID,
@@ -409,18 +466,42 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		CallbackTokenHash:     sessionstore.HashSecret(callbackToken),
 		OpenFingerprint:       fingerprint,
 		SharedPaymentIdentity: sharedIdentity,
-		ReplayMaterial:        sealedReplayMaterial(credential, desc.Grants),
-		FundedWei:             creditedString(payRes),
-		GenerationFundedWei:   creditedString(payRes),
-		DescriptorSchema:      desc.Schema,
-		DescriptorPublic:      desc.Public,
-		DescriptorPrivate:     desc.Private,
-		Grants:                auditGrants(desc.Grants),
-		Unit:                  req.Spec.WorkUnit,
-		LeaseExpiresAt:        lease,
-		LastEventAt:           now,
-		State:                 sessionstore.StateActive,
-		CapacityRef:           req.CapacityRef,
+		AccountAuthorizationID: func() string {
+			if accountPayload != nil {
+				return accountPayload.GetAuthorizationId()
+			}
+			return ""
+		}(),
+		AuthorizationMaxUnits: func() uint64 {
+			if accountPayload != nil {
+				return accountPayload.GetMaxTotalUnits()
+			}
+			return 0
+		}(),
+		AuthorizationMaxDebitWei: func() string {
+			if accountPayload != nil {
+				return new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String()
+			}
+			return ""
+		}(),
+		AuthorizationReservedWei: func() string {
+			if accountPayload != nil && req.InitialReservationWei != nil {
+				return req.InitialReservationWei.String()
+			}
+			return ""
+		}(),
+		ReplayMaterial:      sealedReplayMaterial(credential, desc.Grants),
+		FundedWei:           creditedString(payRes),
+		GenerationFundedWei: creditedString(payRes),
+		DescriptorSchema:    desc.Schema,
+		DescriptorPublic:    desc.Public,
+		DescriptorPrivate:   desc.Private,
+		Grants:              auditGrants(desc.Grants),
+		Unit:                req.Spec.WorkUnit,
+		LeaseExpiresAt:      lease,
+		LastEventAt:         now,
+		State:               sessionstore.StateActive,
+		CapacityRef:         req.CapacityRef,
 	}
 	if err := e.cfg.Store.CreateIndexed(rec, req.RequestID); err != nil {
 		// A colliding gateway_session_id is the caller's own mistake and
@@ -542,6 +623,8 @@ func openFingerprint(req OpenRequest) []byte {
 	h.Write(req.SessionParams)
 	h.Write([]byte{0})
 	h.Write(req.PaymentBytes)
+	h.Write([]byte{0})
+	h.Write(req.AuthorizationBytes)
 	return h.Sum(nil)
 }
 
@@ -639,6 +722,8 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	}
 
 	var delta uint64
+	var authorizationCumulative uint64
+	var authorizationExhausted bool
 	if ev.UsageTot != nil {
 		if ev.UsageUnit != rec.Unit {
 			return nil, protoErr("usage_unit_mismatch", "unit %q does not match offering unit %q", ev.UsageUnit, rec.Unit)
@@ -647,51 +732,104 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			return nil, protoErr("usage_regression", "cumulative total %d below committed %d", *ev.UsageTot, rec.ClaimedTotal)
 		}
 		delta = *ev.UsageTot - rec.ClaimedTotal
+		authorizationCumulative = *ev.UsageTot
+		if rec.AccountAuthorizationID != "" && authorizationCumulative >= rec.AuthorizationMaxUnits {
+			authorizationExhausted = true
+			if authorizationCumulative > rec.AuthorizationMaxUnits {
+				authorizationCumulative = rec.AuthorizationMaxUnits
+			}
+			// The runner may report in coarse ticks and cross the cap in one
+			// event. Debit only the signed cumulative allowance; excess work
+			// is seller risk and cannot turn into involuntary payer credit.
+			delta = 0
+			if authorizationCumulative > rec.DebitedTotal {
+				delta = authorizationCumulative - rec.DebitedTotal
+			}
+		}
 	}
 
 	var chargedWei *big.Int
 	var paymentCumulative uint64
 	debitSeq := rec.DebitSeq
 	if delta > 0 {
-		// The seq space belongs to the work_id, not to this session: two
-		// sessions opened from payments minted on one ticket session
-		// share a work_id, and per-session counters would collide — the
-		// payee would deduplicate the second session's debits away.
-		//
-		// Reserve durably before debiting, so a retry re-presents the
-		// same number rather than allocating a fresh one.
-		if rec.PendingDebitSeq != 0 {
-			debitSeq = rec.PendingDebitSeq
-		} else {
-			next, err := e.allocDebitSeq(rec.WorkID)
+		if rec.AccountAuthorizationID != "" {
+			ac, ok := e.cfg.Payment.(payment.AccountClient)
+			if !ok {
+				return nil, &RetryableError{Err: errors.New("wholesale account payment extension unavailable")}
+			}
+			remainingUnits := uint64(0)
+			if rec.AuthorizationMaxUnits > authorizationCumulative {
+				remainingUnits = rec.AuthorizationMaxUnits - authorizationCumulative
+			}
+			runwayUnits := uint64(1)
+			if spec.MinRunwayUnits > 0 {
+				runwayUnits = uint64(spec.MinRunwayUnits)
+			}
+			if runwayUnits > remainingUnits {
+				runwayUnits = remainingUnits
+			}
+			target := payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, runwayUnits)
+			if ev.EventType == "session.ended" || ev.EventType == "session.failed" {
+				target = new(big.Int)
+			}
+			advanceSeq := rec.DebitSeq + 1
+			if rec.PendingDebitSeq != 0 {
+				advanceSeq = rec.PendingDebitSeq
+			} else if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { r.PendingDebitSeq = advanceSeq; return nil }); err != nil {
+				return nil, &RetryableError{Err: err}
+			}
+			advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: authorizationCumulative, TargetReserved: target, AdvanceSeq: advanceSeq})
 			if err != nil {
-				return nil, &RetryableError{Err: fmt.Errorf("debit seq: %w", err)}
+				return nil, &RetryableError{Err: fmt.Errorf("advance account authorization: %w", err)}
 			}
-			if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
-				r.PendingDebitSeq = next
-				return nil
-			}); err != nil {
-				return nil, &RetryableError{Err: fmt.Errorf("reserve debit seq: %w", err)}
+			if advanced == nil || advanced.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
+				return nil, &RetryableError{Err: errors.New("payment daemon returned invalid authorization advance state")}
 			}
-			debitSeq = next
-		}
-		debitRes, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
-			Sender:    rec.Sender,
-			WorkID:    rec.WorkID,
-			WorkUnits: int64(delta),
-			DebitSeq:  debitSeq,
-		})
-		if debitRes != nil {
-			if debitRes.DebitedWei != nil {
-				chargedWei = debitRes.DebitedWei
+			chargedWei, paymentCumulative, debitSeq = advanced.BilledDelta, authorizationCumulative, advanceSeq
+			if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { r.AuthorizationReservedWei = target.String(); return nil }); err != nil {
+				return nil, &RetryableError{Err: err}
 			}
-			paymentCumulative = debitRes.CumulativeUnits
-		}
-		if err != nil {
-			// Nothing committed: the retry really retries, with the
-			// same sequence and the same debit_seq — the daemon
-			// dedupes if the debit actually landed.
-			return nil, &RetryableError{Err: fmt.Errorf("debit: %w", err)}
+		} else {
+			// The seq space belongs to the work_id, not to this session: two
+			// sessions opened from payments minted on one ticket session
+			// share a work_id, and per-session counters would collide — the
+			// payee would deduplicate the second session's debits away.
+			//
+			// Reserve durably before debiting, so a retry re-presents the
+			// same number rather than allocating a fresh one.
+			if rec.PendingDebitSeq != 0 {
+				debitSeq = rec.PendingDebitSeq
+			} else {
+				next, err := e.allocDebitSeq(rec.WorkID)
+				if err != nil {
+					return nil, &RetryableError{Err: fmt.Errorf("debit seq: %w", err)}
+				}
+				if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+					r.PendingDebitSeq = next
+					return nil
+				}); err != nil {
+					return nil, &RetryableError{Err: fmt.Errorf("reserve debit seq: %w", err)}
+				}
+				debitSeq = next
+			}
+			debitRes, err := e.cfg.Payment.DebitBalance(ctx, payment.DebitBalanceRequest{
+				Sender:    rec.Sender,
+				WorkID:    rec.WorkID,
+				WorkUnits: int64(delta),
+				DebitSeq:  debitSeq,
+			})
+			if debitRes != nil {
+				if debitRes.DebitedWei != nil {
+					chargedWei = debitRes.DebitedWei
+				}
+				paymentCumulative = debitRes.CumulativeUnits
+			}
+			if err != nil {
+				// Nothing committed: the retry really retries, with the
+				// same sequence and the same debit_seq — the daemon
+				// dedupes if the debit actually landed.
+				return nil, &RetryableError{Err: fmt.Errorf("debit: %w", err)}
+			}
 		}
 	}
 
@@ -705,6 +843,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		}
 	case "session.failed":
 		terminalReason = ReasonRunnerFailed
+	}
+	if terminalReason == "" && authorizationExhausted {
+		terminalReason = ReasonAuthorizationExhausted
 	}
 
 	// The atomic commit point: dedup watermark, totals, and debit
@@ -725,6 +866,12 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			}
 			if paymentCumulative > 0 {
 				r.PaymentCumulativeUnits = paymentCumulative
+			}
+		}
+		if r.AccountAuthorizationID != "" {
+			r.LeaseExpiresAt = now.Add(spec.heartbeat() * time.Duration(spec.missed()))
+			if max := now.Add(spec.leaseMax()); r.LeaseExpiresAt.After(max) {
+				r.LeaseExpiresAt = max
 			}
 		}
 		return nil
@@ -755,7 +902,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	// Runway check on cadence: not lost on retry, because the retry of
 	// a committed event returns Duplicate and the *next* usage event
 	// re-evaluates.
-	if delta > 0 && spec.MinRunwayUnits > 0 {
+	if rec.AccountAuthorizationID == "" && delta > 0 && spec.MinRunwayUnits > 0 {
 		res, err := e.cfg.Payment.SufficientBalance(ctx, payment.SufficientBalanceRequest{
 			Sender:       rec.Sender,
 			WorkID:       rec.WorkID,
@@ -844,6 +991,94 @@ func (e *Engine) TopUpRebind(ctx context.Context, sessionID, requestID, rebindFr
 	return e.topUp(ctx, sessionID, requestID, rebindFrom, paymentBytes)
 }
 
+// ReviseAuthorization atomically replaces an account-backed session's signed
+// cumulative cap. The receiver verifies and retires the predecessor in the
+// same transaction that reserves runway for the successor.
+func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID string, authorizationBytes, paymentBytes []byte, reservation *big.Int) (*TopUpResult, error) {
+	if requestID == "" {
+		return nil, protoErr("request_id_required", "Livepeer-Request-Id is required")
+	}
+	mu := e.sessionMu(sessionID)
+	mu.Lock()
+	defer mu.Unlock()
+	rec, err := e.cfg.Store.Get(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if rec.Closing() || rec.AccountAuthorizationID == "" {
+		return nil, protoErr("refill_refused", "session does not accept an account authorization revision")
+	}
+	spec := e.cfg.Specs(sessionID)
+	if spec == nil {
+		return nil, errors.New("offering spec unavailable")
+	}
+	if spec.Refill == "bounded" {
+		return nil, protoErr("refill_refused", "offering declares refill: bounded")
+	}
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(authorizationBytes, &auth); err != nil || auth.GetPayload() == nil {
+		return nil, protoErr("payment_invalid", "authorization revision is malformed")
+	}
+	p := auth.GetPayload()
+	if p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
+		return nil, protoErr("refill_refused", "authorization revision does not continue this session")
+	}
+	oldMaxDebit, _ := new(big.Int).SetString(rec.AuthorizationMaxDebitWei, 10)
+	if oldMaxDebit == nil {
+		oldMaxDebit = new(big.Int)
+	}
+	if p.GetMaxTotalUnits() < rec.AuthorizationMaxUnits || new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()).Cmp(oldMaxDebit) < 0 {
+		return nil, protoErr("refill_refused", "authorization revision cannot reduce the cumulative cap")
+	}
+	fpHash := sha256.New()
+	fpHash.Write(authorizationBytes)
+	fpHash.Write([]byte{0})
+	fpHash.Write(paymentBytes)
+	fp := fpHash.Sum(nil)
+	if prior, err := e.cfg.Store.TopUpRecall(sessionID, requestID, fp); err != nil {
+		if errors.Is(err, sessionstore.ErrRequestIDReuse) {
+			return nil, protoErr("request_id_reuse", "request id reused with different revision")
+		}
+		return nil, err
+	} else if prior != nil {
+		bal, _ := new(big.Int).SetString(prior.BalanceWei, 10)
+		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal}, nil
+	}
+	ac, ok := e.cfg.Payment.(payment.AccountClient)
+	if !ok {
+		return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
+	}
+	admitted, err := ac.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: authorizationBytes, PaymentBytes: paymentBytes, Reservation: reservation})
+	if err != nil {
+		return nil, protoErr("payment_invalid", "authorization revision rejected: %v", err)
+	}
+	if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil {
+		return nil, &RetryableError{Err: errors.New("payment daemon returned invalid revision admission")}
+	}
+	now := e.cfg.Now()
+	lease := now.Add(spec.heartbeat() * time.Duration(spec.missed()))
+	if max := now.Add(spec.leaseMax()); lease.After(max) {
+		lease = max
+	}
+	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+		r.AccountAuthorizationID, r.WorkID = p.GetAuthorizationId(), p.GetAuthorizationId()
+		r.AuthorizationMaxUnits = p.GetMaxTotalUnits()
+		r.AuthorizationMaxDebitWei = new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()).String()
+		r.AuthorizationReservedWei = reservation.String()
+		r.LeaseExpiresAt = lease
+		if admitted.Credited != nil {
+			r.FundedWei = addDecimal(r.FundedWei, admitted.Credited)
+		}
+		return nil
+	}); err != nil {
+		return nil, &RetryableError{Err: err}
+	}
+	if err := e.cfg.Store.TopUpRecord(sessionID, requestID, fp, lease, balanceString(admitted.Account.Available)); err != nil {
+		return nil, err
+	}
+	return &TopUpResult{Lease: lease, Balance: admitted.Account.Available}, nil
+}
+
 func (e *Engine) topUp(ctx context.Context, sessionID, requestID, rebindFrom string, paymentBytes []byte) (*TopUpResult, error) {
 	if requestID == "" {
 		return nil, protoErr("request_id_required", "Livepeer-Request-Id is required")
@@ -899,6 +1134,46 @@ func (e *Engine) topUpLocked(ctx context.Context, rec *sessionstore.Record, spec
 	requestID string, fp []byte, paymentBytes []byte) (*TopUpResult, error) {
 
 	sessionID := rec.SessionID
+	if rec.AccountAuthorizationID != "" {
+		ac, ok := e.cfg.Payment.(payment.AccountClient)
+		if !ok {
+			return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
+		}
+		runwayUnits := uint64(1)
+		if spec.MinRunwayUnits > 0 {
+			runwayUnits = uint64(spec.MinRunwayUnits)
+		}
+		if rec.AuthorizationMaxUnits > rec.DebitedTotal && runwayUnits > rec.AuthorizationMaxUnits-rec.DebitedTotal {
+			runwayUnits = rec.AuthorizationMaxUnits - rec.DebitedTotal
+		}
+		target := payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, runwayUnits)
+		seq := rec.DebitSeq + 1
+		advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: rec.DebitedTotal, TargetReserved: target, AdvanceSeq: seq, PaymentBytes: paymentBytes})
+		if err != nil {
+			return nil, protoErr("payment_invalid", "account replenishment rejected: %v", err)
+		}
+		now := e.cfg.Now()
+		lease := now.Add(spec.heartbeat() * time.Duration(spec.missed()))
+		if max := now.Add(spec.leaseMax()); lease.After(max) {
+			lease = max
+		}
+		if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+			r.DebitSeq = seq
+			r.AuthorizationReservedWei = target.String()
+			r.LeaseExpiresAt = lease
+			if advanced.Credited != nil {
+				r.FundedWei = addDecimal(r.FundedWei, advanced.Credited)
+				r.GenerationFundedWei = addDecimal(r.GenerationFundedWei, advanced.Credited)
+			}
+			return nil
+		}); err != nil {
+			return nil, err
+		}
+		if err := e.cfg.Store.TopUpRecord(sessionID, requestID, fp, lease, balanceString(advanced.Account.Available)); err != nil {
+			return nil, err
+		}
+		return &TopUpResult{Lease: lease, Balance: advanced.Account.Available}, nil
+	}
 	res, err := e.cfg.Payment.ProcessPayment(ctx, payment.ProcessPaymentRequest{
 		WorkID:       rec.WorkID,
 		PaymentBytes: paymentBytes,
@@ -1226,10 +1501,28 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		}
 	}
 	paymentClosed := rec.PaymentClosed
+	releasedAuthorizationWei := ""
 	if !paymentClosed {
-		if err := e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, rec.WorkID); err != nil {
+		var closeErr error
+		if rec.AccountAuthorizationID != "" {
+			if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
+				var settled *payment.SettleAuthorizationResult
+				settled, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: rec.DebitedTotal, SettlementSeq: rec.DebitSeq + 1})
+				if closeErr == nil && (settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
+					closeErr = errors.New("payment daemon returned invalid authorization settlement state")
+				}
+				if closeErr == nil && settled.Released != nil {
+					releasedAuthorizationWei = settled.Released.String()
+				}
+			} else {
+				closeErr = errors.New("wholesale account payment extension unavailable")
+			}
+		} else {
+			closeErr = e.closePayeeSession(ctx, rec.SharedPaymentIdentity, rec.Sender, rec.WorkID)
+		}
+		if closeErr != nil {
 			e.cfg.Log.Warn("payment close failed; winddown pending, will retry on sweep",
-				"session", sessionID, "err", err)
+				"session", sessionID, "err", closeErr)
 		} else {
 			paymentClosed = true
 		}
@@ -1244,6 +1537,10 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 			r.CloseReason = reason
 			r.ReplayMaterial = nil
 			r.PaymentClosed = paymentClosed
+			if r.AccountAuthorizationID != "" && paymentClosed {
+				r.AuthorizationReservedWei = "0"
+				r.AuthorizationReleasedWei = releasedAuthorizationWei
+			}
 			r.RunnerTerminated = runnerDone
 			return nil
 		})
@@ -1272,6 +1569,12 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		// the thing they unlock is how a store becomes a liability.
 		r.ReplayMaterial = nil
 		r.PaymentClosed = true
+		if r.AccountAuthorizationID != "" {
+			r.AuthorizationReservedWei = "0"
+			if releasedAuthorizationWei != "" {
+				r.AuthorizationReleasedWei = releasedAuthorizationWei
+			}
+		}
 		r.RunnerTerminated = true
 		r.EndedAt = now
 		r.CapacityRef = ""
@@ -1502,9 +1805,19 @@ func (e *Engine) recoverReservations(ctx context.Context) {
 			}
 		}
 		if r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated {
-			if err := e.closePayeeSession(ctx, r.SharedIdentity, r.Sender, r.WorkID); err != nil {
+			var closeErr error
+			if r.AccountAuthorization {
+				if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
+					_, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: r.Sender, AuthorizationID: r.WorkID, ActualUnits: 0, SettlementSeq: 1})
+				} else {
+					closeErr = errors.New("wholesale account payment extension unavailable")
+				}
+			} else {
+				closeErr = e.closePayeeSession(ctx, r.SharedIdentity, r.Sender, r.WorkID)
+			}
+			if closeErr != nil {
 				e.cfg.Log.Warn("abandoned open: payment close failed; leaving the reservation for the next start",
-					"request_id", r.RequestID, "err", err)
+					"request_id", r.RequestID, "err", closeErr)
 				continue
 			}
 		}

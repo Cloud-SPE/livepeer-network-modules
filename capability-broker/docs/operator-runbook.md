@@ -184,6 +184,44 @@ its quarantine behaviour.
   without a trailer-stripping hop.
 - Buffered bodies are capped at 64 MiB per exchange.
 
+### Wholesale account mode
+
+Configure `external_base_url` exactly as payer services use it; authorization
+admission rejects a different `broker_uri`. Upgrade the adjacent receiver
+daemon before enabling account-aware clients. `Livepeer-Authorization` selects
+the new path and fails closed when that daemon lacks it; payment-only requests
+continue on the legacy path during migration.
+
+Enable an upgraded offer with `extra.features.wholesale_accounts: true`. This
+bit is the payer's negotiation signal and the broker enforces it; omitting it
+keeps that offer legacy-only even when the adjacent daemon is new enough.
+
+`POST /v1/payment/account` returns the receiver's read-only account or
+authorization observation. Serve it only over the configured HTTPS origin. It
+does not grant spend authority, but it reveals wholesale balance and should be
+rate-limited at the edge.
+
+`POST /v1/payment/account/fund` accepts a payer-signed `Livepeer-Payment` with
+the matching `Livepeer-Capability` and `Livepeer-Offering` headers. It adds
+ticket EV to the stable account but cannot reserve or invoke work. This is the
+aggregate replenishment path for out-of-path payers; it does not require a
+customer session credential or SDK callback. Rate-limit it for resource
+protection, but retries are economically idempotent by ticket nonce.
+
+An out-of-path funding intermediary calls this endpoint itself before handing
+the workload-bound authorization and broker URL to the end caller; the caller
+does not relay the funding ticket. Before the first account-backed request for
+a payer-payee route, stop legacy mints and allow legacy in-flight work on that
+route to settle. Legacy and account-backed debits must not race on the ticket
+generation whose residual is being migrated.
+
+For sessions, the broker reserves a heartbeat-sized runway rather than the
+full cumulative cap. Runner usage advances the cumulative debit and replaces
+runway atomically. Replenishment top-ups may carry only a ticket shortfall;
+extensible cap changes carry a successor authorization naming the predecessor.
+A settlement RPC left uncertain remains `accounting_pending` and retries
+idempotently rather than releasing value after delivered work.
+
 ## 5. Metrics
 
 Registry surface metrics (`livepeer_broker_registry_*`) are unchanged.

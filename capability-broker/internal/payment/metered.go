@@ -2,6 +2,7 @@ package payment
 
 import (
 	"context"
+	"errors"
 	"math/big"
 
 	"google.golang.org/grpc/status"
@@ -56,6 +57,86 @@ func (m *metered) ProcessPayment(ctx context.Context, req ProcessPaymentRequest)
 	return res, err
 }
 
+func (m *metered) accountClient() (AccountClient, error) {
+	a, ok := m.inner.(AccountClient)
+	if !ok {
+		return nil, errors.ErrUnsupported
+	}
+	return a, nil
+}
+
+func (m *metered) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
+	done := observability.StartPaymentClientCall("admit_authorization")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.AdmitAuthorization(ctx, req)
+	done(resultLabel(err))
+	return res, err
+}
+
+func (m *metered) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+	done := observability.StartPaymentClientCall("fund_wholesale_account")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.FundWholesaleAccount(ctx, paymentBytes)
+	done(resultLabel(err))
+	return res, err
+}
+
+func (m *metered) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error) {
+	done := observability.StartPaymentClientCall("advance_authorization")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.AdvanceAuthorization(ctx, req)
+	done(resultLabel(err))
+	return res, err
+}
+
+func (m *metered) SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error) {
+	done := observability.StartPaymentClientCall("settle_authorization")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.SettleAuthorization(ctx, req)
+	done(resultLabel(err))
+	return res, err
+}
+
+func (m *metered) GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error) {
+	done := observability.StartPaymentClientCall("get_wholesale_account")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.GetWholesaleAccount(ctx, payer)
+	done(resultLabel(err))
+	return res, err
+}
+
+func (m *metered) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+	done := observability.StartPaymentClientCall("get_spend_authorization")
+	a, err := m.accountClient()
+	if err != nil {
+		done(resultLabel(err))
+		return nil, err
+	}
+	res, err := a.GetSpendAuthorization(ctx, payer, authorizationID)
+	done(resultLabel(err))
+	return res, err
+}
+
 func (m *metered) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	done := observability.StartPaymentClientCall("debit_balance")
 	res, err := m.inner.DebitBalance(ctx, req)
@@ -86,3 +167,4 @@ func (m *metered) CloseSession(ctx context.Context, sender []byte, workID string
 
 // Compile-time interface check.
 var _ Client = (*metered)(nil)
+var _ AccountClient = (*metered)(nil)

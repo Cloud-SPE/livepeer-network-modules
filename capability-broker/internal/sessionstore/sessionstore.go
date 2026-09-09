@@ -130,6 +130,14 @@ type Record struct {
 	// session's to forfeit. False only for the stub fallback, where the
 	// identity belongs to this session alone.
 	SharedPaymentIdentity bool `json:"shared_payment_identity,omitempty"`
+	// AccountAuthorizationID selects the stable wholesale-account path.
+	// WorkID remains a runner correlation handle but is not an economic
+	// balance owner in this mode.
+	AccountAuthorizationID   string `json:"account_authorization_id,omitempty"`
+	AuthorizationMaxUnits    uint64 `json:"authorization_max_units,omitempty"`
+	AuthorizationMaxDebitWei string `json:"authorization_max_debit_wei,omitempty"`
+	AuthorizationReservedWei string `json:"authorization_reserved_wei,omitempty"`
+	AuthorizationReleasedWei string `json:"authorization_released_wei,omitempty"`
 
 	// Authentication material, hashed (never plaintext).
 	CredentialHash    []byte `json:"credential_hash"`
@@ -343,6 +351,9 @@ func (s *Store) CreateIndexed(rec *Record, requestID string) error {
 	}
 	rec.UpdatedAt = now
 	return s.db.Update(func(tx *bolt.Tx) error {
+		if na := tx.Bucket([]byte(nonAdmissionBucket)); na != nil && na.Get([]byte(requestID)) != nil {
+			return ErrNonAdmissionIssued
+		}
 		b := tx.Bucket([]byte(sessionsBucket))
 		idx := tx.Bucket([]byte(openRequestsBucket))
 		if b.Get([]byte(rec.SessionID)) != nil || idx.Get([]byte(requestID)) != nil {
@@ -377,7 +388,18 @@ func (s *Store) CreateIndexed(rec *Record, requestID string) error {
 				return err
 			}
 		}
-		return idx.Put([]byte(requestID), []byte(rec.SessionID))
+		if err := idx.Put([]byte(requestID), []byte(rec.SessionID)); err != nil {
+			return err
+		}
+		adm, err := tx.CreateBucketIfNotExists([]byte(admittedBucket))
+		if err != nil {
+			return err
+		}
+		stone, err := json.Marshal(admissionTombstone{JobID: rec.SessionID, AdmittedAt: now})
+		if err != nil {
+			return err
+		}
+		return adm.Put([]byte(requestID), stone)
 	})
 }
 
@@ -653,16 +675,17 @@ const (
 // OpenReservation is an open in flight: the request id is claimed and the
 // side effects performed so far are recorded.
 type OpenReservation struct {
-	RequestID       string    `json:"request_id"`
-	Fingerprint     []byte    `json:"fingerprint"`
-	Stage           string    `json:"stage"`
-	WorkID          string    `json:"work_id,omitempty"`
-	Sender          []byte    `json:"sender,omitempty"`
-	SharedIdentity  bool      `json:"shared_identity,omitempty"`
-	BackendRef      string    `json:"backend_ref,omitempty"`
-	RunnerSessionID string    `json:"runner_session_id,omitempty"`
-	CapacityRef     string    `json:"capacity_ref,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
+	RequestID            string    `json:"request_id"`
+	Fingerprint          []byte    `json:"fingerprint"`
+	Stage                string    `json:"stage"`
+	WorkID               string    `json:"work_id,omitempty"`
+	Sender               []byte    `json:"sender,omitempty"`
+	SharedIdentity       bool      `json:"shared_identity,omitempty"`
+	AccountAuthorization bool      `json:"account_authorization,omitempty"`
+	BackendRef           string    `json:"backend_ref,omitempty"`
+	RunnerSessionID      string    `json:"runner_session_id,omitempty"`
+	CapacityRef          string    `json:"capacity_ref,omitempty"`
+	CreatedAt            time.Time `json:"created_at"`
 }
 
 // ReserveOpen claims a request id before any side effect. ErrExists when
@@ -673,6 +696,9 @@ func (s *Store) ReserveOpen(requestID string, fingerprint []byte) error {
 		return errors.New("sessionstore: empty request id")
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
+		if na := tx.Bucket([]byte(nonAdmissionBucket)); na != nil && na.Get([]byte(requestID)) != nil {
+			return ErrNonAdmissionIssued
+		}
 		if tx.Bucket([]byte(openRequestsBucket)).Get([]byte(requestID)) != nil {
 			return ErrExists
 		}

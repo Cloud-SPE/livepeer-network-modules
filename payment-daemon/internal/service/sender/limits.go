@@ -37,11 +37,23 @@ type Limits struct {
 	// MaxPaymentWei caps funded_value_wei for a single mint. Nil means
 	// unlimited, which chain mode refuses at startup.
 	MaxPaymentWei *big.Int
+	// MaxAuthorizationWei caps the cumulative wholesale debit one signed
+	// job/session authorization may permit. It is deliberately independent
+	// from MaxPaymentWei: a large workload cap can draw reusable credit while
+	// each replenishment remains small.
+	MaxAuthorizationWei *big.Int
 
 	// MaxPricePerUnit maps a work-unit name to the highest price in wei
 	// this payer will accept for one unit of it. A unit absent from the
 	// map has no rate policy — the circuit breaker still applies.
 	MaxPricePerUnit map[string]*big.Int
+}
+
+func (l Limits) CheckAuthorization(maxDebitWei *big.Int) error {
+	if l.MaxAuthorizationWei != nil && maxDebitWei != nil && maxDebitWei.Cmp(l.MaxAuthorizationWei) > 0 {
+		return fmt.Errorf("max_debit %s wei exceeds max-authorization-wei %s", maxDebitWei, l.MaxAuthorizationWei)
+	}
+	return nil
 }
 
 // CheckMint refuses a mint that breaches policy, BEFORE anything is
@@ -103,6 +115,11 @@ func (l Limits) Describe() string {
 	parts := []string{"max_payment_wei=unlimited"}
 	if l.MaxPaymentWei != nil {
 		parts[0] = "max_payment_wei=" + l.MaxPaymentWei.String()
+	}
+	if l.MaxAuthorizationWei == nil {
+		parts = append(parts, "max_authorization_wei=unlimited")
+	} else {
+		parts = append(parts, "max_authorization_wei="+l.MaxAuthorizationWei.String())
 	}
 	if len(l.MaxPricePerUnit) == 0 {
 		parts = append(parts, "max_price_per_unit=(none set — only the circuit breaker applies)")

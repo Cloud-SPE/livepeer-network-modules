@@ -141,6 +141,76 @@ func (g *GRPC) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*
 	}, nil
 }
 
+func accountFromProto(in *pb.WholesaleAccountView) *WholesaleAccount {
+	if in == nil {
+		return nil
+	}
+	return &WholesaleAccount{
+		Payer: append([]byte(nil), in.GetPayer()...), Payee: append([]byte(nil), in.GetPayee()...),
+		Credited:  new(big.Int).SetBytes(in.GetCreditedValueWei().GetValue()),
+		Reserved:  new(big.Int).SetBytes(in.GetReservedValueWei().GetValue()),
+		Debited:   new(big.Int).SetBytes(in.GetDebitedValueWei().GetValue()),
+		Available: new(big.Int).SetBytes(in.GetAvailableValueWei().GetValue()),
+		Version:   in.GetVersion(), ObservedAt: in.GetObservedAt(), ChainID: in.GetChainId(), Denomination: in.GetDenomination(),
+	}
+}
+
+func (g *GRPC) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+	res, err := g.client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: paymentBytes})
+	if err != nil {
+		return nil, err
+	}
+	return &FundWholesaleAccountResult{Account: accountFromProto(res.GetAccount()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
+}
+
+func (g *GRPC) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
+	reservation := []byte(nil)
+	if req.Reservation != nil {
+		reservation = req.Reservation.Bytes()
+	}
+	res, err := g.client.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: req.AuthorizationBytes, PaymentBytes: req.PaymentBytes, ReservationValueWei: &pb.BigUInt{Value: reservation}})
+	if err != nil {
+		return nil, err
+	}
+	return &AdmitAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
+}
+
+func (g *GRPC) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error) {
+	target := []byte(nil)
+	if req.TargetReserved != nil {
+		target = req.TargetReserved.Bytes()
+	}
+	res, err := g.client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{Payer: req.Payer, AuthorizationId: req.AuthorizationID, CumulativeUnits: req.CumulativeUnits, TargetReservedValueWei: &pb.BigUInt{Value: target}, AdvanceSeq: req.AdvanceSeq, PaymentBytes: req.PaymentBytes})
+	if err != nil {
+		return nil, err
+	}
+	return &AdvanceAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), BilledDelta: new(big.Int).SetBytes(res.GetBilledDeltaWei().GetValue()), CumulativeBilled: new(big.Int).SetBytes(res.GetCumulativeBilledValueWei().GetValue()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
+}
+
+func (g *GRPC) SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error) {
+	res, err := g.client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: req.Payer, AuthorizationId: req.AuthorizationID, ActualUnits: req.ActualUnits, SettlementSeq: req.SettlementSeq})
+	if err != nil {
+		return nil, err
+	}
+	return &SettleAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
+}
+
+func (g *GRPC) GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error) {
+	res, err := g.client.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{Payer: payer})
+	if err != nil {
+		return nil, err
+	}
+	return accountFromProto(res.GetAccount()), nil
+}
+
+func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+	res, err := g.client.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: payer, AuthorizationId: authorizationID})
+	if err != nil {
+		return nil, err
+	}
+	return &SpendAuthorizationStatus{State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}, nil
+}
+
 func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
 	resp, err := g.client.DebitBalance(ctx, &pb.DebitBalanceRequest{
 		Sender:    req.Sender,
@@ -195,3 +265,4 @@ func (g *GRPC) CloseSession(ctx context.Context, sender []byte, workID string) e
 
 // Compile-time interface check.
 var _ Client = (*GRPC)(nil)
+var _ AccountClient = (*GRPC)(nil)

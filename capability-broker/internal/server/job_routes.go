@@ -82,7 +82,7 @@ func (s *Server) registerJobRoutes() {
 				// clearinghouse verifies settlement with one code path.
 				return settlement.Encode(rec, s.settlementSigner)
 			},
-			s.allocDebitSeq))(
+			s.allocDebitSeq, s.cfg.ExternalBaseURL))(
 			http.HandlerFunc(s.handleJob))))
 	s.mux.Handle("POST /v1/job", h)
 }
@@ -159,20 +159,34 @@ func toStorePending(pd *middleware.PendingDebit) *sessionstore.PendingDebit {
 	if pd.FundedValueWei != nil {
 		funded = pd.FundedValueWei.String()
 	}
+	reserved := "0"
+	if pd.ReservedValueWei != nil {
+		reserved = pd.ReservedValueWei.String()
+	}
+	accountFunding := "0"
+	if pd.AccountFundingWei != nil {
+		accountFunding = pd.AccountFundingWei.String()
+	}
 	return &sessionstore.PendingDebit{
-		Sender:            append([]byte(nil), pd.Sender...),
-		WorkID:            pd.WorkID,
-		DebitSeq:          pd.DebitSeq,
-		Units:             pd.Units,
-		DebitedUnits:      pd.DebitedUnits,
-		PaymentBytes:      append([]byte(nil), pd.PaymentBytes...),
-		FundedValueWei:    funded,
-		ActualUnits:       pd.ActualUnits,
-		WorkUnitName:      pd.WorkUnitName,
-		TerminationReason: pd.TerminationReason,
-		JobID:             pd.JobID,
-		RequestID:         pd.RequestID,
-		IssuedAt:          pd.IssuedAt,
+		AccountAuthorization: pd.AccountAuthorization,
+		AuthorizationBytes:   append([]byte(nil), pd.AuthorizationBytes...),
+		Sender:               append([]byte(nil), pd.Sender...),
+		WorkID:               pd.WorkID,
+		DebitSeq:             pd.DebitSeq,
+		Units:                pd.Units,
+		DebitedUnits:         pd.DebitedUnits,
+		PaymentBytes:         append([]byte(nil), pd.PaymentBytes...),
+		FundedValueWei:       funded,
+		ReservedValueWei:     reserved,
+		AccountFundingWei:    accountFunding,
+		AccountVersion:       pd.AccountVersion,
+		ActualUnits:          pd.ActualUnits,
+		MeasuredUnits:        pd.MeasuredUnits,
+		WorkUnitName:         pd.WorkUnitName,
+		TerminationReason:    pd.TerminationReason,
+		JobID:                pd.JobID,
+		RequestID:            pd.RequestID,
+		IssuedAt:             pd.IssuedAt,
 		// Due immediately: the first retry should not wait out a backoff
 		// the exchange has not earned yet.
 		NextAttemptAt: time.Now().UTC(),
@@ -336,6 +350,10 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		if c == nil {
 			livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
 				"no paid-job offering "+capID+"/"+offID)
+			return
+		}
+		if r.Header.Get(livepeerheader.Authorization) != "" && !supportsWholesaleAccounts(c) {
+			livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "offering does not advertise wholesale account authorization support")
 			return
 		}
 		// Transport refusal happens before any payment side effects.

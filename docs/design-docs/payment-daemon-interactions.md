@@ -33,6 +33,13 @@ The payment primitives are shared. What changes between the two is who owns the
 long-lived session meter and when customer-ledger commits happen; the trust
 framing for both is [`dual-meter-trust.md`](./dual-meter-trust.md).
 
+> **Proposed account model.** This document describes the currently implemented
+> request/session-funded v1 contract. The approved replacement design separates
+> stable payer-payee account funding from single-purpose job/session spend
+> authorization, mints only account shortfall, and supports callers that invoke
+> the broker directly. See
+> [`wholesale-credit-accounts.md`](./wholesale-credit-accounts.md) and plan 0049.
+
 > **Important rewrite-specific change.** In the rewrite, the daemon no longer
 > enforces a closed enum of capability or work-unit names. Both are opaque
 > strings on the wire; the daemon does the arithmetic `final_price_wei =

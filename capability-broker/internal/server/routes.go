@@ -33,6 +33,8 @@ func (s *Server) registerRoutes() {
 	// conservative full charge the broker had evidence against.
 	s.mux.HandleFunc("GET /v1/exchange/{request_id}", s.handleExchangeByRequestID)
 	s.mux.HandleFunc("POST /v1/payment/ticket-params", ticketParamsHandler(s.payment))
+	s.mux.HandleFunc("POST /v1/payment/account", paymentAccountHandler(s.payment))
+	s.mux.HandleFunc("POST /v1/payment/account/fund", s.handlePaymentAccountFund)
 	s.mux.HandleFunc("GET /admin/v1/runtime", s.handleRuntimeStatus)
 	s.mux.HandleFunc("POST /admin/v1/runtime/reload", s.handleRuntimeReload)
 	// The runner attach endpoint. The path keeps its old spelling on

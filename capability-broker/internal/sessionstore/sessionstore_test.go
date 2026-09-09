@@ -420,3 +420,43 @@ func TestEvictTerminalReleasesGatewaySessionID(t *testing.T) {
 		t.Fatalf("id not released after eviction: %v", err)
 	}
 }
+
+func TestSessionAdmissionAndNonAdmissionAreMutuallyExclusive(t *testing.T) {
+	t.Run("signed non-admission blocks later open", func(t *testing.T) {
+		s, _ := openTemp(t)
+		if _, err := s.RecordNonAdmission("req-never", "signed-envelope", time.Now()); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.ReserveOpen("req-never", []byte("same-open")); !errors.Is(err, ErrNonAdmissionIssued) {
+			t.Fatalf("reserve after non-admission=%v; want ErrNonAdmissionIssued", err)
+		}
+	})
+
+	t.Run("in-flight open blocks non-admission", func(t *testing.T) {
+		s, _ := openTemp(t)
+		if err := s.ReserveOpen("req-opening", []byte("open")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := s.RecordNonAdmission("req-opening", "contradictory", time.Now()); !errors.Is(err, ErrExists) {
+			t.Fatalf("non-admission during open=%v; want ErrExists", err)
+		}
+	})
+
+	t.Run("completed session leaves admission tombstone", func(t *testing.T) {
+		s, _ := openTemp(t)
+		if err := s.ReserveOpen("req-session", []byte("open")); err != nil {
+			t.Fatal(err)
+		}
+		rec := sampleRecord()
+		if err := s.CreateIndexed(rec, "req-session"); err != nil {
+			t.Fatal(err)
+		}
+		admitted, id, err := s.WasAdmitted("req-session")
+		if err != nil || !admitted || id != rec.SessionID {
+			t.Fatalf("session tombstone admitted=%v id=%q err=%v", admitted, id, err)
+		}
+		if _, err := s.RecordNonAdmission("req-session", "contradictory", time.Now()); !errors.Is(err, ErrExists) {
+			t.Fatalf("non-admission after session=%v; want ErrExists", err)
+		}
+	})
+}

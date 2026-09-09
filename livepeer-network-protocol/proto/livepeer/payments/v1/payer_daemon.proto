@@ -47,6 +47,10 @@ service PayerDaemon {
   // value they requested.
   rpc CreatePayment(CreatePaymentRequest) returns (CreatePaymentResponse);
 
+  // Sign one single-purpose job/session spend authorization. This grants no
+  // generic access to the payer's wholesale balance and creates no ticket.
+  rpc CreateSpendAuthorization(CreateSpendAuthorizationRequest) returns (CreateSpendAuthorizationResponse);
+
   // Report the payee-side outcome for a previously-minted payment. The
   // payer daemon uses this to invalidate cached session state when the
   // payee reports a machine-readable rejection such as
@@ -126,6 +130,10 @@ message CreatePaymentRequest {
   // would double-pay. The tombstone is a hash, not the key, so retention
   // costs ~80 bytes per mint forever.
   string mint_request_id = 5;
+
+  // When present, funding.funded_value_wei is treated as a legacy ceiling and
+  // the daemon mints only max(0, target_available-observed_available).
+  AccountFundingIntent account_funding = 6;
 }
 
 message CreatePaymentResponse {
@@ -216,6 +224,36 @@ message CreatePaymentResponse {
   // second ago. Treat it as telemetry for detecting drift, not as
   // authority over anything.
   string ticket_validity_period_observed_at = 10;
+
+  // Actual shortfall requested after applying account_funding. Equal to
+  // funded_value_wei for legacy request-funded calls.
+  BigUInt account_shortfall_wei = 12;
+}
+
+message CreateSpendAuthorizationRequest {
+  bytes payee = 1;
+  string authorization_id = 2;
+  string request_id = 3;
+  string session_id = 4;
+  string protocol = 5;
+  AcceptedPrice accepted_price = 6;
+  BigUInt max_debit_wei = 7;
+  uint64 max_total_units = 8;
+  string not_before = 9;
+  string expires_at = 10;
+  bytes request_digest = 11;
+  bytes caller_public_key = 12;
+  uint64 revision = 13;
+  string predecessor_authorization_id = 14;
+  string broker_uri = 15;
+  uint64 chain_id = 16;
+  string denomination = 17;
+}
+
+message CreateSpendAuthorizationResponse {
+  bytes authorization_bytes = 1;
+  string authorization_id = 2;
+  bytes payer = 3;
 }
 
 message ReportPaymentResultRequest {

@@ -41,6 +41,11 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   `ReportPaymentResult` lets a caller report
   `INVALID_RECIPIENT_RAND` back to the daemon. The daemon evicts the
   stale cached session and returns `codes.Aborted` with retry details.
+- `CreateSpendAuthorization` signs a chain-, route-, price-, and
+  workload-bound grant without minting. Account-aware `CreatePayment` mints
+  only target-float shortfall and returns no payment at zero shortfall.
+- Receiver account RPCs atomically admit, reserve, advance session runway,
+  settle actual units, release unused value, and expose account state.
 - `PayeeAdmin.ResetSession` gives operators an explicit session-rotation
   surface instead of relying on daemon restarts.
 - **Chain integration is available when `--chain-rpc-urls` is set.** In dev
@@ -48,8 +53,11 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   key; in production mode it validates against real chain state and runs
   the redemption pipeline.
 - **Chain mode requires a spend limit.** A sender daemon will not start
-  without `--max-payment-wei`, the most it may authorize for a single
-  payment. Optional `--max-price-per-unit` adds per-work-unit rate
+  without `--max-payment-wei`, the most actual expected value it may sign in
+  one replenishment or legacy payment. This is a circuit breaker, not a
+  workload-size setting. Optional `--max-authorization-wei` independently caps
+  the cumulative debit one job/session may consume. Optional
+  `--max-price-per-unit` adds per-work-unit rate
   ceilings, which is how a deployment mixing cheap and expensive
   workloads gets meaningful protection. See
   [operator-runbook §3.5](./docs/operator-runbook.md).

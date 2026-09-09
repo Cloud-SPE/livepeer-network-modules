@@ -1,8 +1,8 @@
 ---
 spec_name: paid-session
-version: 1.0.11-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-08-26
+last_updated: 2026-09-08
 ---
 
 # Protocol: `paid-session/v1`
@@ -89,7 +89,10 @@ bill against it is strongest.
 `POST /v1/session`
 
 Required headers: `Livepeer-Protocol: paid-session/v1`, `Livepeer-Capability`,
-`Livepeer-Offering`, `Livepeer-Request-Id`, `Livepeer-Payment`.
+`Livepeer-Offering`, and `Livepeer-Request-Id`. The legacy path requires
+`Livepeer-Payment`. The wholesale-account path requires
+`Livepeer-Authorization` and carries `Livepeer-Payment` only for an account
+shortfall; see [`wholesale-account.md`](./wholesale-account.md).
 
 Open is idempotent on `Livepeer-Request-Id` under the same contract as
 `paid-job/v1` §4: a retried open converges on the original outcome and never
@@ -683,6 +686,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-09-09 | Adds cumulative single-purpose session authorization over a stable wholesale account. Admission reserves bounded runway, usage advances the cumulative debit and replaces runway atomically, aggregate shortfall funding is optional, and wind-down releases the remainder. |
 | 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |
 | 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |
 | 1.0.9-draft | 2026-08-21 | §3.3.1: `gateway_session_id` is REQUIRED on open and an omitted or empty one MUST be refused with `invalid_request` — uniqueness was enforced only when the field was present, so a client that never sent it opened sessions indefinitely and got settlements nobody could resolve, with no signal at any point. Also states that a gateway needs no rotation notice to rebind: the predecessor is the last `work_id` it held, readable from `GET /v1/session/{id}`, so the §8 socket is an optimisation and not a precondition. Both raised by the meeting team. |

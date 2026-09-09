@@ -149,6 +149,20 @@ func TestMockRefusesDebitsOnAClosedSession(t *testing.T) {
 	}
 }
 
+func TestMockClosesUnsealedRecoverySession(t *testing.T) {
+	m := NewMock()
+	ctx := context.Background()
+	if _, err := m.OpenSession(ctx, OpenSessionRequest{
+		WorkID: "lost-state", Capability: "c", Offering: "o", WorkUnit: "tokens",
+		PricePerWorkUnitWei: big.NewInt(1), PerUnits: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CloseSession(ctx, []byte("old-payer-address-12"), "lost-state"); err != nil {
+		t.Fatalf("close unsealed recovery session: %v", err)
+	}
+}
+
 // TestMockRecoversTheSenderFromThePayment: one wallet minting against
 // two ticket identities is a rotation, not two wallets. Deriving the
 // sender from the whole payment made a rebind fail a sender check that

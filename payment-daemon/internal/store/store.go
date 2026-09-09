@@ -34,10 +34,13 @@ import (
 )
 
 const (
-	sessionsBucket  = "sessions"
-	debitSeqsBucket = "debit_seqs"
-	capIndexBucket  = "capability_index"
-	ticketIdxBucket = "ticket_session_index"
+	sessionsBucket            = "sessions"
+	debitSeqsBucket           = "debit_seqs"
+	capIndexBucket            = "capability_index"
+	ticketIdxBucket           = "ticket_session_index"
+	wholesaleAccountsBucket   = "wholesale_accounts"
+	spendAuthorizationsBucket = "spend_authorizations"
+	wholesaleTotalsBucket     = "wholesale_totals"
 
 	// Plan 0016 buckets — owned by store, consumed by receiver +
 	// settlement via the helper methods further down this file.
@@ -172,6 +175,7 @@ func Open(path string) (*Store, error) {
 	if err := db.Update(func(tx *bolt.Tx) error {
 		for _, name := range []string{
 			sessionsBucket, debitSeqsBucket, capIndexBucket, ticketIdxBucket,
+			wholesaleAccountsBucket, spendAuthorizationsBucket, wholesaleTotalsBucket,
 			noncesBucket, mintsBucket, tombstonesBucket,
 			redemptionsPending, redemptionsByHash, redemptionsRedeemed, redemptionsMeta,
 		} {
@@ -674,7 +678,17 @@ func (s *Store) CloseSession(sender []byte, workID string) (alreadyClosed bool, 
 		bucket := tx.Bucket([]byte(sessionsBucket))
 		raw := bucket.Get(composite)
 		if raw == nil {
-			return ErrNotFound
+			// Recovery may have just recreated an unsealed session after
+			// discovering that the old payment state was lost. Closing that
+			// known work_id must be possible before any payment reseals it;
+			// otherwise fail-closed recovery remains winding_down forever.
+			// A sealed session never lives under this key, so this fallback
+			// cannot close another sender's balance.
+			composite = compositeKey(nil, workID)
+			raw = bucket.Get(composite)
+			if raw == nil {
+				return ErrNotFound
+			}
 		}
 		var sess Session
 		if err := json.Unmarshal(raw, &sess); err != nil {

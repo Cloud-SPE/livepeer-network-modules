@@ -15,9 +15,11 @@ import (
 // that owns the durable job record (idempotency), and the response has
 // usually been written by the time the debit runs.
 type PendingDebit struct {
-	Sender   []byte
-	WorkID   string
-	DebitSeq uint64
+	AccountAuthorization bool
+	AuthorizationBytes   []byte
+	Sender               []byte
+	WorkID               string
+	DebitSeq             uint64
 	// Units is what THIS debit is for — the final flush, which on a long
 	// exchange is less than the exchange's total.
 	Units uint64
@@ -29,7 +31,11 @@ type PendingDebit struct {
 	// Inputs for building the settlement once the charge is known.
 	PaymentBytes      []byte
 	FundedValueWei    *big.Int
+	ReservedValueWei  *big.Int
+	AccountFundingWei *big.Int
+	AccountVersion    uint64
 	ActualUnits       uint64
+	MeasuredUnits     uint64
 	WorkUnitName      string
 	TerminationReason string
 	JobID             string

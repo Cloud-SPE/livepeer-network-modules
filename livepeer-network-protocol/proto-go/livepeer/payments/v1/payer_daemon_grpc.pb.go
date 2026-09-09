@@ -33,11 +33,12 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PayerDaemon_CreatePayment_FullMethodName       = "/livepeer.payments.v1.PayerDaemon/CreatePayment"
-	PayerDaemon_ReportPaymentResult_FullMethodName = "/livepeer.payments.v1.PayerDaemon/ReportPaymentResult"
-	PayerDaemon_GetDepositInfo_FullMethodName      = "/livepeer.payments.v1.PayerDaemon/GetDepositInfo"
-	PayerDaemon_GetSessionDebits_FullMethodName    = "/livepeer.payments.v1.PayerDaemon/GetSessionDebits"
-	PayerDaemon_Health_FullMethodName              = "/livepeer.payments.v1.PayerDaemon/Health"
+	PayerDaemon_CreatePayment_FullMethodName            = "/livepeer.payments.v1.PayerDaemon/CreatePayment"
+	PayerDaemon_CreateSpendAuthorization_FullMethodName = "/livepeer.payments.v1.PayerDaemon/CreateSpendAuthorization"
+	PayerDaemon_ReportPaymentResult_FullMethodName      = "/livepeer.payments.v1.PayerDaemon/ReportPaymentResult"
+	PayerDaemon_GetDepositInfo_FullMethodName           = "/livepeer.payments.v1.PayerDaemon/GetDepositInfo"
+	PayerDaemon_GetSessionDebits_FullMethodName         = "/livepeer.payments.v1.PayerDaemon/GetSessionDebits"
+	PayerDaemon_Health_FullMethodName                   = "/livepeer.payments.v1.PayerDaemon/Health"
 )
 
 // PayerDaemonClient is the client API for PayerDaemon service.
@@ -69,6 +70,9 @@ type PayerDaemonClient interface {
 	// assume the returned winning-ticket face value equals the funded
 	// value they requested.
 	CreatePayment(ctx context.Context, in *CreatePaymentRequest, opts ...grpc.CallOption) (*CreatePaymentResponse, error)
+	// Sign one single-purpose job/session spend authorization. This grants no
+	// generic access to the payer's wholesale balance and creates no ticket.
+	CreateSpendAuthorization(ctx context.Context, in *CreateSpendAuthorizationRequest, opts ...grpc.CallOption) (*CreateSpendAuthorizationResponse, error)
 	// Report the payee-side outcome for a previously-minted payment. The
 	// payer daemon uses this to invalidate cached session state when the
 	// payee reports a machine-readable rejection such as
@@ -111,6 +115,16 @@ func (c *payerDaemonClient) CreatePayment(ctx context.Context, in *CreatePayment
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CreatePaymentResponse)
 	err := c.cc.Invoke(ctx, PayerDaemon_CreatePayment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payerDaemonClient) CreateSpendAuthorization(ctx context.Context, in *CreateSpendAuthorizationRequest, opts ...grpc.CallOption) (*CreateSpendAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CreateSpendAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayerDaemon_CreateSpendAuthorization_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -186,6 +200,9 @@ type PayerDaemonServer interface {
 	// assume the returned winning-ticket face value equals the funded
 	// value they requested.
 	CreatePayment(context.Context, *CreatePaymentRequest) (*CreatePaymentResponse, error)
+	// Sign one single-purpose job/session spend authorization. This grants no
+	// generic access to the payer's wholesale balance and creates no ticket.
+	CreateSpendAuthorization(context.Context, *CreateSpendAuthorizationRequest) (*CreateSpendAuthorizationResponse, error)
 	// Report the payee-side outcome for a previously-minted payment. The
 	// payer daemon uses this to invalidate cached session state when the
 	// payee reports a machine-readable rejection such as
@@ -226,6 +243,9 @@ type UnimplementedPayerDaemonServer struct{}
 
 func (UnimplementedPayerDaemonServer) CreatePayment(context.Context, *CreatePaymentRequest) (*CreatePaymentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CreatePayment not implemented")
+}
+func (UnimplementedPayerDaemonServer) CreateSpendAuthorization(context.Context, *CreateSpendAuthorizationRequest) (*CreateSpendAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CreateSpendAuthorization not implemented")
 }
 func (UnimplementedPayerDaemonServer) ReportPaymentResult(context.Context, *ReportPaymentResultRequest) (*ReportPaymentResultResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ReportPaymentResult not implemented")
@@ -274,6 +294,24 @@ func _PayerDaemon_CreatePayment_Handler(srv interface{}, ctx context.Context, de
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PayerDaemonServer).CreatePayment(ctx, req.(*CreatePaymentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayerDaemon_CreateSpendAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CreateSpendAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayerDaemonServer).CreateSpendAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayerDaemon_CreateSpendAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayerDaemonServer).CreateSpendAuthorization(ctx, req.(*CreateSpendAuthorizationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -360,6 +398,10 @@ var PayerDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CreatePayment",
 			Handler:    _PayerDaemon_CreatePayment_Handler,
+		},
+		{
+			MethodName: "CreateSpendAuthorization",
+			Handler:    _PayerDaemon_CreateSpendAuthorization_Handler,
 		},
 		{
 			MethodName: "ReportPaymentResult",

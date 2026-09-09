@@ -9,6 +9,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [architecture-overview.md](./architecture-overview.md) | active | The 8-layer architecture at a glance, with mermaid diagrams per layer |
 | [interaction-modes.md](./interaction-modes.md) | active | The two paid protocols (`paid-job/v1`, `paid-session/v1`), declared axes, and how a capability picks its shape |
 | [payment-daemon-interactions.md](./payment-daemon-interactions.md) | active | Cross-cutting guide to how the client, broker, and both `payment-daemon` roles interact |
+| [wholesale-credit-accounts.md](./wholesale-credit-accounts.md) | proposed | Fair reusable payer-payee credit, single-purpose delegated invocation, shortfall funding, and separate customer/wholesale ledgers |
 | [streaming-workload-pattern.md](./streaming-workload-pattern.md) | superseded | Mode-era long-lived-session blueprint; durability requirements live on in `paid-session/v1`, trust framing in `dual-meter-trust.md` |
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
 | [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, protocols, session, debit, settlement, and pool receipts |

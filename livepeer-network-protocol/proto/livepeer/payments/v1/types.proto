@@ -214,6 +214,76 @@ message FundingIntent {
   bool top_up_allowed = 4;
 }
 
+// SpendAuthorizationPayload is the payer-signed authority for exactly one
+// job or logical session. It is deliberately separate from Payment: tickets
+// add value to a stable payer-payee account, while this payload says which
+// engagement may reserve and debit that value.
+//
+// Signature input is the deterministic protobuf encoding of this message,
+// hashed with keccak256 and signed with Ethereum personal_sign (EIP-191).
+message SpendAuthorizationPayload {
+  // Domain/version tag. Producers MUST set
+  // "livepeer-spend-authorization/v1".
+  string domain = 1;
+  bytes payer = 2;
+  bytes payee = 3;
+  string authorization_id = 4;
+  string request_id = 5;
+  string session_id = 6;
+  string protocol = 7;
+  string capability = 8;
+  string offering = 9;
+  AcceptedPrice accepted_price = 10;
+  BigUInt max_debit_wei = 11;
+  uint64 max_total_units = 12;
+  string not_before = 13;
+  string expires_at = 14;
+  bytes request_digest = 15;
+  bytes caller_public_key = 16;
+  uint64 revision = 17;
+  string predecessor_authorization_id = 18;
+  string broker_uri = 19;
+  uint64 chain_id = 20;
+  string denomination = 21;
+}
+
+message SpendAuthorization {
+  SpendAuthorizationPayload payload = 1;
+  bytes signature = 2;
+}
+
+enum SpendAuthorizationState {
+  SPEND_AUTHORIZATION_STATE_UNSPECIFIED = 0;
+  SPEND_AUTHORIZATION_ISSUED = 1;
+  SPEND_AUTHORIZATION_ADMITTED = 2;
+  SPEND_AUTHORIZATION_SETTLED = 3;
+  SPEND_AUTHORIZATION_EXPIRED_UNUSED = 4;
+  SPEND_AUTHORIZATION_OUTCOME_UNKNOWN = 5;
+  SPEND_AUTHORIZATION_SUPERSEDED = 6;
+}
+
+// AccountFundingIntent asks the sender to fund only the difference between a
+// payer-selected target float and a trusted receiver balance observation.
+// The caller is the payer application on the sender daemon's trusted socket;
+// untrusted end callers never supply these values directly.
+message AccountFundingIntent {
+  BigUInt target_available_wei = 1;
+  BigUInt observed_available_wei = 2;
+}
+
+message WholesaleAccountView {
+  bytes payer = 1;
+  bytes payee = 2;
+  BigUInt credited_value_wei = 3;
+  BigUInt reserved_value_wei = 4;
+  BigUInt debited_value_wei = 5;
+  BigUInt available_value_wei = 6;
+  uint64 version = 7;
+  string observed_at = 8;
+  uint64 chain_id = 9;
+  string denomination = 10;
+}
+
 // SettlementRecord is the broker-authoritative accounting result for a request/session.
 message SettlementRecord {
   QuoteRef accepted_quote_ref = 1;
@@ -367,6 +437,16 @@ message SettlementRecord {
   // populated; it binds to the caller's own record only when the caller
   // chose it.
   string request_id = 27;
+
+  // ---- wholesale-account path ----
+  // Empty on the legacy ticket-session path. These fields keep account
+  // funding, temporary reservation, and actual debit visibly distinct.
+  string authorization_id = 28;
+  BigUInt authorized_value_wei = 29;
+  BigUInt reserved_value_wei = 30;
+  BigUInt released_value_wei = 31;
+  BigUInt account_funding_value_wei = 32;
+  uint64 account_version = 33;
 }
 
 // NonAdmissionRecord is a broker's signed statement that it never

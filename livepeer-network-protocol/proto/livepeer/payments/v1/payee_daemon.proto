@@ -57,6 +57,25 @@ service PayeeDaemon {
   // redemption. Requires a previously-opened session for `work_id`.
   rpc ProcessPayment(ProcessPaymentRequest) returns (ProcessPaymentResponse);
 
+  // Credit a validated ticket batch to the stable payer-payee account without
+  // admitting work. This lets an out-of-path payer replenish aggregate float
+  // independently of the caller or SDK that invokes a live session.
+  rpc FundWholesaleAccount(FundWholesaleAccountRequest) returns (FundWholesaleAccountResponse);
+
+  // Apply optional account funding and atomically reserve a single-purpose
+  // authorization before backend work starts.
+  rpc AdmitAuthorization(AdmitAuthorizationRequest) returns (AdmitAuthorizationResponse);
+
+  // Advance cumulative session usage and atomically restore a bounded runway
+  // reservation. Optional payment funds only an aggregate account shortfall.
+  rpc AdvanceAuthorization(AdvanceAuthorizationRequest) returns (AdvanceAuthorizationResponse);
+
+  // Settle actual delivered units and release the unused reservation.
+  rpc SettleAuthorization(SettleAuthorizationRequest) returns (SettleAuthorizationResponse);
+
+  rpc GetWholesaleAccount(GetWholesaleAccountRequest) returns (GetWholesaleAccountResponse);
+  rpc GetSpendAuthorization(GetSpendAuthorizationRequest) returns (GetSpendAuthorizationResponse);
+
   // Debit session-priced work units from a (sender, work_id) balance
   // after the payee has actually done the work. Retries are
   // idempotent by `(sender, work_id, debit_seq)`. Returns the new
@@ -241,6 +260,16 @@ message ProcessPaymentRequest {
   string work_id = 2;
 }
 
+message FundWholesaleAccountRequest {
+  bytes payment_bytes = 1;
+}
+
+message FundWholesaleAccountResponse {
+  WholesaleAccountView account = 1;
+  BigUInt credited_value_wei = 2;
+  bool replayed = 3;
+}
+
 message ProcessPaymentResponse {
   // Sender address extracted from the validated payment.
   bytes sender = 1;
@@ -266,6 +295,82 @@ message ProcessPaymentResponse {
   // Dominant rejection reason across the rejected tickets. UNSPECIFIED
   // when no tickets were rejected.
   PaymentRejectionReason dominant_rejection = 7;
+}
+
+message AdmitAuthorizationRequest {
+  bytes authorization_bytes = 1;
+  // Optional wire Payment. Empty when the stable account already has enough
+  // available value for this reservation.
+  bytes payment_bytes = 2;
+  // Amount to reserve at admission. Jobs normally request max_debit_wei;
+  // sessions request only bounded runway. Empty means max_debit_wei for
+  // backwards compatibility.
+  BigUInt reservation_value_wei = 3;
+}
+
+message AdvanceAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+  uint64 cumulative_units = 3;
+  BigUInt target_reserved_value_wei = 4;
+  uint64 advance_seq = 5;
+  bytes payment_bytes = 6;
+}
+
+message AdvanceAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt billed_delta_wei = 3;
+  BigUInt cumulative_billed_value_wei = 4;
+  BigUInt reserved_value_wei = 5;
+  BigUInt credited_value_wei = 6;
+  bool replayed = 7;
+}
+
+message AdmitAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt reserved_value_wei = 3;
+  BigUInt credited_value_wei = 4;
+  bool replayed = 5;
+}
+
+message SettleAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+  uint64 actual_units = 3;
+  uint64 settlement_seq = 4;
+}
+
+message SettleAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt billed_value_wei = 3;
+  BigUInt released_value_wei = 4;
+  bool replayed = 5;
+}
+
+message GetWholesaleAccountRequest {
+  bytes payer = 1;
+}
+
+message GetWholesaleAccountResponse {
+  WholesaleAccountView account = 1;
+}
+
+message GetSpendAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+}
+
+message GetSpendAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  BigUInt reserved_value_wei = 2;
+  BigUInt billed_value_wei = 3;
+  BigUInt released_value_wei = 4;
+  uint64 actual_units = 5;
+  uint64 settlement_seq = 6;
+  string observed_at = 7;
 }
 
 message DebitBalanceRequest {

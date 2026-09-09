@@ -1,7 +1,7 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.0.8-draft
-last_updated: 2026-08-26
+spec_version: 1.1.0-draft
+last_updated: 2026-09-08
 ---
 
 # Livepeer wire headers
@@ -32,7 +32,9 @@ Out of scope:
 |---|---|---|---|---|
 | `Livepeer-Capability` | request → broker | yes | gateway | broker, payment-daemon |
 | `Livepeer-Offering` | request → broker | yes | gateway | broker, payment-daemon |
-| `Livepeer-Payment` | request → broker | yes | gateway (via payment-daemon sender) | broker (via payment-daemon receiver) |
+| `Livepeer-Payment` | request → broker | legacy path; optional account top-up | gateway (via payment-daemon sender) | broker (via payment-daemon receiver) |
+| `Livepeer-Authorization` | request → broker | account-funded requests | payer (via payment-daemon sender) | broker, payment-daemon receiver |
+| `Livepeer-Caller-Proof` | request → broker | when authorization binds `caller_public_key` | delegated caller | broker |
 | `Livepeer-Protocol` | request → broker | yes | gateway | broker |
 | `Livepeer-Request-Id` | request → broker | yes | gateway | broker (idempotency key; echoed back) |
 | `Livepeer-Backoff` | response from broker | when 503 | broker | gateway |
@@ -88,6 +90,39 @@ Behavior:
   `Livepeer-Error: payment_invalid`.
 - The envelope's wire shape is owned by `payment-daemon`; the protobuf definition
   lives there. This document references it; do not duplicate.
+
+On an account-funded request carrying `Livepeer-Authorization`, this header is
+optional when the stable payer-payee account already has enough available
+value. When present it funds only the account shortfall; it does not define the
+engagement's maximum authority.
+
+### `Livepeer-Authorization`
+
+Base64-encoded `livepeer.payments.v1.SpendAuthorization`. Required for the
+wholesale-account path defined in
+[`wholesale-account.md`](../protocols/wholesale-account.md).
+
+It grants one request or logical session a bounded debit from a stable
+payer-payee account. The broker MUST verify its payer signature and exact
+binding to the request/session, payee, capability, offering, protocol, quote,
+work-unit curve, maximum, validity, and workload commitment before backend
+work. It MUST NOT treat possession as generic authority over the account.
+
+### `Livepeer-Caller-Proof`
+
+When `SpendAuthorization.payload.caller_public_key` is non-empty, the caller
+MUST prove possession with a base64-encoded 65-byte secp256k1 signature. The
+signature uses Ethereum personal-sign (EIP-191) over:
+
+```text
+keccak256("livepeer-invocation-proof/v1\x00" || authorization_bytes)
+```
+
+The broker recovers the public key and requires an exact match. An
+authorization with an empty caller key intentionally has exact-scope bearer
+semantics; supplying a proof in that case is an error. The signature is
+`R || S || V`; `V` MUST be 27 or 28, matching the authorization signature
+encoding.
 
 ### `Livepeer-Protocol`
 

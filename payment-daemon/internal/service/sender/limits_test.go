@@ -2,10 +2,28 @@ package sender_test
 
 import (
 	"math/big"
+	"strings"
 	"testing"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
 )
+
+func TestLimitsDescribeIsStableAndComplete(t *testing.T) {
+	if got := (sender.Limits{}).Describe(); !strings.Contains(got, "max_payment_wei=unlimited") || !strings.Contains(got, "max_authorization_wei=unlimited") || !strings.Contains(got, "max_price_per_unit=(none set") {
+		t.Fatalf("empty limits description = %q", got)
+	}
+	configured := sender.Limits{
+		MaxPaymentWei:       big.NewInt(10),
+		MaxAuthorizationWei: big.NewInt(100),
+		MaxPricePerUnit: map[string]*big.Int{
+			"z_units": big.NewInt(3),
+			"a_units": big.NewInt(2),
+		},
+	}
+	if got := configured.Describe(); got != "max_payment_wei=10 max_authorization_wei=100 max_price_per_unit=a_units=2,z_units=3" {
+		t.Fatalf("configured limits description = %q", got)
+	}
+}
 
 func TestLimitsCircuitBreaker(t *testing.T) {
 	l := sender.Limits{MaxPaymentWei: big.NewInt(1000)}
@@ -14,6 +32,19 @@ func TestLimitsCircuitBreaker(t *testing.T) {
 	}
 	if err := l.CheckMint("tokens", big.NewInt(1), 1, big.NewInt(1001)); err == nil {
 		t.Fatal("funding above the cap was authorized")
+	}
+}
+
+func TestLimitsAuthorizationIndependentFromMint(t *testing.T) {
+	l := sender.Limits{MaxPaymentWei: big.NewInt(100), MaxAuthorizationWei: big.NewInt(10_000)}
+	if err := l.CheckMint("tokens", big.NewInt(1), 1, big.NewInt(100)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.CheckAuthorization(big.NewInt(10_000)); err != nil {
+		t.Fatal(err)
+	}
+	if err := l.CheckAuthorization(big.NewInt(10_001)); err == nil {
+		t.Fatal("authorization above its independent cap accepted")
 	}
 }
 

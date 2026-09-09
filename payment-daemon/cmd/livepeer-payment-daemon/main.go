@@ -77,6 +77,8 @@ func main() {
 		maxPaymentWei = flag.String("max-payment-wei", "",
 			"sender: REQUIRED in chain mode. Largest funded value this daemon will authorize for a single payment, in wei. "+
 				"A circuit breaker against runaway loops and fat-fingered funding, not a price policy — see --max-price-per-unit.")
+		maxAuthorizationWei = flag.String("max-authorization-wei", "",
+			"sender: optional maximum cumulative debit permitted by one job/session spend authorization. Independent of --max-payment-wei so large workloads can consume reusable credit while replenishments stay bounded.")
 		maxPricePerUnit = flag.String("max-price-per-unit", "",
 			"sender: optional rate ceilings as unit=wei pairs, e.g. 'tokens=10,video_seconds=2000000000000000'. "+
 				"Keyed by work unit because that is the denominator prices are quoted in; a unit not listed keeps only the circuit breaker.")
@@ -163,6 +165,7 @@ func main() {
 		txintentDBPath:        intentDBPath,
 		mintRetention:         *mintRetention,
 		maxPaymentWei:         *maxPaymentWei,
+		maxAuthorizationWei:   *maxAuthorizationWei,
 		maxPricePerUnit:       *maxPricePerUnit,
 		payeeAdminToken:       adminToken,
 		payerAdminToken:       *payerAdminToken,
@@ -204,6 +207,7 @@ type bootConfig struct {
 	txintentDBPath        string
 	mintRetention         time.Duration
 	maxPaymentWei         string
+	maxAuthorizationWei   string
 	maxPricePerUnit       string
 	payeeAdminToken       string
 	payerAdminToken       string
@@ -403,7 +407,7 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		}
 	}
 
-	svc := receiver.New(st, receiver.Config{Recipient: recipient, Recorder: rec}, logger.With("component", "receiver"))
+	svc := receiver.New(st, receiver.Config{Recipient: recipient, ChainID: uint64(cfg.expectedChainID), Recorder: rec}, logger.With("component", "receiver"))
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: cfg.payeeAdminToken}, cfg.socketPath, rec, logger.With("component", "grpc"))
 
 	if len(cfg.chainRPCURLs) > 0 {
@@ -841,5 +845,12 @@ func buildLimits(cfg bootConfig) (sender.Limits, error) {
 		return out, fmt.Errorf("--max-price-per-unit: %w", err)
 	}
 	out.MaxPricePerUnit = rates
+	if raw := strings.TrimSpace(cfg.maxAuthorizationWei); raw != "" {
+		v, ok := new(big.Int).SetString(raw, 10)
+		if !ok || v.Sign() <= 0 {
+			return out, fmt.Errorf("--max-authorization-wei %q must be a positive decimal integer", raw)
+		}
+		out.MaxAuthorizationWei = v
+	}
 	return out, nil
 }

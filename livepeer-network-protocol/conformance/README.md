@@ -232,6 +232,16 @@ validation, real balance arithmetic, or the payee daemon's own idempotency.
 The suite tests the *protocol's* handling of payment outcomes, not the
 payment layer itself.
 
+Wholesale-account arithmetic and cryptographic conformance therefore run in
+the payment-daemon gate, where the real sender and receiver services share the
+generated protocol bindings. `make -C ../../payment-daemon test` covers exact
+shortfall minting, zero-ticket reuse, signature/scope rejection, concurrent
+reservation exclusion, expiry, session revisions, generation rotation, replay,
+restart persistence, and settlement release. The cross-service scenario is
+`TestWholesaleCreditIsReusedAcrossAuthorizations`; broker HTTP tests add direct
+caller, omitted-callback recovery, and funding-only endpoint coverage. These
+tests complement rather than weaken the 53 broker-wire scenarios above.
+
 ## Runner-attach scenarios
 
 The `attach/*` scenarios play the runner side of

@@ -222,14 +222,22 @@ One number, unit-agnostic, meaningful for every workload. It exists to
 bound the blast radius of a runaway retry loop or a fat-fingered funding
 call — not to express what a fair price is.
 
-**Sizing it.** Take the most expensive single request you ever intend to
-make and give it some headroom. If your largest job funds 0.002 ETH, set
-0.01 and you will notice a bug long before it costs you. Set it too high
-and it stops protecting you; set it too low and legitimate work fails
+**Sizing it.** Take the largest normal account-float replenishment (including
+ticket indivisibility headroom), not the largest workload authorization. If a
+normal top-up is 0.002 ETH, set 0.01 and you will notice a bug long before it
+costs you. Set it too high and it stops protecting you; set it too low and a
+legitimate replenishment fails
 loudly with `spend limit: funded_value … exceeds max-payment-wei …`,
 which is the failure you want.
 
 Dev mode (no `--chain-rpc-urls`) has no real funds and runs without it.
+
+### `--max-authorization-wei` (optional)
+
+The independent circuit breaker for one signed job or session's cumulative
+wholesale debit. A large session may authorize much more than one small float
+top-up: `--max-payment-wei` limits new value transferred now, while this flag
+limits what one engagement may ultimately consume.
 
 ### `--max-price-per-unit` (optional, and the one that scales)
 
@@ -819,6 +827,38 @@ the code.
 A misconfigured production daemon that starts up clean and silent is
 worse than one that fails fast. The startup sequence is deliberately
 load-bearing — read the logs.
+
+### Wholesale-account rollout
+
+Roll out receiver, broker, then payer-service support before sending
+`Livepeer-Authorization`. The header is an explicit negotiation boundary and
+must never silently fall back to legacy funding.
+
+Choose the desired immediately available float from aggregate near-term demand,
+not the largest workload. Existing reservations have already been subtracted
+from `available_value_wei`; replenishing the resulting drop restores this
+available buffer without double-counting reserved value:
+
+```text
+target_available = expected near-term unreserved demand + safety buffer
+shortfall = max(0, target_available - trusted broker account.available_value_wei)
+```
+
+Keep `--max-payment-wei` above one intended replenishment (including
+indivisible ticket EV rounding) and below the loss you are willing to authorize
+from one faulty local call. A 131K-token request may authorize a large debit
+without requiring a ticket of that value when reusable credit already exists.
+
+Monitor `POST /v1/payment/account` on each locked broker route. A growing
+`reserved_value_wei` with no settled authorization progress indicates a stuck
+broker; do not mint around it. Preserve payer and payee BoltDB across restart:
+the former prevents double mint/sign, the latter is the wholesale ledger.
+
+The receiver also exports
+`livepeer_payment_wholesale_account_value_wei{position="credited|reserved|debited|available"}`
+as payee-wide, low-cardinality exposure. Alert when `reserved` grows without
+`debited` progress, or when `available` remains materially above the configured
+target during a route drain.
 
 ---
 

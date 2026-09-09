@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"math/big"
 	"net/http"
 	"os"
@@ -24,6 +27,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // paid-session/v1 HTTP surface. The engine is the authority; these
@@ -180,18 +185,9 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 			"no paid-session offering "+capID+"/"+offID)
 		return
 	}
-	paymentBytes, err := base64.StdEncoding.DecodeString(r.Header.Get(livepeerheader.Payment))
-	if err != nil {
-		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-			"Livepeer-Payment is not valid base64")
+	if r.Header.Get(livepeerheader.Authorization) != "" && !supportsWholesaleAccounts(c) {
+		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "offering does not advertise wholesale account authorization support")
 		return
-	}
-	if spec, ok := s.lookupSpec(capID, offID); ok {
-		if err := middleware.ValidateExpectedPriceForRequest(paymentBytes, capID, offID, spec); err != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch,
-				"expected price mismatch: "+err.Error())
-			return
-		}
 	}
 	var body sessionOpenBody
 	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
@@ -216,13 +212,42 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 				"yourself, and without it the signed record cannot be bound to your session")
 		return
 	}
+	var paymentBytes []byte
+	if h := r.Header.Get(livepeerheader.Payment); h != "" {
+		paymentBytes, err = base64.StdEncoding.DecodeString(h)
+		if err != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Payment is not valid base64")
+			return
+		}
+	}
+	var authorizationBytes []byte
+	var reservationWei *big.Int
+	if h := r.Header.Get(livepeerheader.Authorization); h != "" {
+		authorizationBytes, err = base64.StdEncoding.DecodeString(h)
+		if err != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Authorization is not valid base64")
+			return
+		}
+		reservationWei, err = validateSessionAuthorization(authorizationBytes, r.Header.Get(livepeerheader.CallerProof), raw, body, r.Header.Get(livepeerheader.RequestID), capID, offID, s.cfg.ExternalBaseURL, specFromCapability(c))
+		if err != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, err.Error())
+			return
+		}
+	} else if spec, ok := s.lookupSpec(capID, offID); ok {
+		if err := middleware.ValidateExpectedPriceForRequest(paymentBytes, capID, offID, spec); err != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "expected price mismatch: "+err.Error())
+			return
+		}
+	}
 
 	res, err := s.sessionEngine.Open(r.Context(), sessionengine.OpenRequest{
-		RequestID:        r.Header.Get(livepeerheader.RequestID),
-		GatewaySessionID: body.GatewaySessionID,
-		SessionParams:    body.SessionParams,
-		PaymentBytes:     paymentBytes,
-		Spec:             specFromCapability(c),
+		RequestID:             r.Header.Get(livepeerheader.RequestID),
+		GatewaySessionID:      body.GatewaySessionID,
+		SessionParams:         body.SessionParams,
+		PaymentBytes:          paymentBytes,
+		AuthorizationBytes:    authorizationBytes,
+		InitialReservationWei: reservationWei,
+		Spec:                  specFromCapability(c),
 	})
 	if err != nil {
 		observability.RecordSessionOpen("failed")
@@ -267,6 +292,96 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		resp["balance"] = s.balanceObject(r, rec, specFromCapability(c))
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func supportsWholesaleAccounts(c *config.Capability) bool {
+	if c == nil || c.Extra == nil {
+		return false
+	}
+	features, ok := c.Extra["features"].(map[string]any)
+	if !ok {
+		return false
+	}
+	enabled, _ := features["wholesale_accounts"].(bool)
+	return enabled
+}
+
+func validateSessionAuthorization(wire []byte, callerProof string, raw []byte, body sessionOpenBody, requestID, capability, offering, brokerURI string, spec *sessionengine.OfferingSpec) (*big.Int, error) {
+	var auth paymentsv1.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil || auth.GetPayload() == nil {
+		return nil, errors.New("authorization is malformed")
+	}
+	p := auth.GetPayload()
+	price := p.GetAcceptedPrice()
+	if p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetAuthorizationId() == "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != body.GatewaySessionID || p.GetCapability() != capability || p.GetOffering() != offering {
+		return nil, errors.New("authorization identity or route does not match this session")
+	}
+	if p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+		return nil, errors.New("authorization chain or denomination is invalid")
+	}
+	if brokerURI == "" || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(brokerURI, "/") {
+		return nil, errors.New("authorization broker_uri does not match this broker")
+	}
+	wantPer := spec.PerUnits
+	if wantPer == 0 {
+		wantPer = 1
+	}
+	if price == nil || price.GetCapability() != capability || price.GetOffering() != offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
+		return nil, errors.New("authorization price does not match broker offer")
+	}
+	// The session commitment covers the exact open body. Future media is
+	// intentionally outside it; gateway_session_id is also bound separately.
+	digest := sha256.Sum256(raw)
+	if len(p.GetRequestDigest()) != sha256.Size || !bytes.Equal(p.GetRequestDigest(), digest[:]) {
+		return nil, errors.New("authorization request_digest does not match session open body")
+	}
+	if err := middleware.ValidateCallerProof(wire, p.GetCallerPublicKey(), callerProof); err != nil {
+		return nil, err
+	}
+	maxDebit := new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue())
+	if maxDebit.Sign() <= 0 || p.GetMaxTotalUnits() == 0 {
+		return nil, errors.New("authorization maximum is invalid")
+	}
+	return sessionRunwayReservation(p, spec), nil
+}
+
+func sessionRunwayReservation(p *paymentsv1.SpendAuthorizationPayload, spec *sessionengine.OfferingSpec) *big.Int {
+	wantPer := spec.PerUnits
+	if wantPer == 0 {
+		wantPer = 1
+	}
+	maxDebit := new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue())
+	runwayUnits := uint64(0)
+	if spec.MinRunwayUnits > 0 {
+		runwayUnits = uint64(spec.MinRunwayUnits)
+	}
+	burn := spec.BurnRatePerSecond
+	if burn <= 0 {
+		burn = 1
+	}
+	hb := spec.HeartbeatInterval
+	if hb <= 0 {
+		hb = 10 * time.Second
+	}
+	missed := spec.MissedThreshold
+	if missed <= 0 {
+		missed = 3
+	}
+	windowUnits := uint64(math.Ceil(burn * (hb * time.Duration(missed)).Seconds()))
+	if windowUnits > runwayUnits {
+		runwayUnits = windowUnits
+	}
+	if runwayUnits == 0 {
+		runwayUnits = 1
+	}
+	if runwayUnits > p.GetMaxTotalUnits() {
+		runwayUnits = p.GetMaxTotalUnits()
+	}
+	reservation := payment.BillFor(spec.PricePerWorkUnitWei, wantPer, runwayUnits)
+	if reservation.Cmp(maxDebit) > 0 {
+		reservation.Set(maxDebit)
+	}
+	return reservation
 }
 
 func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
@@ -314,15 +429,63 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	paymentBytes, err := base64.StdEncoding.DecodeString(r.Header.Get(livepeerheader.Payment))
-	if err != nil || len(paymentBytes) == 0 {
+	var paymentBytes []byte
+	var err error
+	if h := r.Header.Get(livepeerheader.Payment); h != "" {
+		paymentBytes, err = base64.StdEncoding.DecodeString(h)
+	}
+	if err != nil || (len(paymentBytes) == 0 && rec.AccountAuthorizationID == "" && r.Header.Get(livepeerheader.Authorization) == "") {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
 			"missing or invalid Livepeer-Payment header")
 		return
 	}
-	res, err := s.sessionEngine.TopUpRebind(r.Context(), rec.SessionID,
-		r.Header.Get(livepeerheader.RequestID),
-		r.Header.Get(livepeerheader.RebindFrom), paymentBytes)
+	var res *sessionengine.TopUpResult
+	if authHeader := r.Header.Get(livepeerheader.Authorization); authHeader != "" {
+		wire, decErr := base64.StdEncoding.DecodeString(authHeader)
+		if decErr != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "invalid Livepeer-Authorization header")
+			return
+		}
+		raw, readErr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+		if readErr != nil {
+			livepeerheader.WriteBadRequest(w, "cannot read revision body")
+			return
+		}
+		var auth paymentsv1.SpendAuthorization
+		if proto.Unmarshal(wire, &auth) != nil || auth.GetPayload() == nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "authorization revision is malformed")
+			return
+		}
+		p := auth.GetPayload()
+		spec := s.specForRecord(rec)
+		if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session")
+			return
+		}
+		digest := sha256.Sum256(raw)
+		if !bytes.Equal(p.GetRequestDigest(), digest[:]) {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision body digest mismatch")
+			return
+		}
+		if err := middleware.ValidateCallerProof(wire, p.GetCallerPublicKey(), r.Header.Get(livepeerheader.CallerProof)); err != nil {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, err.Error())
+			return
+		}
+		price := p.GetAcceptedPrice()
+		wantPer := spec.PerUnits
+		if wantPer == 0 {
+			wantPer = 1
+		}
+		if price == nil || price.GetCapability() != rec.Capability || price.GetOffering() != rec.Offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision price mismatch")
+			return
+		}
+		res, err = s.sessionEngine.ReviseAuthorization(r.Context(), rec.SessionID, r.Header.Get(livepeerheader.RequestID), wire, paymentBytes, sessionRunwayReservation(p, spec))
+	} else {
+		res, err = s.sessionEngine.TopUpRebind(r.Context(), rec.SessionID,
+			r.Header.Get(livepeerheader.RequestID),
+			r.Header.Get(livepeerheader.RebindFrom), paymentBytes)
+	}
 	if err != nil {
 		s.writeSessionError(w, err)
 		return

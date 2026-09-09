@@ -16,6 +16,11 @@ A single Go binary that **brokers** between:
   Kokoro, FFmpeg subprocess), LAN services, third-party APIs (OpenAI,
   Anthropic, OpenRouter), or anything else operator-declared.
 
+Peers that negotiate wholesale accounts carry `Livepeer-Authorization` as the
+single-purpose execution authority; `Livepeer-Payment` is then only an optional
+shortfall top-up. The broker validates exact scope before backend admission,
+reserves atomically, settles measured usage, and releases the remainder.
+
 The broker contains **zero capability-specific code**. All workload knowledge
 lives in:
 

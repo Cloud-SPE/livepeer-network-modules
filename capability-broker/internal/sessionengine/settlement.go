@@ -92,6 +92,12 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		IssuedAt:      e.cfg.Now().UTC().Format(time.RFC3339Nano),
 		State:         wireState(rec.State),
 	}
+	if rec.AccountAuthorizationID != "" {
+		out.AuthorizationId = rec.AccountAuthorizationID
+		out.AuthorizedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationMaxDebitWei)}
+		out.ReservedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReservedWei)}
+		out.ReleasedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReleasedWei)}
+	}
 	if rec.ClaimedTotal != rec.DebitedTotal {
 		// Recorded rather than smoothed over: the two advance in one
 		// commit, so a gap is a bug in this broker and a reader should

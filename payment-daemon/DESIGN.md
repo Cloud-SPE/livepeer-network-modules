@@ -13,15 +13,23 @@ and the gateway. That separation is load-bearing for two reasons:
 Both sides need stable lifecycle and explicit contracts that survive
 caller restarts and component extraction.
 
+Tickets now fund a stable `(chain, payer, payee, denomination)` wholesale
+account. `work_id` remains a replaceable ticket-validation generation, not the
+economic owner. A separately signed, single-purpose authorization reserves
+account credit for one exact job or session; actual cumulative work is debited
+and unused reservation returns to the account.
+
 ## Boundaries
 
 - **Inbound, sender mode:** `PayerDaemon` gRPC over a unix socket. A
   sender-side client or the conformance runner calls `CreatePayment`,
+  `CreateSpendAuthorization`,
   `ReportPaymentResult`, `GetDepositInfo`, and `Health`.
 - **Inbound, receiver mode:** `PayeeDaemon` plus operator-only
   `PayeeAdmin` gRPC over a unix socket. The broker calls
-  `GetTicketParams`, `OpenSession`, `ProcessPayment`, debit/balance
-  methods, and `Health`. Operators use `PayeeAdmin.ResetSession`.
+  `GetTicketParams`, `OpenSession`, `ProcessPayment`, debit/balance and
+  wholesale authorization methods, and `Health`. Operators use
+  `PayeeAdmin.ResetSession`.
 - **Outbound, sender mode:** HTTP `POST /v1/payment/ticket-params`
   against the selected broker URL to fetch authoritative payee-issued
   `TicketParams`.
@@ -35,6 +43,19 @@ caller restarts and component extraction.
   money.
 
 ## Load-bearing session contracts
+
+### Wholesale account funding
+
+`CreatePayment.account_funding` computes
+`max(0, target_available - observed_available)`. Zero shortfall returns no
+ticket. The trusted local caller chooses a bounded aggregate float; workload
+maximums are authorization limits, never mint amounts. The circuit breaker is
+checked again against actual ticket EV after indivisible sizing.
+
+Jobs reserve their signed maximum. Sessions reserve only bounded runway,
+advance one cumulative billing curve, and atomically replace that runway.
+Authorization revisions retire their predecessor while carrying cumulative
+usage and billing forward.
 
 ### Sender-side minted-payment sessions
 

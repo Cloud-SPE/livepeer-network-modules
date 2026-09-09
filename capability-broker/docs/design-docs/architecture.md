@@ -119,6 +119,7 @@ Paid listener (`--listen`, default `:8080`):
 | `POST /v1/session/{id}/events` | | Runner-posted usage/heartbeat events. |
 | `GET /v1/session/{id}/ws` | | Inband-WS attachment. |
 | `POST /v1/payment/ticket-params` | — | Unpaid ticket-params proxy. |
+| `POST /v1/payment/account` | — | Read-only account/authorization observation for shortfall and recovery. |
 | `GET /registry/offerings` | — | Unpaid capability inventory. |
 | `GET /registry/health` | — | Unpaid live availability. |
 | `GET /registry/settlement-keys` | — | Unpaid, self-signed announcement of the delegated settlement key(s), for coordinator discovery (broker-admin §7.1). |
@@ -126,6 +127,7 @@ Paid listener (`--listen`, default `:8080`):
 | `GET /v1/exchange/{request_id}` | — | What happened to an exchange, keyed on the consumer's id. |
 | `GET /v1/settlement/{id}` | — | The signed settlement for a job or session. |
 | `POST /v1/non-admission/{request_id}` | — | Signed evidence that nothing was admitted. |
+| `POST /v1/payment/account/fund` | payer-signed payment | Add value to a stable wholesale account without authorizing work. |
 | `GET|POST /admin/v1/runtime[/reload]` | — | Private; gated by `admin_auth`. |
 | `GET|PUT /admin/v1/offers`, `/admin/v1/runners`, `/admin/v1/credentials`, `/admin/v1/certification` | — | Private; the broker-admin contract. |
 | `GET /internal/v1/worker/session` | — | Runner attach over WebSocket. The path keeps its old spelling because every minted bundle and running agent uses it. |
@@ -141,8 +143,9 @@ so scrapes never traverse the payment middleware chain.
 ## Required request headers
 
 Every paid request carries `Livepeer-Capability`, `Livepeer-Offering`,
-`Livepeer-Payment`, `Livepeer-Protocol` (e.g. `paid-job/v1`), and
-`Livepeer-Request-Id`. `Livepeer-Protocol` replaced the pre-v1
+`Livepeer-Protocol` (e.g. `paid-job/v1`), `Livepeer-Request-Id`, and either
+legacy `Livepeer-Payment` or `Livepeer-Authorization` (plus an optional
+shortfall payment). `Livepeer-Protocol` replaced the pre-v1
 `Livepeer-Mode` + `Livepeer-Spec-Version` pair. `Livepeer-Request-Id` is
 the idempotency key and is never synthesized server-side — a request
 without one is a 400.
@@ -165,9 +168,10 @@ without one is a 400.
    (404 `capability_not_served`), and a transport the offering does not
    declare (400 `protocol_transport_unsupported`) — all before any payment
    side effect.
-6. **Middleware: payment** — decodes the `Livepeer-Payment` envelope; calls
-   `PaymentClient.OpenSession` + `ProcessPayment` + `DebitBalance(estimate)`.
-   Rejects with 401 + `Livepeer-Error: payment_invalid` on failure.
+6. **Middleware: payment** — legacy requests call `OpenSession` and
+   `ProcessPayment`; account requests validate the exact signed authorization
+   and atomically call `AdmitAuthorization`, optionally carrying a shortfall
+   payment. Rejects before backend work on failure.
 7. **Runner selection** — `(capability_id, offering_id)` → the offer's
    eligible attached runners → `selection.DecisionFor` over that eligibility
    and (when configured) the Pool snapshot → one runner, with a
@@ -179,8 +183,9 @@ without one is a 400.
    `actualUnits`;
    the broker sets `Livepeer-Work-Units` (header for `unary`/`multipart`,
    HTTP trailer for `stream`) and `Livepeer-Work-Unit`.
-10. **Middleware: payment (post-serve)** — `Reconcile(actualUnits)` +
-    `CloseSession`; the idempotency record is finalized.
+10. **Middleware: payment (post-serve)** — legacy `DebitBalance(actualUnits)`
+    or account `SettleAuthorization(actualUnits)`; the idempotency record is
+    finalized after accounting resolves.
 11. **Response sent.**
 
 ## Request lifecycle (`paid-session/v1`)

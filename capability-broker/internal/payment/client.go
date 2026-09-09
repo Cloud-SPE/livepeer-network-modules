@@ -79,6 +79,89 @@ type Client interface {
 	CloseSession(ctx context.Context, sender []byte, workID string) error
 }
 
+// AccountClient is the wholesale-account extension. It is deliberately a
+// separate interface so legacy/test clients remain source compatible while a
+// request carrying Livepeer-Authorization can fail closed when the connected
+// daemon has not negotiated the extension.
+type AccountClient interface {
+	FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error)
+	AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error)
+	AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error)
+	SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error)
+	GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error)
+	GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error)
+}
+
+type FundWholesaleAccountResult struct {
+	Account  *WholesaleAccount
+	Credited *big.Int
+	Replayed bool
+}
+
+type SpendAuthorizationStatus struct {
+	State                      int32
+	Reserved, Billed, Released *big.Int
+	ActualUnits, SettlementSeq uint64
+	ObservedAt                 string
+}
+
+type AdmitAuthorizationRequest struct {
+	AuthorizationBytes []byte
+	PaymentBytes       []byte
+	Reservation        *big.Int
+}
+
+type AdvanceAuthorizationRequest struct {
+	Payer           []byte
+	AuthorizationID string
+	CumulativeUnits uint64
+	TargetReserved  *big.Int
+	AdvanceSeq      uint64
+	PaymentBytes    []byte
+}
+
+type AdvanceAuthorizationResult struct {
+	State            int32
+	Account          *WholesaleAccount
+	BilledDelta      *big.Int
+	CumulativeBilled *big.Int
+	Reserved         *big.Int
+	Credited         *big.Int
+	Replayed         bool
+}
+
+type WholesaleAccount struct {
+	Payer, Payee                           []byte
+	Credited, Reserved, Debited, Available *big.Int
+	Version                                uint64
+	ObservedAt                             string
+	ChainID                                uint64
+	Denomination                           string
+}
+
+type AdmitAuthorizationResult struct {
+	State    int32
+	Account  *WholesaleAccount
+	Reserved *big.Int
+	Credited *big.Int
+	Replayed bool
+}
+
+type SettleAuthorizationRequest struct {
+	Payer           []byte
+	AuthorizationID string
+	ActualUnits     uint64
+	SettlementSeq   uint64
+}
+
+type SettleAuthorizationResult struct {
+	State    int32
+	Account  *WholesaleAccount
+	Billed   *big.Int
+	Released *big.Int
+	Replayed bool
+}
+
 // DebitResult is what a debit did, as reported by the ledger.
 type DebitResult struct {
 	Balance *big.Int

@@ -31,8 +31,10 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/spendauth"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
@@ -130,6 +132,123 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 	return svc
 }
 
+// CreateSpendAuthorization signs one route- and workload-bound debit grant.
+// It mints no ticket and therefore cannot add value to a payee account.
+func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpendAuthorizationRequest) (*pb.CreateSpendAuthorizationResponse, error) {
+	if len(req.GetPayee()) != 20 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "payee must be 20 bytes")
+	}
+	if strings.TrimSpace(req.GetAuthorizationId()) == "" || strings.TrimSpace(req.GetRequestId()) == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "authorization_id and request_id are required")
+	}
+	if strings.TrimSpace(req.GetBrokerUri()) == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "broker_uri is required")
+	}
+	if req.GetProtocol() != "paid-job/v1" && req.GetProtocol() != "paid-session/v1" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "protocol must be paid-job/v1 or paid-session/v1")
+	}
+	if req.GetChainId() == 0 || req.GetDenomination() != "wei" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "chain_id and denomination=wei are required")
+	}
+	accepted, err := parseAcceptedPrice(req.GetAcceptedPrice())
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "accepted_price: %v", err)
+	}
+	maxDebit := new(big.Int).SetBytes(req.GetMaxDebitWei().GetValue())
+	if maxDebit.Sign() <= 0 || req.GetMaxTotalUnits() == 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "max_debit_wei and max_total_units must be positive")
+	}
+	if err := s.limits.CheckAuthorization(maxDebit); err != nil {
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition, "spend limit: %v", err)
+	}
+	if required := store.BillFor(big.NewInt(accepted.PricePerUnitWei), accepted.UnitsPerPrice, req.GetMaxTotalUnits()); required.Cmp(maxDebit) > 0 {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "max_debit_wei cannot cover max_total_units at accepted price")
+	}
+	if len(req.GetRequestDigest()) != sha256.Size {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "request_digest must be an exact SHA-256 digest")
+	}
+	if key := req.GetCallerPublicKey(); len(key) != 0 {
+		var keyErr error
+		switch len(key) {
+		case 33:
+			_, keyErr = ethcrypto.DecompressPubkey(key)
+		case 65:
+			_, keyErr = ethcrypto.UnmarshalPubkey(key)
+		default:
+			keyErr = errors.New("unsupported length")
+		}
+		if keyErr != nil {
+			return nil, grpcstatus.Error(codes.InvalidArgument, "caller_public_key must be a valid compressed or uncompressed secp256k1 public key")
+		}
+	}
+	notBefore, err := time.Parse(time.RFC3339Nano, req.GetNotBefore())
+	if err != nil {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "not_before must be RFC3339")
+	}
+	expiresAt, err := time.Parse(time.RFC3339Nano, req.GetExpiresAt())
+	if err != nil || !expiresAt.After(notBefore) {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "expires_at must be RFC3339 and after not_before")
+	}
+	if req.GetProtocol() == "paid-session/v1" && strings.TrimSpace(req.GetSessionId()) == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "session_id is required for paid-session/v1")
+	}
+	if req.GetProtocol() == "paid-job/v1" && (strings.TrimSpace(req.GetSessionId()) != "" || req.GetRevision() != 0 || strings.TrimSpace(req.GetPredecessorAuthorizationId()) != "") {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "paid-job/v1 cannot carry session revision fields")
+	}
+	if req.GetRevision() == 0 && strings.TrimSpace(req.GetPredecessorAuthorizationId()) != "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "predecessor_authorization_id requires a positive revision")
+	}
+	if req.GetRevision() > 0 && strings.TrimSpace(req.GetPredecessorAuthorizationId()) == "" {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "a positive revision requires predecessor_authorization_id")
+	}
+	payload := &pb.SpendAuthorizationPayload{
+		Domain: spendauth.Domain, Payer: append([]byte(nil), s.keystore.Address()...),
+		Payee: append([]byte(nil), req.GetPayee()...), AuthorizationId: req.GetAuthorizationId(),
+		RequestId: req.GetRequestId(), SessionId: req.GetSessionId(), Protocol: req.GetProtocol(),
+		Capability: accepted.CapabilityName, Offering: accepted.Offering,
+		AcceptedPrice: proto.Clone(req.GetAcceptedPrice()).(*pb.AcceptedPrice),
+		MaxDebitWei:   &pb.BigUInt{Value: maxDebit.Bytes()}, MaxTotalUnits: req.GetMaxTotalUnits(),
+		NotBefore: notBefore.UTC().Format(time.RFC3339Nano), ExpiresAt: expiresAt.UTC().Format(time.RFC3339Nano),
+		RequestDigest:   append([]byte(nil), req.GetRequestDigest()...),
+		CallerPublicKey: append([]byte(nil), req.GetCallerPublicKey()...), Revision: req.GetRevision(),
+		PredecessorAuthorizationId: req.GetPredecessorAuthorizationId(),
+		BrokerUri:                  strings.TrimRight(strings.TrimSpace(req.GetBrokerUri()), "/"),
+		ChainId:                    req.GetChainId(), Denomination: req.GetDenomination(),
+	}
+	if s.store == nil {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "authorization idempotency store is not configured")
+	}
+	payloadWire, err := (proto.MarshalOptions{Deterministic: true}).Marshal(payload)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "authorization fingerprint: %v", err)
+	}
+	fingerprint := sha256.Sum256(payloadWire)
+	storeID := "authorization/" + payload.GetAuthorizationId()
+	prior, err := s.store.MintReserve(s.keystore.Address(), storeID, fingerprint[:])
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.AlreadyExists, "authorization idempotency: %v", err)
+	}
+	if prior != nil {
+		return &pb.CreateSpendAuthorizationResponse{AuthorizationBytes: append([]byte(nil), prior.PaymentBytes...), AuthorizationId: payload.AuthorizationId, Payer: payload.Payer}, nil
+	}
+	digest, err := spendauth.Digest(payload)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "authorization digest: %v", err)
+	}
+	sig, err := s.keystore.Sign(digest)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "authorization signature: %v", err)
+	}
+	wire, err := (proto.MarshalOptions{Deterministic: true}).Marshal(&pb.SpendAuthorization{Payload: payload, Signature: sig})
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "authorization marshal: %v", err)
+	}
+	if err := s.store.MintRecord(s.keystore.Address(), storeID, store.MintRecord{Fingerprint: fingerprint[:], PaymentBytes: wire}); err != nil {
+		return nil, grpcstatus.Errorf(codes.Internal, "record authorization: %v", err)
+	}
+	return &pb.CreateSpendAuthorizationResponse{AuthorizationBytes: wire, AuthorizationId: payload.AuthorizationId, Payer: payload.Payer}, nil
+}
+
 // CreatePayment implements pb.PayerDaemonServer.
 func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentRequest) (resp *pb.CreatePaymentResponse, err error) {
 	defer func() {
@@ -192,6 +311,29 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	funding, err := parseFundingIntent(req.GetFunding())
 	if err != nil {
 		return nil, fmt.Errorf("funding: %w", err)
+	}
+	shortfall, err := accountShortfall(req.GetAccountFunding(), funding.fundedValueWei)
+	if err != nil {
+		return nil, grpcstatus.Errorf(codes.InvalidArgument, "account_funding: %v", err)
+	}
+	funding.fundedValueWei = shortfall
+	if shortfall.Sign() == 0 {
+		out := &pb.CreatePaymentResponse{
+			ExpectedValue:       &pb.BigUInt{},
+			FundedValueWei:      &pb.BigUInt{},
+			AccountShortfallWei: &pb.BigUInt{},
+			AcceptedQuoteRef:    cloneQuoteRef(req.GetAcceptedPrice().GetQuoteRef()),
+		}
+		quoteJSON, qerr := marshalQuoteRef(out.AcceptedQuoteRef)
+		if qerr != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "record zero-shortfall mint: %v", qerr)
+		}
+		if err := s.store.MintRecord(s.keystore.Address(), mintID, store.MintRecord{
+			Fingerprint: fingerprint, QuoteRefJSON: quoteJSON,
+		}); err != nil {
+			return nil, grpcstatus.Errorf(codes.Internal, "record zero-shortfall mint: %v", err)
+		}
+		return out, nil
 	}
 	// Policy check before any signing, minting or network call.
 	if err := s.limits.CheckMint(acceptedPrice.WorkUnitName,
@@ -290,6 +432,14 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			funding.fundedValueWei, perTicketEV, ticketCount, maxTicketsPerPayment)
 	}
 	n := int(ticketCount.Int64())
+	totalEV := new(big.Int).Mul(perTicketEV, ticketCount)
+	// The receiver's indivisible ticket economics can make actual returned EV
+	// exceed the requested shortfall. Policy is against what will be signed,
+	// not merely what the caller requested.
+	if err := s.limits.CheckMint(acceptedPrice.WorkUnitName,
+		big.NewInt(acceptedPrice.PricePerUnitWei), acceptedPrice.UnitsPerPrice, totalEV); err != nil {
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition, "spend limit: actual ticket expected value: %v", err)
+	}
 
 	// Roll the session over BEFORE signing anything, if this batch would
 	// run past the payee's per-rand nonce budget.
@@ -367,7 +517,6 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	// payee computes it: per-ticket integer EV, summed. Not the rational
 	// face x win / 2^256, which rounds differently and would report a
 	// value the ledger never credits.
-	totalEV := new(big.Int).Mul(perTicketEV, ticketCount)
 	evBytes := totalEV.Bytes()
 
 	s.logger.Info("payment created",
@@ -403,6 +552,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		ExpiresAfterRound:              batch.ExpirationParams.CreationRound + validityPeriod - 1,
 		TicketValidityPeriod:           validityPeriod,
 		TicketValidityPeriodObservedAt: validityObservedAt.Format(time.RFC3339Nano),
+		AccountShortfallWei:            &pb.BigUInt{Value: funding.fundedValueWei.Bytes()},
 	}
 	// Record before returning. A crash between the signature and this
 	// write leaves the ticket minted and unrecorded, and the retry
@@ -414,13 +564,14 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, fmt.Errorf("record mint: %w", err)
 	}
 	if err := s.store.MintRecord(s.keystore.Address(), mintID, store.MintRecord{
-		Fingerprint:    fingerprint,
-		PaymentBytes:   out.PaymentBytes,
-		TicketsCreated: out.TicketsCreated,
-		ExpectedValue:  evBytes,
-		FundedValueWei: funding.fundedValueWei.Bytes(),
-		QuoteRefJSON:   quoteJSON,
-		WorkID:         out.WorkId,
+		Fingerprint:         fingerprint,
+		PaymentBytes:        out.PaymentBytes,
+		TicketsCreated:      out.TicketsCreated,
+		ExpectedValue:       evBytes,
+		FundedValueWei:      funding.fundedValueWei.Bytes(),
+		AccountShortfallWei: funding.fundedValueWei.Bytes(),
+		QuoteRefJSON:        quoteJSON,
+		WorkID:              out.WorkId,
 	}); err != nil {
 		return nil, grpcstatus.Errorf(codes.Internal, "record mint: %v", err)
 	}
@@ -464,14 +615,19 @@ func MintFingerprint(req *pb.CreatePaymentRequest) []byte {
 	if f, err := proto.Marshal(req.GetFunding()); err == nil {
 		h.Write(f)
 	}
+	h.Write([]byte{0})
+	if f, err := proto.Marshal(req.GetAccountFunding()); err == nil {
+		h.Write(f)
+	}
 	return h.Sum(nil)
 }
 
 func mintResponseFrom(rec *store.MintRecord) *pb.CreatePaymentResponse {
 	out := &pb.CreatePaymentResponse{
-		PaymentBytes:   rec.PaymentBytes,
-		TicketsCreated: rec.TicketsCreated,
-		WorkId:         rec.WorkID,
+		PaymentBytes:        rec.PaymentBytes,
+		TicketsCreated:      rec.TicketsCreated,
+		WorkId:              rec.WorkID,
+		AccountShortfallWei: &pb.BigUInt{Value: append([]byte(nil), rec.AccountShortfallWei...)},
 	}
 	if len(rec.ExpectedValue) > 0 {
 		out.ExpectedValue = &pb.BigUInt{Value: rec.ExpectedValue}
@@ -486,6 +642,24 @@ func mintResponseFrom(rec *store.MintRecord) *pb.CreatePaymentResponse {
 		}
 	}
 	return out
+}
+
+func accountShortfall(in *pb.AccountFundingIntent, legacy *big.Int) (*big.Int, error) {
+	if in == nil {
+		return new(big.Int).Set(legacy), nil
+	}
+	target, err := parseBigUInt("target_available_wei", in.GetTargetAvailableWei())
+	if err != nil {
+		return nil, err
+	}
+	available, err := parseBigUInt("observed_available_wei", in.GetObservedAvailableWei())
+	if err != nil {
+		return nil, err
+	}
+	if available.Cmp(target) >= 0 {
+		return new(big.Int), nil
+	}
+	return new(big.Int).Sub(target, available), nil
 }
 
 func marshalQuoteRef(qr *pb.QuoteRef) ([]byte, error) {
@@ -948,9 +1122,6 @@ func parseFundingIntent(in *pb.FundingIntent) (*fundingIntentInput, error) {
 func parseBigUInt(field string, in *pb.BigUInt) (*big.Int, error) {
 	if in == nil {
 		return nil, fmt.Errorf("%s is required", field)
-	}
-	if len(in.GetValue()) == 0 {
-		return nil, fmt.Errorf("%s is empty", field)
 	}
 	if len(in.GetValue()) > 32 {
 		return nil, fmt.Errorf("%s exceeds uint256 size", field)

@@ -108,6 +108,7 @@ func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile st
 			Extra: map[string]any{
 				"openai":   map[string]any{"model": "test-model"},
 				"provider": "vllm",
+				"features": map[string]any{"wholesale_accounts": true},
 			},
 		}},
 	}

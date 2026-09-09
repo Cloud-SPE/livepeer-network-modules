@@ -32,5 +32,6 @@ must reject the record.
 
 ## Completion
 
-Move this plan to `completed/` only after the cross-repository rollout gate
-passes against clean immutable LOC and Modules revisions.
+Completed at Modules `2ccf3f3116a40c0d96c06534c5c350be654d5202`.
+LOC's revision-bound production-shaped rollout gate passed against that
+revision and LOC `c09e82eea8be77b0d71f2ae2ca885269ed1e137a` on 2026-09-09.

@@ -1,6 +1,6 @@
 ---
 title: Paid-session output health and fail-closed stalled sessions
-status: implementing
+status: implemented
 date: 2026-09-09
 beads: lnm-13a
 supersedes: none
@@ -62,3 +62,9 @@ conformance fixtures, operator documentation, and alerting ship together. The
 live transcode 75-second publish is an integration/certification exercise: it
 must either observe at least 60 `output_seconds` or observe terminal
 `output_failed` with a safe code within 60 seconds of authenticated ingest.
+
+## 4. Implementation record
+
+| Commit | What |
+|---|---|
+| `cc537ca` | Paid-session 1.2 output-health contract; `rtmp-hls/v1` 1.1 events; atomic broker persistence; status/WS/metrics/operator exposure; safe terminal reason preservation; 60-second stalled-output backstop; pool outcome mapping; unit, race, Docker smoke, and executable conformance coverage. |

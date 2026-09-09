@@ -185,6 +185,24 @@ groups:
             session_store is on a persistent volume (runbook §2). Losing
             either orphans every active session.
 
+      - alert: BrokerSessionOutputFailures
+        expr: |
+          sum(increase(livepeer_protocol_session_winddowns_total{reason="output_failed"}[15m])) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          service: livepeer-capability-broker
+        annotations:
+          summary: "A paid session failed closed because output stalled"
+          description: |
+            The runner remained alive but useful output did not recover. The
+            broker preserved output_failed and completed the normal winddown,
+            so the session is no longer holding paid capacity while producing
+            zero usage. Inspect the session's customer-safe
+            last_failure_code and the runner's bounded diagnostics. Correlate
+            with:
+              sum(increase(livepeer_protocol_session_output_health_total{state="stalled"}[15m]))
+
       - alert: BrokerSessionOpensFailing
         expr: |
           (

@@ -204,10 +204,19 @@ type Record struct {
 	// Event/usage/debit progress — the exactly-once commit set.
 	LastEventID  string `json:"last_event_id,omitempty"`
 	LastSequence uint64 `json:"last_sequence"`
-	Unit         string `json:"unit"`
-	ClaimedTotal uint64 `json:"claimed_total"`
-	DebitedTotal uint64 `json:"debited_total"`
-	DebitSeq     uint64 `json:"debit_seq"`
+	// Output health is optional. Empty means the runner predates or does not
+	// implement paid-session's output-health extension. OutputStalledAt is the
+	// broker's receipt-time anchor for fail-closed enforcement; a runner clock
+	// cannot extend the broker's backstop.
+	OutputState      string    `json:"output_state,omitempty"`
+	OutputStateSince time.Time `json:"output_state_since,omitzero"`
+	OutputStalledAt  time.Time `json:"output_stalled_at,omitzero"`
+	LastOutputAt     time.Time `json:"last_output_at,omitzero"`
+	LastFailureCode  string    `json:"last_failure_code,omitempty"`
+	Unit             string    `json:"unit"`
+	ClaimedTotal     uint64    `json:"claimed_total"`
+	DebitedTotal     uint64    `json:"debited_total"`
+	DebitSeq         uint64    `json:"debit_seq"`
 	// PendingDebitSeq is a debit sequence allocated but not yet
 	// committed. It is persisted BEFORE the debit is attempted so a
 	// retry re-presents the same number and the payee deduplicates it;

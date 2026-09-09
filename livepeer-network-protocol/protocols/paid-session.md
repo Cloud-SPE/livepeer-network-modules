@@ -173,7 +173,9 @@ Rules:
 
 Returns `session_id`, `work_id`, `state`, the **identical** sanitized
 `runtime.public` (no grants, ever), `lease`, `balance`, `usage` (cumulative
-claimed units + unit name), timestamps, and `close_reason` when terminal.
+claimed units + unit name), timestamps, `output_state` (`unknown` when it has
+not been reported), optional `output_state_since` and `last_failure_code`, and
+`close_reason` when terminal.
 Served from the broker's durable session record; the broker MUST NOT need a
 synchronous runner round-trip to answer.
 
@@ -505,7 +507,40 @@ Event envelope:
 Required event types: `session.started`, `session.heartbeat`,
 `session.usage.tick`, `session.failed`, `session.ended`.
 
-Unknown fields in the event envelope are **tolerated and ignored** — the
+#### Optional output health
+
+An output-producing runner MAY report these standardized keys in `details`:
+
+| Key | Shape | Meaning |
+|---|---|---|
+| `output_state` | `waiting \| producing \| stalled` | `waiting`: no output is expected yet; `producing`: useful output is advancing; `stalled`: output was expected but is not advancing. |
+| `output_state_since` | RFC3339 timestamp | Optional: when the reported state began. The broker uses receipt time when absent. |
+| `last_failure_code` | `^[a-z][a-z0-9_]{0,63}$` | Optional, customer-safe machine code. It MUST contain no diagnostics, identifiers, URLs, or credentials. |
+
+The serialized `details` object is limited to 2048 bytes. A broker that
+implements this extension MUST reject a malformed standardized field without
+advancing the event watermark. It persists the latest values in the same
+atomic commit as `event_id`, `sequence`, usage, and debit progress, and exposes
+them from status. Absence means `output_state: unknown`; it is not an error.
+
+Runner liveness and useful output are separate facts. Every accepted event,
+including a stalled-output event, refreshes runner liveness. Only
+`output_state: producing` proves advancing output. Repeated `stalled` reports
+MUST NOT reset the beginning of the broker-observed stall. A continuously
+stalled state is wound down after 60 seconds with `output_failed`; a runner MAY
+fail sooner. `waiting` has no protocol deadline because some workloads
+legitimately wait for input.
+
+`session.failed` preserves a present safe `close_reason`; `runner_failed` is
+the fallback when the runner supplies none. `output_failed` is the standard
+reason for an output-producing session that failed closed.
+
+Event names remain open-world. Descriptor schemas may define additional names
+and detail keys; the broker accepts them and interprets only standardized
+paid-session fields. It never needs workload-specific knowledge to do so.
+
+Unknown fields in the event envelope and unknown keys in `details` are
+**tolerated and ignored** — the
 broker is a tolerant reader here, so runners may carry their own
 correlation fields (their session ids, a per-event delta) without
 coordinating a spec change. Note that a per-event usage delta is ignored
@@ -522,6 +557,8 @@ Rules:
 - `usage.unit` MUST equal the offering's declared work unit. A mismatch is a
   protocol error and MUST NOT advance event idempotency, sequence, or
   cumulative-usage progress.
+- A close reason and every standardized safe failure code MUST match
+  `^[a-z][a-z0-9_]{0,63}$`.
 
 ### 7.3 Exactly-once debit
 
@@ -544,6 +581,7 @@ An offering MAY expose `control.events_ws`. Attaching requires the session
 credential. Frames mirror the HTTP surface — broker→gateway:
 `session.usage.tick` (cumulative claim), `session.balance` (the §6 object,
 emitted at least on every `low`/`will_refuse_next_refill` transition),
+`session.output.health` (the latest standardized output-health fields),
 `session.state`, `session.ended`; gateway→broker: `session.topup` (payment
 envelope in-frame, plus `request_id` — a frame has no headers, and the
 mirror carries the same idempotency key as §3.3 — and `rebind_from` when
@@ -565,6 +603,9 @@ and private per the framework's storage rules) and grant audit metadata (ids
 and hashes, never secrets); last accepted `event_id` and `sequence`; claimed
 and debited cumulative totals and the payment-layer debit sequence; lease;
 state, `close_reason`, payment-close status; held capacity ownership.
+When output health has been reported, the latest state, state-since timestamp,
+broker-observed stall anchor, last productive-output time, and safe failure
+code are part of the same durable authority.
 
 The payment-layer debit sequence is called out deliberately: the payee
 daemon durably remembers `(sender, work_id, debit_seq)`, so a broker that
@@ -608,6 +649,9 @@ Executable fixtures every broker implementation MUST pass:
 - heartbeat breach forces idempotent runner and payment closure with a
   stable reason; lease expiry does the same; `will_refuse_next_refill` is
   advertised before any refill refusal;
+- output health is atomically ordered with the event watermark; repeated
+  stalled events do not extend the 60-second backstop; `output_failed` survives
+  terminal mapping and old runners remain `unknown` without being rejected;
 - auth: unknown session vs bad credential/token indistinguishable on both
   the control surface and the events endpoint;
 - a second open with the same `Livepeer-Request-Id` returns the original
@@ -660,7 +704,8 @@ is the difference between a diagnosable bug and an afternoon.
 | Emit the required event types: `session.started`, `session.heartbeat`, `session.usage.tick`, `session.failed`, `session.ended` | §7.2 | A session that never reports is torn down as `heartbeat_lost`. |
 | Emit *something* within `interval × missed_threshold` — any accepted event refreshes liveness, so a usage tick suffices | §5 | Torn down with `heartbeat_lost`: runner terminated, payment closed, capacity released. |
 | Retry on `5xx`, with the same `event_id` and `sequence` | §7.3 | The broker's exactly-once contract depends on it: a transient debit failure leaves the event uncommitted precisely so your retry completes it. A runner that gives up loses that usage permanently. |
-| Extra envelope fields are tolerated and ignored | §7.2 | None — carry your own correlation fields freely. |
+| Extra envelope fields and non-standard detail keys are tolerated and ignored | §7.2 | None — carry bounded, non-secret correlation details freely. |
+| If reporting output health, use a valid state/timestamp and only a bounded safe failure code | §7.2 | Malformed standardized fields reject the event without advancing its sequence. |
 | Authenticate every event with the callback token from create, at the callback URL from create | §7.1, §7.2 | `401`, indistinguishable from an unknown session (no existence oracle). |
 
 ### Termination
@@ -686,6 +731,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0-draft | 2026-09-09 | Adds optional, workload-agnostic output health in event details; separates runner liveness from productive output; persists health atomically; preserves safe runner failure reasons including `output_failed`; and fails continuously stalled sessions closed after 60 seconds. Old runners remain valid with `unknown` health. |
 | 1.1.0-draft | 2026-09-09 | Adds cumulative single-purpose session authorization over a stable wholesale account. Admission reserves bounded runway, usage advances the cumulative debit and replaces runway atomically, aggregate shortfall funding is optional, and wind-down releases the remainder. |
 | 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |
 | 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |

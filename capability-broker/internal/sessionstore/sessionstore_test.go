@@ -66,6 +66,10 @@ func TestRoundTripAndRestartSurvival(t *testing.T) {
 	rec.ClaimedTotal = 60
 	rec.DebitedTotal = 60
 	rec.DebitSeq = 9
+	rec.OutputState = "stalled"
+	rec.OutputStateSince = time.Now().Add(-time.Minute).UTC()
+	rec.OutputStalledAt = time.Now().Add(-30 * time.Second).UTC()
+	rec.LastFailureCode = "encoder_init_failed"
 	if err := s.Create(rec); err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -84,6 +88,9 @@ func TestRoundTripAndRestartSurvival(t *testing.T) {
 	}
 	if got.DebitSeq != 9 || got.LastSequence != 17 || got.ClaimedTotal != 60 {
 		t.Fatalf("counters lost across restart: %+v", got)
+	}
+	if got.OutputState != "stalled" || got.LastFailureCode != "encoder_init_failed" || got.OutputStalledAt.IsZero() {
+		t.Fatalf("output health lost across restart: %+v", got)
 	}
 	if !bytes.Equal(got.DescriptorPrivate, rec.DescriptorPrivate) {
 		t.Fatalf("private part mismatch: %s", got.DescriptorPrivate)

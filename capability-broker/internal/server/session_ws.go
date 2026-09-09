@@ -17,8 +17,8 @@ import (
 
 // Control-WS binding (paid-session/v1 §8): an optional push mirror of
 // the HTTP control surface. Attach requires the session credential;
-// broker→gateway frames are session.usage.tick, session.balance,
-// session.ended; gateway→broker frames are session.topup and
+// broker→gateway frames are session.usage.tick, session.output.health,
+// session.balance, session.ended; gateway→broker frames are session.topup and
 // session.end, each acknowledged. The HTTP surface stays authoritative
 // — a gateway ignoring the WS loses nothing but latency.
 

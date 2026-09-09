@@ -421,6 +421,17 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		resp["ended_at"] = rec.EndedAt.Format(time.RFC3339)
 		resp["close_reason"] = rec.CloseReason
 	}
+	outputState := rec.OutputState
+	if outputState == "" {
+		outputState = "unknown"
+	}
+	resp["output_state"] = outputState
+	if !rec.OutputStateSince.IsZero() {
+		resp["output_state_since"] = rec.OutputStateSince.Format(time.RFC3339Nano)
+	}
+	if rec.LastFailureCode != "" {
+		resp["last_failure_code"] = rec.LastFailureCode
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -713,7 +724,8 @@ type sessionEventBody struct {
 		Unit  string `json:"unit"`
 		Total uint64 `json:"total"`
 	} `json:"usage"`
-	CloseReason string `json:"close_reason"`
+	CloseReason string          `json:"close_reason"`
+	Details     json.RawMessage `json:"details"`
 }
 
 func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
@@ -739,6 +751,7 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 		EventType: body.EventType,
 		State:     body.State,
 		Reason:    body.CloseReason,
+		Details:   body.Details,
 	}
 	if body.Usage != nil {
 		ev.UsageUnit = body.Usage.Unit
@@ -760,6 +773,7 @@ func (s *Server) handleSessionEvents(w http.ResponseWriter, r *http.Request) {
 	} else {
 		observability.RecordSessionEvent("accepted")
 		observability.RecordSessionDebit(out.DebitedUnits)
+		observability.RecordSessionOutputHealth(out.OutputState)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"accepted":  true,

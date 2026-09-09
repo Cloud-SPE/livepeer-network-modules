@@ -145,7 +145,7 @@ Per-offering knobs (host-config `session:` block):
 Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
 `heartbeat_lost`, `insufficient_balance`, `recovery_failed`,
-`open_failed`. Every winddown is the same idempotent path (terminate
+`open_failed`, `output_failed`. Every winddown is the same idempotent path (terminate
 runner → close payment → release capacity → record reason); a repeated
 trigger is a no-op.
 
@@ -154,6 +154,15 @@ runner. Runner still holds it → rebound silently (same `work_id`,
 credentials keep working, grants are never re-minted). Runner lost it →
 `recovery_failed` terminal. Runner unreachable → left active for heartbeat
 enforcement to decide.
+
+Output-producing runners may additionally report `output_state` as `waiting`,
+`producing`, or `stalled`, plus a sanitized `last_failure_code`. These are
+independent from heartbeat liveness: a stalled callback proves the runner is
+responsive, not that customer output is healthy. Status reports `unknown` for
+older runners. A continuously stalled session is wound down after 60 seconds
+as `output_failed`; the runner may enforce a tighter workload-owned deadline.
+Watch `livepeer_protocol_session_output_health_total{state="stalled"}` together
+with `livepeer_protocol_session_winddowns_total{reason="output_failed"}`.
 
 ### 3.1 Runner self-description
 

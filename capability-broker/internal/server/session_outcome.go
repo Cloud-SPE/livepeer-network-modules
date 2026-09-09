@@ -31,7 +31,7 @@ func sessionOutcome(reason string) string {
 		// The session did its work; whichever side ended it, it ended
 		// cleanly.
 		return poolreport.OutcomeSuccess
-	case sessionengine.ReasonRunnerFailed, sessionengine.ReasonRecoveryFailed, sessionengine.ReasonOpenFailed:
+	case sessionengine.ReasonRunnerFailed, sessionengine.ReasonRecoveryFailed, sessionengine.ReasonOpenFailed, sessionengine.ReasonOutputFailed:
 		return poolreport.OutcomeBackendFailure
 	case sessionengine.ReasonHeartbeatLost:
 		// The gateway went away. Counts toward min_jobs, excluded from

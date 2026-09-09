@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"regexp"
 	"sync"
 	"time"
 
@@ -63,7 +64,12 @@ const (
 	// neither caused nor can act on, so the detail belongs in settlement
 	// and operator telemetry rather than in a close reason.
 	ReasonPaymentUnrecoverable = "payment_unrecoverable"
+	ReasonOutputFailed         = "output_failed"
 )
+
+const OutputStallBackstop = 60 * time.Second
+
+var safeEventCode = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
 
 // DefaultMaxRotations bounds rebinds when an offering does not say.
 // Three is enough to ride out a payee restart or two; more than that in
@@ -678,6 +684,51 @@ type Event struct {
 	UsageUnit string
 	UsageTot  *uint64 // nil when the event carries no usage
 	Reason    string
+	Details   json.RawMessage
+}
+
+type outputHealth struct {
+	State       string
+	Since       time.Time
+	FailureCode string
+}
+
+func parseOutputHealth(raw json.RawMessage) (*outputHealth, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	if len(raw) > 2048 {
+		return nil, protoErr("event_details_invalid", "details exceeds 2048 bytes")
+	}
+	var details map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &details); err != nil || details == nil {
+		return nil, protoErr("event_details_invalid", "details must be a JSON object")
+	}
+	stateRaw, present := details["output_state"]
+	if !present {
+		return nil, nil
+	}
+	var state, sinceRaw, failure string
+	if json.Unmarshal(stateRaw, &state) != nil || (state != "waiting" && state != "producing" && state != "stalled") {
+		return nil, protoErr("output_state_invalid", "output_state must be waiting, producing, or stalled")
+	}
+	var since time.Time
+	if rawSince, ok := details["output_state_since"]; ok {
+		if json.Unmarshal(rawSince, &sinceRaw) != nil {
+			return nil, protoErr("output_state_since_invalid", "output_state_since must be RFC3339")
+		}
+		var err error
+		since, err = time.Parse(time.RFC3339Nano, sinceRaw)
+		if err != nil {
+			return nil, protoErr("output_state_since_invalid", "output_state_since must be RFC3339")
+		}
+	}
+	if rawFailure, ok := details["last_failure_code"]; ok {
+		if json.Unmarshal(rawFailure, &failure) != nil || !safeEventCode.MatchString(failure) {
+			return nil, protoErr("last_failure_code_invalid", "last_failure_code must be a safe machine code")
+		}
+	}
+	return &outputHealth{State: state, Since: since.UTC(), FailureCode: failure}, nil
 }
 
 // EventOutcome reports what processing decided.
@@ -686,6 +737,7 @@ type EventOutcome struct {
 	DebitedUnits uint64
 	Insufficient bool
 	Terminal     bool
+	OutputState  string
 }
 
 // ProcessEvent applies one runner event under the exactly-once
@@ -697,6 +749,13 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	}
 	if ev.Sequence == 0 {
 		return nil, protoErr("sequence_required", "sequence must be positive")
+	}
+	health, err := parseOutputHealth(ev.Details)
+	if err != nil {
+		return nil, err
+	}
+	if ev.Reason != "" && !safeEventCode.MatchString(ev.Reason) {
+		return nil, protoErr("close_reason_invalid", "close_reason must be a safe machine code")
 	}
 	mu := e.sessionMu(sessionID)
 	mu.Lock()
@@ -843,6 +902,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		}
 	case "session.failed":
 		terminalReason = ReasonRunnerFailed
+		if ev.Reason != "" {
+			terminalReason = ev.Reason
+		}
 	}
 	if terminalReason == "" && authorizationExhausted {
 		terminalReason = ReasonAuthorizationExhausted
@@ -854,6 +916,27 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		r.LastEventID = ev.EventID
 		r.LastSequence = ev.Sequence
 		r.LastEventAt = now
+		if health != nil {
+			if health.State != r.OutputState || r.OutputStateSince.IsZero() {
+				r.OutputStateSince = health.Since
+				if r.OutputStateSince.IsZero() {
+					r.OutputStateSince = now
+				}
+			}
+			r.OutputState = health.State
+			r.LastFailureCode = health.FailureCode
+			switch health.State {
+			case "producing":
+				r.LastOutputAt = now
+				r.OutputStalledAt = time.Time{}
+			case "stalled":
+				if r.OutputStalledAt.IsZero() {
+					r.OutputStalledAt = now
+				}
+			default:
+				r.OutputStalledAt = time.Time{}
+			}
+		}
 		if ev.UsageTot != nil {
 			r.ClaimedTotal = *ev.UsageTot
 		}
@@ -884,6 +967,19 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			"debited_units": delta,
 		})
 	}
+	if err == nil && health != nil && e.cfg.OnEvent != nil {
+		data := map[string]any{
+			"output_state":       health.State,
+			"output_state_since": health.Since.Format(time.RFC3339Nano),
+		}
+		if health.Since.IsZero() {
+			data["output_state_since"] = now.Format(time.RFC3339Nano)
+		}
+		if health.FailureCode != "" {
+			data["last_failure_code"] = health.FailureCode
+		}
+		e.cfg.OnEvent(sessionID, "session.output.health", data)
+	}
 	if err != nil {
 		// Debit may have landed; the retry re-presents the same
 		// sequence and debit_seq, the daemon dedupes, and the commit
@@ -892,6 +988,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	}
 
 	out := &EventOutcome{DebitedUnits: delta}
+	if health != nil {
+		out.OutputState = health.State
+	}
 
 	if terminalReason != "" {
 		e.winddownLocked(ctx, sessionID, terminalReason)
@@ -1552,7 +1651,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		return
 	}
 	state := sessionstore.StateEnded
-	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed {
+	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed || reason == ReasonOutputFailed {
 		state = sessionstore.StateFailed
 	}
 	// The terminal write comes first and is checked. Releasing the
@@ -1633,6 +1732,10 @@ func (e *Engine) Sweep(ctx context.Context) {
 		// them at funding instead.
 		if now.Sub(r.LastEventAt) > hb*time.Duration(spec.missed()) {
 			dues = append(dues, due{r.SessionID, ReasonHeartbeatLost})
+			return nil
+		}
+		if r.OutputState == "stalled" && !r.OutputStalledAt.IsZero() && now.Sub(r.OutputStalledAt) >= OutputStallBackstop {
+			dues = append(dues, due{r.SessionID, ReasonOutputFailed})
 			return nil
 		}
 		// Lease grace = one heartbeat interval (paid-session §5): a

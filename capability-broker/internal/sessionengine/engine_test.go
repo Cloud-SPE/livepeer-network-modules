@@ -651,6 +651,72 @@ func TestSweepHeartbeatLost(t *testing.T) {
 	}
 }
 
+func TestOutputHealthPersistsAndContinuousStallFailsClosed(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	_ = h.store.Update(res.SessionID, func(r *sessionstore.Record) error {
+		r.LeaseExpiresAt = h.now().Add(time.Hour)
+		return nil
+	})
+	since := h.now().Format(time.RFC3339Nano)
+	stalled := func(id string, seq uint64) Event {
+		return Event{EventID: id, Sequence: seq, EventType: "session.output.stalled",
+			Details: json.RawMessage(fmt.Sprintf(`{"output_state":"stalled","output_state_since":%q,"last_failure_code":"encoder_init_failed"}`, since))}
+	}
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID, stalled("evt_stall_1", 1)); err != nil {
+		t.Fatal(err)
+	}
+	first, _ := h.store.Get(res.SessionID)
+	if first.OutputState != "stalled" || first.LastFailureCode != "encoder_init_failed" || first.OutputStalledAt.IsZero() {
+		t.Fatalf("output health not persisted: %+v", first)
+	}
+
+	// A later stalled callback proves runner liveness but cannot reset the
+	// broker-observed stall anchor.
+	h.advance(59 * time.Second)
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID, stalled("evt_stall_2", 2)); err != nil {
+		t.Fatal(err)
+	}
+	second, _ := h.store.Get(res.SessionID)
+	if !second.OutputStalledAt.Equal(first.OutputStalledAt) {
+		t.Fatalf("repeated stall reset deadline: %s -> %s", first.OutputStalledAt, second.OutputStalledAt)
+	}
+	h.advance(2 * time.Second)
+	h.engine.Sweep(context.Background())
+	final, _ := h.store.Get(res.SessionID)
+	if !final.Terminal() || final.CloseReason != ReasonOutputFailed {
+		t.Fatalf("persistent stall did not fail closed: %+v", final)
+	}
+}
+
+func TestFailedEventPreservesSafeReasonAndRejectsMalformedHealthAtomically(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID, Event{
+		EventID: "evt_bad", Sequence: 1, EventType: "session.heartbeat",
+		Details: json.RawMessage(`{"output_state":"broken"}`),
+	}); err == nil {
+		t.Fatal("malformed output health accepted")
+	}
+	rec, _ := h.store.Get(res.SessionID)
+	if rec.LastSequence != 0 || rec.OutputState != "" {
+		t.Fatalf("rejected health advanced record: %+v", rec)
+	}
+	total := uint64(0)
+	out, err := h.engine.ProcessEvent(context.Background(), res.SessionID, Event{
+		EventID: "evt_failed", Sequence: 1, EventType: "session.failed", Reason: "output_failed",
+		UsageUnit: "participant_minutes", UsageTot: &total,
+		Details: json.RawMessage(fmt.Sprintf(`{"output_state":"stalled","output_state_since":%q,"last_failure_code":"unknown"}`, h.now().Format(time.RFC3339Nano))),
+	})
+	if err != nil || !out.Terminal {
+		t.Fatalf("failed event: %+v %v", out, err)
+	}
+	rec, _ = h.store.Get(res.SessionID)
+	if rec.State != sessionstore.StateFailed || rec.CloseReason != ReasonOutputFailed || rec.LastFailureCode != "unknown" {
+		t.Fatalf("terminal output health lost: %+v", rec)
+	}
+}
+
 func TestSweepLeaseExpiryRespectsGrace(t *testing.T) {
 	h := newHarness(t)
 	res := h.open(t)

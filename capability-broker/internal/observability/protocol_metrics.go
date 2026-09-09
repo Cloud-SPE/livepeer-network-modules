@@ -23,6 +23,11 @@ var (
 		Help: "runner events by outcome (accepted|duplicate|rejected|retryable|unauthorized).",
 	}, []string{"outcome"})
 
+	sessionOutputHealthTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_protocol_session_output_health_total",
+		Help: "Accepted paid-session output-health reports by bounded state.",
+	}, []string{"state"})
+
 	sessionDebitUnitsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "livepeer_protocol_session_debited_units_total",
 		Help: "work units debited from paid-session usage claims.",
@@ -47,6 +52,12 @@ func RecordSessionWinddown(reason string) { sessionWinddownsTotal.WithLabelValue
 
 // RecordSessionEvent counts one runner-event outcome.
 func RecordSessionEvent(outcome string) { sessionEventsTotal.WithLabelValues(outcome).Inc() }
+
+func RecordSessionOutputHealth(state string) {
+	if state == "waiting" || state == "producing" || state == "stalled" {
+		sessionOutputHealthTotal.WithLabelValues(state).Inc()
+	}
+}
 
 // RecordDebitFailure counts a debit that failed after the work was
 // already delivered. There is no recovering the work at that point, so

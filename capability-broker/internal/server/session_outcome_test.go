@@ -22,6 +22,7 @@ func TestSessionOutcomeMapsEveryCloseReason(t *testing.T) {
 		sessionengine.ReasonRunnerFailed:         poolreport.OutcomeBackendFailure,
 		sessionengine.ReasonRecoveryFailed:       poolreport.OutcomeBackendFailure,
 		sessionengine.ReasonOpenFailed:           poolreport.OutcomeBackendFailure,
+		sessionengine.ReasonOutputFailed:         poolreport.OutcomeBackendFailure,
 		sessionengine.ReasonHeartbeatLost:        poolreport.OutcomeCallerFailure,
 		sessionengine.ReasonLeaseExpired:         poolreport.OutcomePolicyTermination,
 		sessionengine.ReasonInsufficient:         poolreport.OutcomePaymentTermination,

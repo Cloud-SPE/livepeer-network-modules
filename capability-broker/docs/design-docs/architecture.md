@@ -199,7 +199,10 @@ the other way: the runner posts cumulative claims to
 debits. A session winds down through one idempotent path (terminate runner
 → close payment → release capacity → record `close_reason`), whether the
 trigger is a gateway `end`, lease expiry, heartbeat loss, insufficient
-balance, or runner failure. See `docs/operator-runbook.md` §3.
+balance, runner failure, or a continuously stalled output-health report.
+Runner liveness and output progress have separate durable timestamps: a
+stalled event keeps the heartbeat alive but cannot extend the output-stall
+backstop. See `docs/operator-runbook.md` §3.
 
 ## Module boundaries
 

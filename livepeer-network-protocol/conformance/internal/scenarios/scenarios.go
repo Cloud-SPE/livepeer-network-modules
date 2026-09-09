@@ -716,6 +716,9 @@ func sessionScenarios() []harness.Scenario {
 			if harness.Field(st.JSON(), "runtime.grants") != nil {
 				return fmt.Errorf("status returned grants")
 			}
+			if got := harness.FieldString(st.JSON(), "output_state"); got != "unknown" {
+				return fmt.Errorf("old runner output_state %q, want unknown", got)
+			}
 			return nil
 		}},
 		{Name: "paid-session/duplicate-and-reordered-events-safe", Spec: "paid-session §7.2/§10", Run: func(c *harness.Ctx) error {
@@ -774,6 +777,56 @@ func sessionScenarios() []harness.Scenario {
 			st, _ := c.SessionStatus(sessionID, credential)
 			if n, _ := harness.FieldNumber(st.JSON(), "usage.claimed_total"); n != 50 {
 				return fmt.Errorf("claimed_total %v, want 50", n)
+			}
+			return nil
+		}},
+		{Name: "paid-session/output-health-and-terminal-reason", Spec: "paid-session §7.2/§10", Run: func(c *harness.Ctx) error {
+			open, cb, err := openHappySession(c, "output-health")
+			if err != nil {
+				return err
+			}
+			m := open.JSON()
+			sessionID, credential := harness.FieldString(m, "session_id"), harness.FieldString(m, "credential")
+			since := time.Now().UTC().Format(time.RFC3339Nano)
+			// rtmp-hls/v1 owns this event name and its code/attempt keys. The
+			// generic broker accepts the open-world event and consumes only
+			// the standardized output_state field; state_since is optional.
+			ladder := `{"event_id":"evt_oh1","sequence":1,"event_type":"session.ladder.restart","state":"active","details":{"code":"encoder_init_failed","attempt":1,"output_state":"waiting"}}`
+			if s, b, err := c.Runner.PostEvent(cb, ladder); err != nil || s != 200 {
+				return fmt.Errorf("ladder restart event: %d %s %v", s, b, err)
+			}
+			health := fmt.Sprintf(`{"event_id":"evt_oh2","sequence":2,"event_type":"session.output.stalled","state":"active","details":{"output_state":"stalled","output_state_since":%q,"last_failure_code":"encoder_init_failed"}}`, since)
+			if s, b, err := c.Runner.PostEvent(cb, health); err != nil || s != 200 {
+				return fmt.Errorf("stalled event: %d %s %v", s, b, err)
+			}
+			st, err := c.SessionStatus(sessionID, credential)
+			if err != nil || st.Status != 200 {
+				return fmt.Errorf("status after stalled event: %d %v", st.Status, err)
+			}
+			if got := harness.FieldString(st.JSON(), "output_state"); got != "stalled" {
+				return fmt.Errorf("output_state %q, want stalled", got)
+			}
+			if got := harness.FieldString(st.JSON(), "last_failure_code"); got != "encoder_init_failed" {
+				return fmt.Errorf("last_failure_code %q", got)
+			}
+
+			// A malformed event at sequence 3 must advance nothing, so the
+			// corrected terminal event may reuse sequence 3.
+			if s, _, err := c.Runner.PostEvent(cb, `{"event_id":"evt_oh_bad","sequence":3,"event_type":"session.heartbeat","details":{"output_state":"broken"}}`); err != nil {
+				return err
+			} else if s/100 == 2 {
+				return fmt.Errorf("malformed output health accepted")
+			}
+			failed := fmt.Sprintf(`{"event_id":"evt_oh3","sequence":3,"event_type":"session.failed","state":"failed","usage":{"unit":%q,"total":0},"close_reason":"output_failed","details":{"output_state":"stalled","output_state_since":%q,"last_failure_code":"unknown"}}`, c.SessionUnit, since)
+			if s, b, err := c.Runner.PostEvent(cb, failed); err != nil || s != 200 {
+				return fmt.Errorf("output_failed event: %d %s %v", s, b, err)
+			}
+			st, err = c.SessionStatus(sessionID, credential)
+			if err != nil || st.Status != 200 {
+				return fmt.Errorf("terminal status: %d %v", st.Status, err)
+			}
+			if reason := harness.FieldString(st.JSON(), "close_reason"); reason != "output_failed" {
+				return fmt.Errorf("terminal reason %q, want output_failed", reason)
 			}
 			return nil
 		}},

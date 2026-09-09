@@ -315,13 +315,23 @@ func TestSessionSurfaceEndToEnd(t *testing.T) {
 		t.Fatalf("event: %d %v", evResp.StatusCode, decode(t, evResp))
 	}
 	evResp.Body.Close()
+	healthResp := postEvent(runner.callbackToken,
+		`{"event_id":"evt_health","sequence":2,"event_type":"session.output.stalled","details":{"output_state":"stalled","output_state_since":"2026-09-09T12:00:00Z","last_failure_code":"encoder_init_failed"}}`)
+	if healthResp.StatusCode != http.StatusOK {
+		t.Fatalf("health event: %d %v", healthResp.StatusCode, decode(t, healthResp))
+	}
+	healthResp.Body.Close()
+	healthStatus := decode(t, get(credential))
+	if healthStatus["output_state"] != "stalled" || healthStatus["last_failure_code"] != "encoder_init_failed" {
+		t.Fatalf("status omitted output health: %v", healthStatus)
+	}
 	// Bad token on events: uniform 401.
-	if r := postEvent("cb_wrong", `{"event_id":"evt_2","sequence":2,"event_type":"session.heartbeat"}`); r.StatusCode != http.StatusUnauthorized {
+	if r := postEvent("cb_wrong", `{"event_id":"evt_2","sequence":3,"event_type":"session.heartbeat"}`); r.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("bad-token event status %d", r.StatusCode)
 	}
 	// Unit mismatch: 400, nothing advanced.
 	if r := postEvent(runner.callbackToken,
-		`{"event_id":"evt_3","sequence":2,"event_type":"session.usage.tick","usage":{"unit":"frames","total":9}}`); r.StatusCode != http.StatusBadRequest {
+		`{"event_id":"evt_3","sequence":3,"event_type":"session.usage.tick","usage":{"unit":"frames","total":9}}`); r.StatusCode != http.StatusBadRequest {
 		t.Fatalf("unit mismatch status %d", r.StatusCode)
 	}
 	st2 := decode(t, get(credential))

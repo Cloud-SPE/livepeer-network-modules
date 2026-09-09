@@ -59,6 +59,24 @@ func testCfg(t *testing.T) bootConfig {
 	}
 }
 
+func TestBuildLimitsParsesWinningTicketExposure(t *testing.T) {
+	cfg := testCfg(t)
+	cfg.maxPaymentWei = "100"
+	cfg.maxTicketFaceValueWei = "1000"
+	limits, err := buildLimits(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limits.MaxTicketFaceValueWei == nil || limits.MaxTicketFaceValueWei.String() != "1000" {
+		t.Fatalf("max ticket face value = %v; want 1000", limits.MaxTicketFaceValueWei)
+	}
+
+	cfg.maxTicketFaceValueWei = "not-wei"
+	if _, err := buildLimits(cfg); err == nil || !strings.Contains(err.Error(), "--max-ticket-face-value-wei") {
+		t.Fatalf("invalid face-value limit error = %v", err)
+	}
+}
+
 func TestBuildKeyStoreDevModeUsesDevKeystore(t *testing.T) {
 	t.Setenv(passwordEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))

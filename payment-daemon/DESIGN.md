@@ -59,12 +59,11 @@ usage and billing forward.
 
 ### Sender-side minted-payment sessions
 
-Sender mode caches sessions by stable route/funding identity:
+Sender mode caches sessions by stable route identity:
 
 - recipient
 - capability
 - offering
-- funded value / target spend
 - ticket-params base URL
 
 Each cached session owns:
@@ -72,6 +71,11 @@ Each cached session owns:
 - the authoritative `TicketParams`
 - the monotonic sender nonce stream
 - the current `work_id = hex(recipient_rand_hash)`
+
+Face value is mutable sizing state inside the cached `TicketParams`, not part
+of identity. `CreatePayment` serializes each route and re-quotes face value in
+both directions so the actual signed EV equals that replenishment's funding
+intent without moving `work_id`.
 
 `CreatePayment` returns that `work_id` to the caller.
 

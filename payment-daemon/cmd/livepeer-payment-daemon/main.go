@@ -77,6 +77,8 @@ func main() {
 		maxPaymentWei = flag.String("max-payment-wei", "",
 			"sender: REQUIRED in chain mode. Largest funded value this daemon will authorize for a single payment, in wei. "+
 				"A circuit breaker against runaway loops and fat-fingered funding, not a price policy — see --max-price-per-unit.")
+		maxTicketFaceValueWei = flag.String("max-ticket-face-value-wei", "",
+			"sender: optional maximum winning face value of any single probabilistic ticket. Distinct from --max-payment-wei, which caps expected value.")
 		maxAuthorizationWei = flag.String("max-authorization-wei", "",
 			"sender: optional maximum cumulative debit permitted by one job/session spend authorization. Independent of --max-payment-wei so large workloads can consume reusable credit while replenishments stay bounded.")
 		maxPricePerUnit = flag.String("max-price-per-unit", "",
@@ -165,6 +167,7 @@ func main() {
 		txintentDBPath:        intentDBPath,
 		mintRetention:         *mintRetention,
 		maxPaymentWei:         *maxPaymentWei,
+		maxTicketFaceValueWei: *maxTicketFaceValueWei,
 		maxAuthorizationWei:   *maxAuthorizationWei,
 		maxPricePerUnit:       *maxPricePerUnit,
 		payeeAdminToken:       adminToken,
@@ -207,6 +210,7 @@ type bootConfig struct {
 	txintentDBPath        string
 	mintRetention         time.Duration
 	maxPaymentWei         string
+	maxTicketFaceValueWei string
 	maxAuthorizationWei   string
 	maxPricePerUnit       string
 	payeeAdminToken       string
@@ -839,6 +843,13 @@ func buildLimits(cfg bootConfig) (sender.Limits, error) {
 			return out, fmt.Errorf("--max-payment-wei %q must be a positive decimal integer", raw)
 		}
 		out.MaxPaymentWei = v
+	}
+	if raw := strings.TrimSpace(cfg.maxTicketFaceValueWei); raw != "" {
+		v, ok := new(big.Int).SetString(raw, 10)
+		if !ok || v.Sign() <= 0 {
+			return out, fmt.Errorf("--max-ticket-face-value-wei %q must be a positive decimal integer", raw)
+		}
+		out.MaxTicketFaceValueWei = v
 	}
 	rates, err := sender.ParseMaxPricePerUnit(cfg.maxPricePerUnit)
 	if err != nil {

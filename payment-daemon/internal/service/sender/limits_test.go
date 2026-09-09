@@ -9,19 +9,33 @@ import (
 )
 
 func TestLimitsDescribeIsStableAndComplete(t *testing.T) {
-	if got := (sender.Limits{}).Describe(); !strings.Contains(got, "max_payment_wei=unlimited") || !strings.Contains(got, "max_authorization_wei=unlimited") || !strings.Contains(got, "max_price_per_unit=(none set") {
+	if got := (sender.Limits{}).Describe(); !strings.Contains(got, "max_payment_wei=unlimited") || !strings.Contains(got, "max_ticket_face_value_wei=unlimited") || !strings.Contains(got, "max_authorization_wei=unlimited") || !strings.Contains(got, "max_price_per_unit=(none set") {
 		t.Fatalf("empty limits description = %q", got)
 	}
 	configured := sender.Limits{
-		MaxPaymentWei:       big.NewInt(10),
-		MaxAuthorizationWei: big.NewInt(100),
+		MaxPaymentWei:         big.NewInt(10),
+		MaxTicketFaceValueWei: big.NewInt(20),
+		MaxAuthorizationWei:   big.NewInt(100),
 		MaxPricePerUnit: map[string]*big.Int{
 			"z_units": big.NewInt(3),
 			"a_units": big.NewInt(2),
 		},
 	}
-	if got := configured.Describe(); got != "max_payment_wei=10 max_authorization_wei=100 max_price_per_unit=a_units=2,z_units=3" {
+	if got := configured.Describe(); got != "max_payment_wei=10 max_ticket_face_value_wei=20 max_authorization_wei=100 max_price_per_unit=a_units=2,z_units=3" {
 		t.Fatalf("configured limits description = %q", got)
+	}
+}
+
+func TestLimitsSignedTicketBatchChecksEVAndWinningExposure(t *testing.T) {
+	l := sender.Limits{MaxPaymentWei: big.NewInt(100), MaxTicketFaceValueWei: big.NewInt(1000)}
+	if err := l.CheckSignedTicketBatch(big.NewInt(100), big.NewInt(1000)); err != nil {
+		t.Fatalf("batch at both limits must pass: %v", err)
+	}
+	if err := l.CheckSignedTicketBatch(big.NewInt(101), big.NewInt(1000)); err == nil || !strings.Contains(err.Error(), "actual ticket expected value") {
+		t.Fatalf("actual EV overage error = %v", err)
+	}
+	if err := l.CheckSignedTicketBatch(big.NewInt(100), big.NewInt(1001)); err == nil || !strings.Contains(err.Error(), "face_value") {
+		t.Fatalf("winning exposure overage error = %v", err)
 	}
 }
 

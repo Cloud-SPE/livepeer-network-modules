@@ -5,7 +5,7 @@
 //   - CreatePayment fetches quote-free payee-issued TicketParams over
 //     HTTP from the broker's `/v1/payment/ticket-params` endpoint.
 //   - The sender caches sessions by (recipient, capability, offering,
-//     requested funded value, ticket-params base URL) so repeated calls
+//     ticket-params base URL) so repeated calls
 //     reuse the same recipient_rand_hash and nonce stream.
 //   - Accepted quote metadata is refreshed on every CreatePayment call
 //     even when the nonce stream is reused from an existing session.
@@ -93,8 +93,14 @@ type Service struct {
 	// unreserved id and both sign.
 	mintMu sync.Map // mint key -> *sync.Mutex
 
+	// sessionMu serializes ticket-parameter sizing and signing for one
+	// payer/payee route. Different mint ids can share one recipient rand,
+	// so mint-id locking alone does not stop a large and small refill from
+	// racing two face values onto the same cached session.
+	sessionMu sync.Map // session cache key -> *sync.Mutex
+
 	mu          sync.Mutex
-	sessions    map[string]*senderSession // keyed by recipient/capability/offering/target-spend tuple
+	sessions    map[string]*senderSession // keyed by recipient/capability/offering/base-URL route
 	workIDIndex map[string]string         // work_id -> session cache key
 }
 
@@ -375,6 +381,15 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 				"unverified expiry deadline; refusing: %v", err)
 	}
 
+	// One recipient/capability/offering route owns one mutable ticket
+	// session. Hold its lock through quote sizing, nonce allocation and
+	// signing so concurrent mint ids cannot sign with a face value another
+	// request changes underneath them. Unrelated routes remain concurrent.
+	unlockSession := s.lockSession(sessionKey(req.GetRecipient(),
+		acceptedPrice.CapabilityName, acceptedPrice.Offering,
+		req.GetTicketParamsBaseUrl()))
+	defer unlockSession()
+
 	session, err := s.findOrOpenSession(
 		ctx,
 		req.GetRecipient(),
@@ -433,12 +448,12 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	}
 	n := int(ticketCount.Int64())
 	totalEV := new(big.Int).Mul(perTicketEV, ticketCount)
-	// The receiver's indivisible ticket economics can make actual returned EV
-	// exceed the requested shortfall. Policy is against what will be signed,
-	// not merely what the caller requested.
-	if err := s.limits.CheckMint(acceptedPrice.WorkUnitName,
-		big.NewInt(acceptedPrice.PricePerUnitWei), acceptedPrice.UnitsPerPrice, totalEV); err != nil {
-		return nil, grpcstatus.Errorf(codes.FailedPrecondition, "spend limit: actual ticket expected value: %v", err)
+	// Policy is checked against what will actually be signed, not merely the
+	// caller's requested shortfall. Exact sizing above makes the two EV values
+	// equal; this second check remains the fail-closed boundary and separately
+	// caps winning face-value exposure.
+	if err := s.limits.CheckSignedTicketBatch(totalEV, session.ticketParams.FaceValue); err != nil {
+		return nil, grpcstatus.Errorf(codes.FailedPrecondition, "spend limit: %v", err)
 	}
 
 	// Roll the session over BEFORE signing anything, if this batch would
@@ -583,6 +598,14 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 // mints stay concurrent.
 func (s *Service) lockMint(mintID string) func() {
 	actual, _ := s.mintMu.LoadOrStore(mintID, &sync.Mutex{})
+	mu := actual.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
+}
+
+// lockSession serializes mutable ticket-session state for one route.
+func (s *Service) lockSession(key string) func() {
+	actual, _ := s.sessionMu.LoadOrStore(key, &sync.Mutex{})
 	mu := actual.(*sync.Mutex)
 	mu.Lock()
 	return mu.Unlock
@@ -852,14 +875,19 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 	}
 	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
 
-	if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(want) < 0 {
-		// Fail closed. Handing back a payment that funds less than asked
-		// is how a caller ends up admitted and then refused for
-		// insufficient balance.
+	if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(want) != 0 {
+		// Fail closed in either direction. Under-funding fails at admission;
+		// over-funding recreates the stranded-float bug this re-quote exists
+		// to prevent. With stable win probability, inverse face-value sizing
+		// can represent every integer EV exactly.
+		direction := "below"
+		if got.Cmp(want) > 0 {
+			direction = "above"
+		}
 		return nil, grpcstatus.Errorf(codes.FailedPrecondition,
-			"payee will not quote parameters that fund %s wei: best offer credits %s wei "+
-				"per ticket (face_value %s, win_prob %s)",
-			want, got, retry.FaceValue, retry.WinProb)
+			"payee returned ticket EV %s wei %s requested funding %s wei after re-quote "+
+				"(face_value %s, win_prob %s); refusing before signing because this route cannot be sized exactly",
+			got, direction, want, retry.FaceValue, retry.WinProb)
 	}
 	// The rand must not move: a new one would be a different session and
 	// a work_id the caller never agreed to.
@@ -881,31 +909,23 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 		sess.acceptedQuote = cloneQuoteRef(acceptedQuote)
 		cached := cloneTicketParams(sess.ticketParams)
 		s.mu.Unlock()
-		// A cached session keeps the face value it was opened at, and a
-		// LATER, larger funding request has to be funded from it. Sizing
-		// the batch in tickets to compensate does not work: the payee
-		// caps a session at store.MaxSenderNonces, so a small original
-		// face value silently caps how much this session can ever fund —
-		// 1,025 wei followed by 616,025 wei needed 601 tickets and the
-		// payee rejected the last one, crediting 613,975 of 616,025.
-		//
-		// So the cached session is re-quoted at a larger face value
-		// instead. The payee keeps its recipient rand for the tuple, so
-		// work_id does not move and the session is the same one.
-		if types.CreditedEV(cached.FaceValue, cached.WinProb).Cmp(faceValue) < 0 {
+		// Face value is sizing, not session identity. Re-quote in BOTH
+		// directions whenever the cached ticket EV differs from this
+		// replenishment. Growing avoids under-funding and nonce exhaustion;
+		// shrinking prevents a small refill after a large one from silently
+		// transferring the old, much larger EV. The payee keeps recipient
+		// rand stable, so work_id does not move.
+		if types.CreditedEV(cached.FaceValue, cached.WinProb).Cmp(faceValue) != 0 {
 			rescaled, rerr := s.rescaleTicketParams(ctx, recipient, faceValue,
 				capability, offering, ticketParamsBaseURL, cached)
 			if rerr != nil {
 				return nil, rerr
 			}
 			s.mu.Lock()
-			// Re-read under the lock: another mint may have rescaled it
-			// already, and the larger of the two is the one to keep.
+			// sessionMu serializes sizing for this key. Re-read under the map
+			// lock only to tolerate asynchronous invalidation/rotation.
 			if live, still := s.sessions[key]; still {
-				if types.CreditedEV(live.ticketParams.FaceValue, live.ticketParams.WinProb).Cmp(
-					types.CreditedEV(rescaled.FaceValue, rescaled.WinProb)) < 0 {
-					live.ticketParams = cloneTicketParams(rescaled)
-				}
+				live.ticketParams = cloneTicketParams(rescaled)
 				sess = live
 			}
 			s.mu.Unlock()
@@ -954,7 +974,7 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	// face value scaled to match. EV is linear in face value, so one
 	// correction is enough. The tuple's recipient rand is stable, so
 	// re-asking does not move work_id.
-	if types.CreditedEV(params.FaceValue, params.WinProb).Cmp(faceValue) < 0 {
+	if types.CreditedEV(params.FaceValue, params.WinProb).Cmp(faceValue) != 0 {
 		params, err = s.rescaleTicketParams(ctx, recipient, faceValue,
 			capability, offering, ticketParamsBaseURL, params)
 		if err != nil {
@@ -1247,9 +1267,8 @@ func evToBytes(ev *big.Rat) []byte {
 // redundant ticket-params fetch that came back with the same identity.
 // Worse, it implied the opposite invariant to anyone reading it.
 //
-// Face value is pinned at first issuance for the life of the session; a
-// larger refill mints MORE tickets, not larger ones. See
-// livepeer-network-protocol/protocols/offering-axes.md §6.2.
+// Face value is mutable sizing state, not identity. Each replenishment may
+// re-quote it upward or downward while the payee keeps recipient rand stable.
 func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string) string {
 	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL)
 }

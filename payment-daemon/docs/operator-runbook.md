@@ -230,7 +230,27 @@ legitimate replenishment fails
 loudly with `spend limit: funded_value … exceeds max-payment-wei …`,
 which is the failure you want.
 
+The daemon checks this twice: first against the requested shortfall and again
+against the aggregate EV of the actual tickets returned by payee parameter
+negotiation. A payee cannot bypass the limit with indivisible rounding or a
+stale cached face value.
+
 Dev mode (no `--chain-rpc-urls`) has no real funds and runs without it.
+
+### `--max-ticket-face-value-wei` (optional)
+
+The largest winning face value the sender will sign on one probabilistic
+ticket:
+
+```
+--max-ticket-face-value-wei=100000000000000000    # 0.1 ETH
+```
+
+This is not interchangeable with `--max-payment-wei`. Expected value measures
+the average wholesale value transferred; face value is the full contingent
+payout if the ticket wins. Configure this from the sender's acceptable
+single-ticket exposure and redemption economics. The check uses the actual
+payee-returned ticket parameters and happens before signing.
 
 ### `--max-authorization-wei` (optional)
 
@@ -805,6 +825,8 @@ the code.
    it. Latency under 1s; 99.9% uptime SLO.
 6. **Spend limits set (sender).** `--max-payment-wei` is REQUIRED in
    chain mode and the daemon will not start without it — see §3.5.
+   Set `--max-ticket-face-value-wei` when the payer also needs an explicit
+   worst-case winning-ticket exposure ceiling.
    Consider `--max-price-per-unit` for each work unit you route to,
    especially if you mix cheap and expensive workloads.
 7. **BoltDB on persistent storage.** `--db` (receiver mode; default
@@ -844,10 +866,13 @@ target_available = expected near-term unreserved demand + safety buffer
 shortfall = max(0, target_available - trusted broker account.available_value_wei)
 ```
 
-Keep `--max-payment-wei` above one intended replenishment (including
-indivisible ticket EV rounding) and below the loss you are willing to authorize
-from one faulty local call. A 131K-token request may authorize a large debit
-without requiring a ticket of that value when reusable credit already exists.
+Keep `--max-payment-wei` at or above one intended replenishment and below the
+loss you are willing to authorize from one faulty local call. The sender
+re-quotes cached ticket parameters in both directions and requires signed EV to
+equal the shortfall exactly; if the payee cannot honor exact sizing, the mint
+fails before signing instead of depositing surplus float. A 131K-token request
+may authorize a large debit without requiring a ticket of that value when
+reusable credit already exists.
 
 Monitor `POST /v1/payment/account` on each locked broker route. A growing
 `reserved_value_wei` with no settled authorization progress indicates a stuck

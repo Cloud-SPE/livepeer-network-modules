@@ -165,10 +165,14 @@ type CreatePaymentResponse struct {
 	PaymentBytes []byte `protobuf:"bytes,1,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
 	// Number of tickets this payment carries (for metrics / audit).
 	TicketsCreated uint32 `protobuf:"varint,2,opt,name=tickets_created,json=ticketsCreated,proto3" json:"tickets_created,omitempty"`
-	// Aggregate expected value (EV = face_value × win_prob) committed by
-	// this payment.
+	// Aggregate expected value actually committed by the signed tickets,
+	// after authoritative payee parameters and integer EV rounding. A
+	// conforming sender re-quotes ticket sizing and refuses before signing
+	// when this cannot equal `funded_value_wei` exactly.
 	ExpectedValue *BigUInt `protobuf:"bytes,3,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
-	// Effective funded value used for the minted payment batch.
+	// Effective funding intent used for this payment: the legacy requested
+	// value, or the account shortfall for an account-aware mint. This is the
+	// amount the caller authorized, not a winning ticket's face value.
 	FundedValueWei *BigUInt `protobuf:"bytes,4,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
 	// Quote identity serialized into the payment context.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`

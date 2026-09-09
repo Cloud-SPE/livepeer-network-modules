@@ -22,6 +22,11 @@ import (
 //     loop or a fat-fingered funding call, and it means something no
 //     matter what the workload is denominated in.
 //
+//   - MaxTicketFaceValueWei bounds the worst-case value of one winning
+//     probabilistic ticket. Expected value and winning exposure are
+//     independent: a tiny win probability can make EV acceptable while
+//     leaving an unexpectedly large face value.
+//
 //   - MaxPricePerUnit is price policy. Keyed by work-unit name, because
 //     that is the denominator a price is quoted in and the manifest
 //     declares it before anything is minted. Optional, and diverse
@@ -37,6 +42,9 @@ type Limits struct {
 	// MaxPaymentWei caps funded_value_wei for a single mint. Nil means
 	// unlimited, which chain mode refuses at startup.
 	MaxPaymentWei *big.Int
+	// MaxTicketFaceValueWei caps one ticket's winning face value. Nil means
+	// unlimited. This is distinct from aggregate expected-value policy.
+	MaxTicketFaceValueWei *big.Int
 	// MaxAuthorizationWei caps the cumulative wholesale debit one signed
 	// job/session authorization may permit. It is deliberately independent
 	// from MaxPaymentWei: a large workload cap can draw reusable credit while
@@ -52,6 +60,18 @@ type Limits struct {
 func (l Limits) CheckAuthorization(maxDebitWei *big.Int) error {
 	if l.MaxAuthorizationWei != nil && maxDebitWei != nil && maxDebitWei.Cmp(l.MaxAuthorizationWei) > 0 {
 		return fmt.Errorf("max_debit %s wei exceeds max-authorization-wei %s", maxDebitWei, l.MaxAuthorizationWei)
+	}
+	return nil
+}
+
+// CheckSignedTicketBatch validates the values that will actually be signed,
+// after authoritative payee parameters and integer EV rounding are known.
+func (l Limits) CheckSignedTicketBatch(totalExpectedValueWei, faceValueWei *big.Int) error {
+	if l.MaxPaymentWei != nil && totalExpectedValueWei != nil && totalExpectedValueWei.Cmp(l.MaxPaymentWei) > 0 {
+		return fmt.Errorf("actual ticket expected value %s wei exceeds max-payment-wei %s", totalExpectedValueWei, l.MaxPaymentWei)
+	}
+	if l.MaxTicketFaceValueWei != nil && faceValueWei != nil && faceValueWei.Cmp(l.MaxTicketFaceValueWei) > 0 {
+		return fmt.Errorf("ticket face_value %s wei exceeds max-ticket-face-value-wei %s", faceValueWei, l.MaxTicketFaceValueWei)
 	}
 	return nil
 }
@@ -115,6 +135,11 @@ func (l Limits) Describe() string {
 	parts := []string{"max_payment_wei=unlimited"}
 	if l.MaxPaymentWei != nil {
 		parts[0] = "max_payment_wei=" + l.MaxPaymentWei.String()
+	}
+	if l.MaxTicketFaceValueWei == nil {
+		parts = append(parts, "max_ticket_face_value_wei=unlimited")
+	} else {
+		parts = append(parts, "max_ticket_face_value_wei="+l.MaxTicketFaceValueWei.String())
 	}
 	if l.MaxAuthorizationWei == nil {
 		parts = append(parts, "max_authorization_wei=unlimited")

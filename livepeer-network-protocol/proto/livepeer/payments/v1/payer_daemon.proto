@@ -145,11 +145,15 @@ message CreatePaymentResponse {
   // Number of tickets this payment carries (for metrics / audit).
   uint32 tickets_created = 2;
 
-  // Aggregate expected value (EV = face_value × win_prob) committed by
-  // this payment.
+  // Aggregate expected value actually committed by the signed tickets,
+  // after authoritative payee parameters and integer EV rounding. A
+  // conforming sender re-quotes ticket sizing and refuses before signing
+  // when this cannot equal `funded_value_wei` exactly.
   BigUInt expected_value = 3;
 
-  // Effective funded value used for the minted payment batch.
+  // Effective funding intent used for this payment: the legacy requested
+  // value, or the account shortfall for an account-aware mint. This is the
+  // amount the caller authorized, not a winning ticket's face value.
   BigUInt funded_value_wei = 4;
 
   // Quote identity serialized into the payment context.

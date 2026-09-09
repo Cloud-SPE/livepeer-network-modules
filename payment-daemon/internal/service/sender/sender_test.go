@@ -456,7 +456,7 @@ func TestReportPaymentResult_InvalidRecipientRandEvictsSessionAndReturnsAborted(
 	}
 }
 
-func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
+func TestCreatePayment_RejectsPayeeThatIgnoresExactSizing(t *testing.T) {
 	dir := t.TempDir()
 	sockPath := filepath.Join(dir, "tx.sock")
 
@@ -485,7 +485,7 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	resp, err := client.CreatePayment(ctx, makeCreatePaymentRequest(
+	_, err = client.CreatePayment(ctx, makeCreatePaymentRequest(
 		[]byte("recipient-20-bytes!!"),
 		"openai:/v1/chat/completions",
 		"gpt-5",
@@ -495,20 +495,58 @@ func TestCreatePayment_UsesAuthoritativeTicketFaceValue(t *testing.T) {
 		1000,
 		"https://broker.example.com",
 	))
-	if err != nil {
-		t.Fatalf("CreatePayment: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "cannot be sized exactly") {
+		t.Fatalf("CreatePayment error = %v; want exact-sizing refusal", err)
 	}
+}
 
-	var pay pb.Payment
-	if err := proto.Unmarshal(resp.GetPaymentBytes(), &pay); err != nil {
-		t.Fatalf("decode payment: %v", err)
+func TestCreatePayment_ShrinksCachedTicketAfterLargeRefill(t *testing.T) {
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatal(err)
 	}
-	gotFaceValue := new(big.Int).SetBytes(pay.GetTicketParams().GetFaceValue())
-	if gotFaceValue.Cmp(big.NewInt(5000)) != 0 {
-		t.Fatalf("ticket face_value = %s; want 5000", gotFaceValue)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, fakeFetcher{}, nil,
+		mintStore(t), sender.Limits{MaxPaymentWei: big.NewInt(10_000)})
+
+	large, err := svc.CreatePayment(context.Background(), makeCreatePaymentRequest(
+		[]byte("0123456789abcdef0123"), "openai:chat", "gpt-5", "tokens", 1, 1, 10_000, "https://broker.example.com"))
+	if err != nil {
+		t.Fatalf("large refill: %v", err)
 	}
-	if gotEV := new(big.Int).SetBytes(resp.GetExpectedValue().GetValue()); gotEV.Cmp(big.NewInt(5000)) != 0 {
-		t.Fatalf("expected_value = %s; want 5000", gotEV)
+	small, err := svc.CreatePayment(context.Background(), makeCreatePaymentRequest(
+		[]byte("0123456789abcdef0123"), "openai:chat", "gpt-5", "tokens", 1, 1, 100, "https://broker.example.com"))
+	if err != nil {
+		t.Fatalf("small refill: %v", err)
+	}
+	if small.GetWorkId() != large.GetWorkId() {
+		t.Fatalf("work_id moved while downsizing: %q -> %q", large.GetWorkId(), small.GetWorkId())
+	}
+	if got := new(big.Int).SetBytes(small.GetExpectedValue().GetValue()); got.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("small refill signed EV = %s; want exactly 100", got)
+	}
+	var payment pb.Payment
+	if err := proto.Unmarshal(small.GetPaymentBytes(), &payment); err != nil {
+		t.Fatal(err)
+	}
+	if got := new(big.Int).SetBytes(payment.GetTicketParams().GetFaceValue()); got.Cmp(big.NewInt(100)) != 0 {
+		t.Fatalf("small refill reused stale face_value %s; want 100", got)
+	}
+}
+
+func TestCreatePayment_EnforcesWinningTicketFaceValueBeforeSigning(t *testing.T) {
+	keystore, err := devkeystore.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, halfProbabilityFetcher{}, nil,
+		mintStore(t), sender.Limits{
+			MaxPaymentWei:         big.NewInt(1000),
+			MaxTicketFaceValueWei: big.NewInt(2000),
+		})
+	_, err = svc.CreatePayment(context.Background(), makeCreatePaymentRequest(
+		[]byte("0123456789abcdef0123"), "openai:chat", "gpt-5", "tokens", 1, 1, 1000, "https://broker.example.com"))
+	if err == nil || !strings.Contains(err.Error(), "max-ticket-face-value-wei 2000") {
+		t.Fatalf("CreatePayment error = %v; want winning exposure refusal", err)
 	}
 }
 
@@ -735,6 +773,23 @@ func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequ
 		FaceValue:         big.NewInt(5000),
 		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
 		RecipientRandHash: []byte("fedcba9876543210fedcba9876543210"),
+		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
+		ExpirationBlock:   big.NewInt(123456),
+		ExpirationParams: &senderTypes.TicketExpirationParams{
+			CreationRound:          1,
+			CreationRoundBlockHash: make([]byte, 32),
+		},
+	}, nil
+}
+
+type halfProbabilityFetcher struct{}
+
+func (halfProbabilityFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
+	return &senderTypes.TicketParams{
+		Recipient:         append([]byte(nil), req.Recipient...),
+		FaceValue:         new(big.Int).Set(req.FaceValue),
+		WinProb:           new(big.Int).Quo(new(big.Int).Set(senderTypes.MaxWinProb), big.NewInt(2)),
+		RecipientRandHash: []byte("0123456789abcdef0123456789abcdef"),
 		Seed:              []byte("seed-seed-seed-seed-seed-seed-12"),
 		ExpirationBlock:   big.NewInt(123456),
 		ExpirationParams: &senderTypes.TicketExpirationParams{

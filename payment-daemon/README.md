@@ -55,7 +55,9 @@ Simulation inputs: [`scenarios/`](./scenarios/).
 - **Chain mode requires a spend limit.** A sender daemon will not start
   without `--max-payment-wei`, the most actual expected value it may sign in
   one replenishment or legacy payment. This is a circuit breaker, not a
-  workload-size setting. Optional `--max-authorization-wei` independently caps
+  workload-size setting. Optional `--max-ticket-face-value-wei` separately
+  caps one winning ticket's worst-case payout exposure. Optional
+  `--max-authorization-wei` independently caps
   the cumulative debit one job/session may consume. Optional
   `--max-price-per-unit` adds per-work-unit rate
   ceilings, which is how a deployment mixing cheap and expensive

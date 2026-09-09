@@ -320,7 +320,8 @@ price, and settlement-key facts that the payer snapshots into an authorization.
 Each payer configures, per payee and in aggregate:
 
 - target float and maximum float;
-- maximum single ticket EV based on the ticket actually returned;
+- maximum aggregate EV based on the tickets actually returned;
+- maximum winning face value for one probabilistic ticket;
 - maximum reservation and cumulative authorization;
 - refill threshold and safety buffer;
 - stale-authorization and reconciliation deadlines;

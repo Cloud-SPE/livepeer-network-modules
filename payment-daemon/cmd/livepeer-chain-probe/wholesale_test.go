@@ -2,9 +2,29 @@ package main
 
 import (
 	"math/big"
+	"net/http"
 	"path/filepath"
 	"testing"
 )
+
+func TestAccountingReplayUsesRecordedOutcomeNotBackendBody(t *testing.T) {
+	originalHeaders := http.Header{
+		"Livepeer-Job-Id":     []string{"job-1"},
+		"Livepeer-Work-Units": []string{"42"},
+		"Livepeer-Work-Unit":  []string{"tokens"},
+		"Livepeer-Settlement": []string{"signed-settlement"},
+	}
+	original := &httpResult{status: http.StatusOK, body: `{"choices":[{"text":"ok"}]}`, headers: originalHeaders}
+	replay := &httpResult{status: http.StatusOK, body: `{"replayed":true,"job_id":"job-1"}`, headers: originalHeaders.Clone()}
+	if err := assertAccountingReplay(original, replay); err != nil {
+		t.Fatal(err)
+	}
+
+	replay.headers.Set("Livepeer-Work-Units", "43")
+	if err := assertAccountingReplay(original, replay); err == nil {
+		t.Fatal("replay with changed accounting outcome passed validation")
+	}
+}
 
 func TestWholesaleAccountConservation(t *testing.T) {
 	account := wholesaleAccount{

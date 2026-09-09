@@ -159,8 +159,8 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	if err != nil {
 		return fmt.Errorf("delegated replay: %w", err)
 	}
-	if replay.status != second.status || replay.body != second.body {
-		return fmt.Errorf("delegated replay differs: status %d/%d body %q/%q", second.status, replay.status, second.body, replay.body)
+	if err := assertAccountingReplay(second, replay); err != nil {
+		return fmt.Errorf("delegated replay: %w", err)
 	}
 	afterReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
 	if err != nil {
@@ -216,6 +216,45 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	}
 	fmt.Printf("  whole-pilot reconciliation issued=%s debited_delta=%s remaining_available=%s reserved=0 wei\n",
 		totalIssued, new(big.Int).Sub(final.Debited.big(), before.Debited.big()), final.Available.big())
+	return nil
+}
+
+// assertAccountingReplay checks paid-job/v1 section 4.1. The broker retains
+// the terminal accounting outcome, not arbitrary backend output, so a replay
+// deliberately returns a small marker body alongside the original status and
+// accounting headers.
+func assertAccountingReplay(original, replay *httpResult) error {
+	if original == nil || replay == nil {
+		return fmt.Errorf("original and replay responses are required")
+	}
+	if replay.status != original.status {
+		return fmt.Errorf("status=%d; want recorded status %d", replay.status, original.status)
+	}
+	for _, name := range []string{
+		"Livepeer-Job-Id",
+		"Livepeer-Work-Units",
+		"Livepeer-Work-Unit",
+		"Livepeer-Settlement",
+	} {
+		want := original.headers.Get(name)
+		if got := replay.headers.Get(name); got != want {
+			return fmt.Errorf("%s=%q; want recorded value %q", name, got, want)
+		}
+	}
+	jobID := original.headers.Get("Livepeer-Job-Id")
+	if jobID == "" {
+		return fmt.Errorf("recorded outcome has no Livepeer-Job-Id")
+	}
+	var marker struct {
+		Replayed bool   `json:"replayed"`
+		JobID    string `json:"job_id"`
+	}
+	if err := json.Unmarshal([]byte(replay.body), &marker); err != nil {
+		return fmt.Errorf("marker body is not JSON: %w", err)
+	}
+	if !marker.Replayed || marker.JobID != jobID {
+		return fmt.Errorf("marker replayed=%t job_id=%q; want replayed=true job_id=%q", marker.Replayed, marker.JobID, jobID)
+	}
 	return nil
 }
 

@@ -1,8 +1,8 @@
 ---
 spec_name: paid-session
-version: 1.1.0-draft
+version: 1.2.0-draft
 status: draft
-last_updated: 2026-09-08
+last_updated: 2026-09-09
 ---
 
 # Protocol: `paid-session/v1`

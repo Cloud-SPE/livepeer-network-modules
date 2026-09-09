@@ -18,8 +18,8 @@ services:
     volumes:
       - payee-run:/var/run/livepeer
       - payee-state:/var/lib/livepeer/payment-daemon
-      - ${PAYEE_KEYSTORE:?set PAYEE_KEYSTORE}:/run/secrets/payee-keystore.json:ro
-      - ${PAYEE_KEYSTORE_PASSWORD_FILE:?set PAYEE_KEYSTORE_PASSWORD_FILE}:/run/secrets/payee-keystore-password:ro
+      - ./run/payment-secrets/payee-keystore.json:/run/secrets/payee-keystore.json:ro
+      - ./run/payment-secrets/payee-keystore-password:/run/secrets/payee-keystore-password:ro
     restart: unless-stopped
 
   broker:
@@ -74,8 +74,8 @@ services:
     volumes:
       - payer-run:/var/run/livepeer
       - payer-state:/var/lib/livepeer/payment-daemon
-      - ${PAYER_KEYSTORE:?set PAYER_KEYSTORE}:/run/secrets/payer-keystore.json:ro
-      - ${PAYER_KEYSTORE_PASSWORD_FILE:?set PAYER_KEYSTORE_PASSWORD_FILE}:/run/secrets/payer-keystore-password:ro
+      - ./run/payment-secrets/payer-keystore.json:/run/secrets/payer-keystore.json:ro
+      - ./run/payment-secrets/payer-keystore-password:/run/secrets/payer-keystore-password:ro
     restart: unless-stopped
 
   probe:

@@ -20,6 +20,26 @@ fi
 docker run --rm --user 0 -v "$PWD/run:/state" --entrypoint sh \
   "${BROKER_IMAGE:?set BROKER_IMAGE}" -c \
   'chown 65532:65532 /state/seal.key /state/settlement.key && chmod 0400 /state/seal.key /state/settlement.key'
+
+# payment-daemon is distroless and runs as uid 65532. Operator keystores are
+# correctly 0600/operator-owned, so direct bind mounts would be unreadable.
+# Stage private copies under ignored run/ without weakening the originals.
+mkdir -p run/payment-secrets
+chmod 0700 run/payment-secrets
+docker run --rm --user 0 \
+  -v "$PWD/run/payment-secrets:/state" \
+  -v "$PAYER_KEYSTORE:/source/payer-keystore.json:ro" \
+  -v "$PAYER_KEYSTORE_PASSWORD_FILE:/source/payer-keystore-password:ro" \
+  -v "$PAYEE_KEYSTORE:/source/payee-keystore.json:ro" \
+  -v "$PAYEE_KEYSTORE_PASSWORD_FILE:/source/payee-keystore-password:ro" \
+  --entrypoint sh "${BROKER_IMAGE:?set BROKER_IMAGE}" -c '
+    cp /source/payer-keystore.json /state/payer-keystore.json
+    cp /source/payer-keystore-password /state/payer-keystore-password
+    cp /source/payee-keystore.json /state/payee-keystore.json
+    cp /source/payee-keystore-password /state/payee-keystore-password
+    chown 65532:65532 /state/*
+    chmod 0400 /state/*
+  '
 ./render-config.sh > run/host-config.yaml
 
 wait_for_log() {

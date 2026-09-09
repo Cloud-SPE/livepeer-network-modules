@@ -62,7 +62,10 @@ for _ in $(seq 1 120); do
   sleep 1
 done
 curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/healthz" >/dev/null
-"${compose[@]}" up -d runner
+# The conformance fixture owns a single runner-attach WebSocket and does not
+# reconnect it after a broker replacement. Recreate it on every explicit stack
+# bring-up so persisted frozen offers cannot mask a detached backend.
+"${compose[@]}" up -d --force-recreate runner
 registry=""
 for _ in $(seq 1 120); do
   registry="$(curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/registry/offerings" 2>/dev/null || true)"

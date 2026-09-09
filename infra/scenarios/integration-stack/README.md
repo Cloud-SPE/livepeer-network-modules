@@ -111,8 +111,17 @@ It writes a non-secret checkpoint to the persistent `probe-state` volume,
 leaves one authorization admitted, stops payer, runner, broker, and payee,
 restarts them in receiver-first order, and then verifies the identical mint
 replay, account and authorization continuity, durable settlement lookup, and
-idempotent reservation release. Each invocation uses a new checkpoint name;
-retained checkpoints contain identifiers and account totals, not payment
+idempotent reservation release. Each invocation uses a new checkpoint name.
+If an operator interruption occurs after admission, resume that exact
+checkpoint without preparing another one:
+
+```bash
+PILOT_APPROVAL=ARBITRUM_ONE_DUST_APPROVED \
+RECOVERY_CHECKPOINT=/var/lib/livepeer/payment-daemon/recovery-<id>.json \
+./pilot-recovery.sh
+```
+
+Retained checkpoints contain identifiers and account totals, not payment
 envelopes, credentials, or private keys.
 
 ## Evidence and drain

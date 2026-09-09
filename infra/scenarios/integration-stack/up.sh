@@ -43,9 +43,9 @@ docker run --rm --user 0 \
 ./render-config.sh > run/host-config.yaml
 
 wait_for_log() {
-  local service="$1" pattern="$2"
+  local service="$1" pattern="$2" since="$3"
   for _ in $(seq 1 120); do
-    if "${compose[@]}" logs "$service" 2>&1 | grep -q "$pattern"; then return 0; fi
+    if "${compose[@]}" logs --since "$since" "$service" 2>&1 | grep -q "$pattern"; then return 0; fi
     sleep 1
   done
   echo "$service did not become ready; inspect: ${compose[*]} logs $service" >&2
@@ -54,8 +54,13 @@ wait_for_log() {
 
 # Migration order is an invariant: receiver first, advertisement second,
 # payer opt-in last. No probe runs here and startup itself mints no ticket.
+payee_running_before="$("${compose[@]}" ps -q --status running payee)"
+payee_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "${compose[@]}" up -d payee
-wait_for_log payee "gRPC listening"
+payee_running_after="$("${compose[@]}" ps -q --status running payee)"
+if [ -z "$payee_running_before" ] || [ "$payee_running_before" != "$payee_running_after" ]; then
+  wait_for_log payee "gRPC listening" "$payee_since"
+fi
 "${compose[@]}" up -d broker
 for _ in $(seq 1 120); do
   if curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/healthz" >/dev/null; then break; fi
@@ -74,8 +79,13 @@ for _ in $(seq 1 120); do
 done
 grep -q 'conformance:job' <<<"$registry" || { echo "runner did not freeze the pilot offer" >&2; exit 1; }
 grep -q 'wholesale_accounts' <<<"$registry" || { echo "pilot offer did not advertise wholesale accounts" >&2; exit 1; }
+payer_running_before="$("${compose[@]}" ps -q --status running payer)"
+payer_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "${compose[@]}" up -d payer
-wait_for_log payer "gRPC listening"
+payer_running_after="$("${compose[@]}" ps -q --status running payer)"
+if [ -z "$payer_running_before" ] || [ "$payer_running_before" != "$payer_running_after" ]; then
+  wait_for_log payer "gRPC listening" "$payer_since"
+fi
 
 echo "pilot stack ready; no ticket has been minted"
 echo "review ./status.sh, then run ./pilot.sh only with explicit spend approval"

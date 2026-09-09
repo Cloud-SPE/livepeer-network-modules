@@ -6,7 +6,11 @@ cd "$(dirname "$0")"
 set -a; . ./stack.env; set +a
 
 compose=(docker compose --env-file stack.env -f compose.yaml)
-checkpoint="/var/lib/livepeer/payment-daemon/recovery-$(date -u +%Y%m%dT%H%M%SZ)-$$.json"
+checkpoint="${RECOVERY_CHECKPOINT:-/var/lib/livepeer/payment-daemon/recovery-$(date -u +%Y%m%dT%H%M%SZ)-$$.json}"
+[[ "$checkpoint" =~ ^/var/lib/livepeer/payment-daemon/recovery-[A-Za-z0-9._-]+\.json$ ]] || {
+  echo "RECOVERY_CHECKPOINT must name a recovery-*.json file in the probe-state directory" >&2
+  exit 2
+}
 common=(
   --payer-socket=/var/run/livepeer/payer/payer-daemon.sock
   --payee-socket=/var/run/livepeer/payee/payment-daemon.sock
@@ -23,6 +27,14 @@ common=(
   --account-float-wei="$ACCOUNT_FLOAT_WEI"
   --checkpoint-file="$checkpoint"
 )
+
+if [ -n "${RECOVERY_CHECKPOINT:-}" ]; then
+  echo "resuming admitted wholesale recovery checkpoint: $checkpoint"
+  ./up.sh
+  "${compose[@]}" --profile pilot run --rm probe --protocol=wholesale-recovery-verify "${common[@]}"
+  echo "restart checkpoint verified: $checkpoint"
+  exit 0
+fi
 
 echo "preparing durable wholesale recovery checkpoint: $checkpoint"
 "${compose[@]}" --profile pilot run --rm probe --protocol=wholesale-recovery-prepare "${common[@]}"

@@ -98,11 +98,27 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		out.ReservedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReservedWei)}
 		out.ReleasedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReleasedWei)}
 	}
+	breakdown := make(map[string]string, 4)
+	if rec.CloseReason != "" {
+		breakdown["termination_reason"] = rec.CloseReason
+	}
+	if rec.OutputState != "" {
+		breakdown["output_state"] = rec.OutputState
+	}
+	if !rec.OutputStateSince.IsZero() {
+		breakdown["output_state_since"] = rec.OutputStateSince.UTC().Format(time.RFC3339Nano)
+	}
+	if rec.LastFailureCode != "" {
+		breakdown["last_failure_code"] = rec.LastFailureCode
+	}
 	if rec.ClaimedTotal != rec.DebitedTotal {
 		// Recorded rather than smoothed over: the two advance in one
 		// commit, so a gap is a bug in this broker and a reader should
 		// treat it the way it treats a bad signature.
-		out.Breakdown = map[string]string{"claim_debit_gap": "true"}
+		breakdown["claim_debit_gap"] = "true"
+	}
+	if len(breakdown) > 0 {
+		out.Breakdown = breakdown
 	}
 	return out
 }

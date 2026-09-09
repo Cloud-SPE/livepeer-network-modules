@@ -379,6 +379,18 @@ willing to strand.
 session, close payment state, record the stable reason, and answer with the
 terminal state. Repeat calls return the same terminal record.
 
+The signed terminal `SettlementRecord.breakdown` carries the durable,
+customer-safe diagnosis available to independent reconcilers:
+
+- `termination_reason` when the broker recorded a close reason;
+- `output_state` and `output_state_since` when output health was reported;
+- `last_failure_code` when the runner supplied a safe failure code.
+
+These optional keys do not affect settlement arithmetic. They are signed so a
+clearinghouse that invokes no work itself—and therefore does not hold the
+session credential—can distinguish `output_failed` from a healthy close
+without trusting an SDK callback. Older consumers ignore the map entries.
+
 ## 4. The session credential
 
 Open returns a bearer `credential` scoped to exactly this session. Status,
@@ -731,7 +743,7 @@ is the difference between a diagnosable bug and an afternoon.
 
 | Version | Date | Change |
 |---|---|---|
-| 1.2.0-draft | 2026-09-09 | Adds optional, workload-agnostic output health in event details; separates runner liveness from productive output; persists health atomically; preserves safe runner failure reasons including `output_failed`; and fails continuously stalled sessions closed after 60 seconds. Old runners remain valid with `unknown` health. |
+| 1.2.0-draft | 2026-09-09 | Adds optional, workload-agnostic output health in event details; separates runner liveness from productive output; persists health atomically; preserves safe runner failure reasons including `output_failed`; fails continuously stalled sessions closed after 60 seconds; and carries the safe terminal diagnosis in signed settlements for independent reconcilers. Old runners remain valid with `unknown` health. |
 | 1.1.0-draft | 2026-09-09 | Adds cumulative single-purpose session authorization over a stable wholesale account. Admission reserves bounded runway, usage advances the cumulative debit and replaces runway atomically, aggregate shortfall funding is optional, and wind-down releases the remainder. |
 | 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |
 | 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |

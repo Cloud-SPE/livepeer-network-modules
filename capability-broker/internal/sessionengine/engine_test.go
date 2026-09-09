@@ -1635,6 +1635,40 @@ func TestSettlementStateUsesTheNormativeVocabulary(t *testing.T) {
 	})
 }
 
+// A clearinghouse reconciles through the signed settlement lookup and does
+// not hold the gateway's session credential. Preserve the terminal output
+// diagnosis there so it need not trust an SDK callback to distinguish a
+// healthy close from fail-closed zero output.
+func TestSettlementCarriesTerminalOutputHealth(t *testing.T) {
+	h := newHarness(t)
+	res := h.open(t)
+	since := h.now().Add(-45 * time.Second).UTC()
+	if err := h.store.Update(res.SessionID, func(rec *sessionstore.Record) error {
+		rec.State = sessionstore.StateFailed
+		rec.CloseReason = ReasonOutputFailed
+		rec.OutputState = "stalled"
+		rec.OutputStateSince = since
+		rec.LastFailureCode = "encoder_init_failed"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _ := h.store.Get(res.SessionID)
+	set := h.engine.SettlementFor(rec, h.spec)
+	if set.GetBreakdown()["termination_reason"] != ReasonOutputFailed {
+		t.Fatalf("termination_reason = %q", set.GetBreakdown()["termination_reason"])
+	}
+	if set.GetBreakdown()["output_state"] != "stalled" {
+		t.Fatalf("output_state = %q", set.GetBreakdown()["output_state"])
+	}
+	if set.GetBreakdown()["output_state_since"] != since.Format(time.RFC3339Nano) {
+		t.Fatalf("output_state_since = %q", set.GetBreakdown()["output_state_since"])
+	}
+	if set.GetBreakdown()["last_failure_code"] != "encoder_init_failed" {
+		t.Fatalf("last_failure_code = %q", set.GetBreakdown()["last_failure_code"])
+	}
+}
+
 // Two opens with one request id, concurrently: the id is claimed before
 // any side effect, so exactly one payee session opens and one runner
 // session is created; the other open is told it is in flight (or, if

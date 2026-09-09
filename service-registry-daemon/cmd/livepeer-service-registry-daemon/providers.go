@@ -59,6 +59,7 @@ type builtProviders struct {
 	// runtime/seeder loop.
 	roundClock ccroundclock.NamedClock
 	discovery  discovery.Discovery
+	chainSeed  []types.EthAddress
 
 	// closers are extra teardown callbacks that aren't covered by
 	// store.Close (chain-commons RPC client, Controller refresher,
@@ -249,9 +250,11 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		// With a seed it points the resolver at a locally served signed
 		// manifest and takes the ordinary well-known path: real
 		// signature verification, real settlement_keys, no chain.
-		if err := seedChain(mem, cfg.ChainSeedPath); err != nil {
+		seeded, err := seedChain(mem, cfg.ChainSeedPath)
+		if err != nil {
 			return nil, fmt.Errorf("providers: chain seed: %w", err)
 		}
+		bp.chainSeed = seeded
 		bp.chain = mem
 	} else if cfg.Mode == config.ModeResolver {
 		serviceRegistryAddress := cfg.ServiceRegistryAddress
@@ -349,32 +352,34 @@ type chainSeed struct {
 // seedChain preloads the in-memory chain from a seed file. A missing
 // path is not an error — an unseeded dev daemon is the previous
 // behavior and remains valid.
-func seedChain(mem *chain.InMemory, path string) error {
+func seedChain(mem *chain.InMemory, path string) ([]types.EthAddress, error) {
 	if path == "" {
-		return nil
+		return nil, nil
 	}
 	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied path, same as --static-overlay
 	if err != nil {
-		return fmt.Errorf("read %s: %w", path, err)
+		return nil, fmt.Errorf("read %s: %w", path, err)
 	}
 	var cs chainSeed
 	dec := yaml.NewDecoder(bytes.NewReader(raw))
 	dec.KnownFields(true) // typos fail at boot, not at resolve time
 	if err := dec.Decode(&cs); err != nil {
-		return fmt.Errorf("parse %s: %w", path, err)
+		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
 	if len(cs.Seed) == 0 {
-		return fmt.Errorf("%s declares no seed entries", path)
+		return nil, fmt.Errorf("%s declares no seed entries", path)
 	}
+	addresses := make([]types.EthAddress, 0, len(cs.Seed))
 	for i, e := range cs.Seed {
 		addr, err := types.ParseEthAddress(e.EthAddress)
 		if err != nil {
-			return fmt.Errorf("seed[%d].eth_address: %w", i, err)
+			return nil, fmt.Errorf("seed[%d].eth_address: %w", i, err)
 		}
 		if e.ServiceURI == "" {
-			return fmt.Errorf("seed[%d].service_uri: empty", i)
+			return nil, fmt.Errorf("seed[%d].service_uri: empty", i)
 		}
 		mem.PreLoad(addr, e.ServiceURI)
+		addresses = append(addresses, addr)
 	}
-	return nil
+	return addresses, nil
 }

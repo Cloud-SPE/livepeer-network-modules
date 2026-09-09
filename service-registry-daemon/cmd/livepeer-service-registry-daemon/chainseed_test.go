@@ -2,7 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,8 +16,66 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/signer"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
+
+func signedSeedEndpoint(t *testing.T) (string, string) {
+	t.Helper()
+	sk, err := signer.GenerateRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(sk.Close)
+	var body []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(server.Close)
+	uri := server.URL + "/.well-known/livepeer-registry.json"
+	now := time.Now().UTC()
+	envelope := types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion:    "2.4.1",
+			PublicationSeq: 1,
+			IssuedAt:       now.Add(-time.Minute),
+			ExpiresAt:      now.Add(time.Hour),
+			Orch: types.CoordinatorOrch{
+				EthAddress: string(sk.Address()),
+				ServiceURI: uri,
+			},
+			Capabilities: []types.CoordinatorCapability{{
+				CapabilityID:    "example:seed",
+				OfferingID:      "default",
+				Protocol:        "paid-job/v1",
+				Job:             json.RawMessage(`{"transports":["unary"]}`),
+				WorkUnit:        types.CoordinatorWorkUnit{Name: "unit"},
+				PricePerUnitWei: "1",
+				PerUnits:        1,
+				WorkerURL:       "https://worker.example",
+			}},
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
+		},
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(envelope.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := sk.SignCanonical(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	envelope.Signature.Value = "0x" + hex.EncodeToString(sig)
+	body, err = json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(sk.Address()), uri
+}
 
 func writeSeed(t *testing.T, body string) string {
 	t.Helper()
@@ -34,7 +97,7 @@ seed:
     service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
 `)
 	mem := chain.NewInMemory("")
-	if err := seedChain(mem, path); err != nil {
+	if _, err := seedChain(mem, path); err != nil {
 		t.Fatalf("seedChain: %v", err)
 	}
 	addr, err := types.ParseEthAddress("0xabc0000000000000000000000000000000000000")
@@ -52,7 +115,7 @@ seed:
 
 // No seed is the previous behavior and stays valid.
 func TestSeedChainEmptyPathIsNotAnError(t *testing.T) {
-	if err := seedChain(chain.NewInMemory(""), ""); err != nil {
+	if _, err := seedChain(chain.NewInMemory(""), ""); err != nil {
 		t.Fatalf("empty seed path = %v; want nil", err)
 	}
 }
@@ -66,7 +129,7 @@ seed:
   - eth_address: "0xabc0000000000000000000000000000000000000"
     serviceuri: "http://127.0.0.1:9099/m.json"
 `)
-	if err := seedChain(chain.NewInMemory(""), path); err == nil {
+	if _, err := seedChain(chain.NewInMemory(""), path); err == nil {
 		t.Fatal("expected an error for an unknown field")
 	}
 }
@@ -78,7 +141,7 @@ func TestSeedChainRejectsIncompleteEntries(t *testing.T) {
 		{"no entries", "seed: []\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := seedChain(chain.NewInMemory(""), writeSeed(t, tc.body)); err == nil {
+			if _, err := seedChain(chain.NewInMemory(""), writeSeed(t, tc.body)); err == nil {
 				t.Fatal("expected an error")
 			}
 		})
@@ -86,7 +149,7 @@ func TestSeedChainRejectsIncompleteEntries(t *testing.T) {
 }
 
 func TestSeedChainMissingFileIsAnError(t *testing.T) {
-	if err := seedChain(chain.NewInMemory(""), "/nonexistent/seed.yaml"); err == nil {
+	if _, err := seedChain(chain.NewInMemory(""), "/nonexistent/seed.yaml"); err == nil {
 		t.Fatal("expected an error for a missing seed file")
 	}
 }
@@ -144,17 +207,33 @@ seed:
 // The daemon must actually START on the documented invocation. The unit
 // tests above would all have passed while the binary refused to boot.
 func TestRun_ChainSeedResolverStartsAndStops(t *testing.T) {
+	addr, uri := signedSeedEndpoint(t)
+	seed := writeSeed(t, fmt.Sprintf(
+		"seed:\n  - eth_address: %q\n    service_uri: %q\n", addr, uri,
+	))
+	for attempt := 1; attempt <= 2; attempt++ {
+		sock := filepath.Join(t.TempDir(), "registry.sock")
+		ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+		err := run(ctx, []string{"--mode=resolver", "--dev", "--chain-seed=" + seed, "--socket=" + sock})
+		cancel()
+		if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
+			t.Fatalf("seed invocation %d does not start: %v", attempt, err)
+		}
+	}
+}
+
+func TestRun_ChainSeedUnreachableFailsBeforeReadiness(t *testing.T) {
 	seed := writeSeed(t, `
 seed:
   - eth_address: "0xabc0000000000000000000000000000000000000"
-    service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
+    service_uri: "http://127.0.0.1:1/.well-known/livepeer-registry.json"
 `)
-	sock := filepath.Join(t.TempDir(), "registry.sock")
-	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
-	defer cancel()
-	err := run(ctx, []string{"--mode=resolver", "--dev", "--chain-seed=" + seed, "--socket=" + sock})
-	if err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-		t.Fatalf("the documented seed invocation does not start: %v", err)
+	err := run(context.Background(), []string{
+		"--mode=resolver", "--dev", "--chain-seed=" + seed,
+		"--socket=" + filepath.Join(t.TempDir(), "registry.sock"),
+	})
+	if err == nil || !strings.Contains(err.Error(), "chain-seed readiness") {
+		t.Fatalf("unreachable explicit seed did not fail readiness: %v", err)
 	}
 }
 
@@ -175,7 +254,7 @@ func TestRun_ChainSeedMalformedFailsBoot(t *testing.T) {
 // from the parser is worse than none: it is the first thing an operator
 // copies, and it fails at their boot rather than at ours.
 func TestSeedChainShippedExampleLoads(t *testing.T) {
-	if err := seedChain(chain.NewInMemory(""), "../../examples/chain-seed/seed.example.yaml"); err != nil {
+	if _, err := seedChain(chain.NewInMemory(""), "../../examples/chain-seed/seed.example.yaml"); err != nil {
 		t.Fatalf("the shipped seed example does not load: %v", err)
 	}
 }

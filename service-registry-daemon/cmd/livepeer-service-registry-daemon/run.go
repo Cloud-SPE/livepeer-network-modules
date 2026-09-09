@@ -17,6 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/seeder"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // run is the testable entrypoint — main() calls it with os.Args.
@@ -75,6 +76,11 @@ func run(ctx context.Context, args []string) error {
 			Logger:   bp.log,
 			Recorder: bp.recorder,
 		})
+	}
+	if resolverSvc != nil && len(bp.chainSeed) > 0 {
+		if err := seedChainCache(ctx, resolverSvc, bp.chainSeed); err != nil {
+			return fmt.Errorf("chain-seed readiness: %w", err)
+		}
 	}
 
 	srv, err := grpc.NewServer(srvCfg)
@@ -145,6 +151,19 @@ func run(ctx context.Context, args []string) error {
 		Store:           bp.store,
 		Logger:          bp.log,
 	})
+}
+
+// seedChainCache resolves every explicitly configured dev chain seed before
+// the listener reports readiness. Unlike overlay warming, this is strict: an
+// explicit signed-path seed that cannot resolve is a broken startup contract,
+// not an optional route to skip.
+func seedChainCache(ctx context.Context, r *resolver.Service, addresses []types.EthAddress) error {
+	for _, addr := range addresses {
+		if _, err := r.ResolveByAddress(ctx, resolver.Request{Address: addr}); err != nil {
+			return fmt.Errorf("resolve %s: %w", addr, err)
+		}
+	}
+	return nil
 }
 
 // seedOverlayCache calls ResolveByAddress once for each enabled overlay

@@ -158,6 +158,12 @@ the signature, project `settlement_keys` onto every node from that
 address. Nothing is stubbed except where the serviceURI came from, which
 is the one thing a chain-free run cannot have.
 
+Every explicit seed is resolved synchronously before the daemon announces
+readiness, on both a fresh start and restart. `ListKnown` therefore contains
+the verified seed without a consumer priming call. An unreachable, malformed,
+unsigned, or address-mismatched seeded manifest fails startup; fix the seed or
+its server instead of operating with a silently empty catalog.
+
 This is the supported seed path for nightly CI that needs signed
 settlements end to end. `--chain-seed` is refused without `--dev`, and
 refused alongside `--discovery=overlay-only` — overlay-only never reads

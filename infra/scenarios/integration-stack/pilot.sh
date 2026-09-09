@@ -25,6 +25,13 @@ args=(
   --price-wei="$PRICE_WEI"
   --per-units="${PER_UNITS:-1000}"
   --max-authorization-units="${MAX_AUTHORIZATION_UNITS:-131072}"
+  --session-capability="${SESSION_CAPABILITY:-conformance:session}"
+  --session-offering="${SESSION_OFFERING:-default}"
+  --session-work-unit="${SESSION_WORK_UNIT:-participant_minutes}"
+  --session-price-wei="${SESSION_PRICE_WEI:-100}"
+  --session-per-units="${SESSION_PER_UNITS:-1}"
+  --session-max-authorization-units="${SESSION_MAX_AUTHORIZATION_UNITS:-600}"
+  --session-runner-control-url="${SESSION_RUNNER_CONTROL_URL:-http://runner:8092}"
 )
 if [ -n "${ACCOUNT_FLOAT_WEI:-}" ]; then
   args+=(--account-float-wei="$ACCOUNT_FLOAT_WEI")

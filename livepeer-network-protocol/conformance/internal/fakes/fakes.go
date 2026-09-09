@@ -235,6 +235,28 @@ func NewSessionRunner(l Listen) (*SessionRunner, error) {
 		f.mu.Unlock()
 		w.WriteHeader(http.StatusOK)
 	})
+	// Test-only control plane used by the mainnet chain probe. It forwards an
+	// event through the last broker-issued callback without exposing the
+	// callback token outside this fake runner.
+	mux.HandleFunc("POST /__livepeer_probe/event", func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(io.LimitReader(r.Body, 64<<10))
+		if err != nil {
+			http.Error(w, "read event", http.StatusBadRequest)
+			return
+		}
+		cb, ok := f.LastCreate()
+		if !ok {
+			http.Error(w, "no session create recorded", http.StatusConflict)
+			return
+		}
+		status, response, err := f.PostEvent(cb, string(body))
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(status)
+		_, _ = w.Write(response)
+	})
 	bind, advertise := l.hosts()
 	srv, err := serveFake(bind, advertise, l.RunnerPort, mux)
 	if err != nil {

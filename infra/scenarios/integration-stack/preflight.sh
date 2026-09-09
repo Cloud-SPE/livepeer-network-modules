@@ -27,6 +27,9 @@ required=(
   PAYEE_ADMIN_TOKEN WORK_UNIT PRICE_WEI PER_UNITS MAX_AUTHORIZATION_UNITS
   ACCOUNT_FLOAT_WEI MAX_PAYMENT_WEI MAX_AUTHORIZATION_WEI
   MAX_TICKET_FACE_VALUE_WEI MAX_PRICE_PER_UNIT_WEI EXTERNAL_BASE_URL
+	SESSION_CAPABILITY SESSION_OFFERING SESSION_WORK_UNIT SESSION_PRICE_WEI
+	SESSION_PER_UNITS SESSION_MAX_AUTHORIZATION_UNITS SESSION_RUNNER_CONTROL_URL
+	SESSION_MAX_PRICE_PER_UNIT_WEI
 )
 missing=()
 for name in "${required[@]}"; do
@@ -65,6 +68,7 @@ if [ -z "$payee_address" ] || [ "$payee_address" != "$configured_address" ]; the
 fi
 
 numeric=(PRICE_WEI PER_UNITS MAX_AUTHORIZATION_UNITS ACCOUNT_FLOAT_WEI MAX_PAYMENT_WEI MAX_AUTHORIZATION_WEI MAX_TICKET_FACE_VALUE_WEI MAX_PRICE_PER_UNIT_WEI)
+numeric+=(SESSION_PRICE_WEI SESSION_PER_UNITS SESSION_MAX_AUTHORIZATION_UNITS SESSION_MAX_PRICE_PER_UNIT_WEI)
 for name in "${numeric[@]}"; do
   [[ "${!name}" =~ ^[1-9][0-9]*$ ]] || { echo "$name must be a positive decimal integer" >&2; exit 1; }
   value="${!name}"
@@ -76,15 +80,24 @@ done
 
 max_int=9223372036854775807
 [ "$MAX_AUTHORIZATION_UNITS" -le $((max_int / PRICE_WEI)) ] || { echo "MAX_AUTHORIZATION_UNITS * PRICE_WEI overflows exact pilot arithmetic" >&2; exit 1; }
+[ "$SESSION_MAX_AUTHORIZATION_UNITS" -le $((max_int / SESSION_PRICE_WEI)) ] || { echo "SESSION_MAX_AUTHORIZATION_UNITS * SESSION_PRICE_WEI overflows exact pilot arithmetic" >&2; exit 1; }
 debit_numerator=$((MAX_AUTHORIZATION_UNITS * PRICE_WEI))
 [ "$debit_numerator" -le $((max_int - PER_UNITS + 1)) ] || { echo "maximum-debit ceiling arithmetic overflows" >&2; exit 1; }
 [ "$PRICE_WEI" -le $((max_int - PER_UNITS + 1)) ] || { echo "unit-price ceiling arithmetic overflows" >&2; exit 1; }
 max_debit=$(( (debit_numerator + PER_UNITS - 1) / PER_UNITS ))
 unit_price=$(( (PRICE_WEI + PER_UNITS - 1) / PER_UNITS ))
+session_debit_numerator=$((SESSION_MAX_AUTHORIZATION_UNITS * SESSION_PRICE_WEI))
+[ "$session_debit_numerator" -le $((max_int - SESSION_PER_UNITS + 1)) ] || { echo "session maximum-debit ceiling arithmetic overflows" >&2; exit 1; }
+[ "$SESSION_PRICE_WEI" -le $((max_int - SESSION_PER_UNITS + 1)) ] || { echo "session unit-price ceiling arithmetic overflows" >&2; exit 1; }
+session_max_debit=$(( (session_debit_numerator + SESSION_PER_UNITS - 1) / SESSION_PER_UNITS ))
 [ "$ACCOUNT_FLOAT_WEI" -ge "$max_debit" ] || { echo "ACCOUNT_FLOAT_WEI must cover maximum authorization debit $max_debit" >&2; exit 1; }
+[ "$ACCOUNT_FLOAT_WEI" -ge "$session_max_debit" ] || { echo "ACCOUNT_FLOAT_WEI must cover session maximum authorization debit $session_max_debit" >&2; exit 1; }
 [ "$MAX_PAYMENT_WEI" -ge "$ACCOUNT_FLOAT_WEI" ] || { echo "MAX_PAYMENT_WEI must cover an empty-account refill of $ACCOUNT_FLOAT_WEI" >&2; exit 1; }
 [ "$MAX_AUTHORIZATION_WEI" -ge "$max_debit" ] || { echo "MAX_AUTHORIZATION_WEI must cover maximum authorization debit $max_debit" >&2; exit 1; }
+[ "$MAX_AUTHORIZATION_WEI" -ge "$session_max_debit" ] || { echo "MAX_AUTHORIZATION_WEI must cover session maximum authorization debit $session_max_debit" >&2; exit 1; }
+[ "$MAX_AUTHORIZATION_WEI" -ge "$ACCOUNT_FLOAT_WEI" ] || { echo "MAX_AUTHORIZATION_WEI must cover the concurrency probe's one-float reservation of $ACCOUNT_FLOAT_WEI" >&2; exit 1; }
 [ "$MAX_PRICE_PER_UNIT_WEI" -ge "$unit_price" ] || { echo "MAX_PRICE_PER_UNIT_WEI must be at least $unit_price" >&2; exit 1; }
+[ "$SESSION_MAX_PRICE_PER_UNIT_WEI" -ge $(( (SESSION_PRICE_WEI + SESSION_PER_UNITS - 1) / SESSION_PER_UNITS )) ] || { echo "SESSION_MAX_PRICE_PER_UNIT_WEI is below the session quote" >&2; exit 1; }
 [ "$MAX_TICKET_FACE_VALUE_WEI" -ge 1000000000000000 ] || { echo "MAX_TICKET_FACE_VALUE_WEI must cover the receiver's current 1000000000000000 wei redeemable face" >&2; exit 1; }
 
 rpc="${CHAIN_RPC_URLS%%,*}"

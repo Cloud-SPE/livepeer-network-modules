@@ -41,6 +41,8 @@ services:
 
   runner:
     image: ${RUNNER_IMAGE:?set RUNNER_IMAGE to a pinned livepeer-conformance image digest}
+    environment:
+      BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:?set BROKER_ADMIN_TOKEN}
     command:
       - --broker-url=http://broker:8080
       - --serve-runner
@@ -49,6 +51,7 @@ services:
       - --fakes-backend-port=8091
       - --fakes-runner-port=8092
       - --job-unit=${WORK_UNIT:-tokens}
+      - --session-unit=${SESSION_WORK_UNIT:-participant_minutes}
     depends_on: [broker]
     restart: unless-stopped
 
@@ -64,7 +67,7 @@ services:
       - --max-payment-wei=${MAX_PAYMENT_WEI:?set MAX_PAYMENT_WEI}
       - --max-ticket-face-value-wei=${MAX_TICKET_FACE_VALUE_WEI:?set MAX_TICKET_FACE_VALUE_WEI}
       - --max-authorization-wei=${MAX_AUTHORIZATION_WEI:?set MAX_AUTHORIZATION_WEI}
-      - --max-price-per-unit=${WORK_UNIT:-tokens}=${MAX_PRICE_PER_UNIT_WEI:?set MAX_PRICE_PER_UNIT_WEI}
+      - --max-price-per-unit=${WORK_UNIT:-tokens}=${MAX_PRICE_PER_UNIT_WEI:?set MAX_PRICE_PER_UNIT_WEI},${SESSION_WORK_UNIT:-participant_minutes}=${SESSION_MAX_PRICE_PER_UNIT_WEI:?set SESSION_MAX_PRICE_PER_UNIT_WEI}
       - --metrics-listen=0.0.0.0:9092
     volumes:
       - payer-run:/var/run/livepeer

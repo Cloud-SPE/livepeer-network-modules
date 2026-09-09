@@ -86,7 +86,11 @@ The run performs:
 4. a refill equal only to the account shortfall, not the workload ceiling;
 5. an identical transport retry that must not mint, execute, reserve, or debit
    again;
-6. conservation reconciliation across credited, reserved, debited, and
+6. simultaneous authorizations, admitting exactly the count the shared balance
+   can afford and admitting any loser only after release, without another mint;
+7. provider and delegated-caller sessions with bounded initial runway,
+   cumulative usage, idempotent top-up, actual settlement, and residual release;
+8. conservation reconciliation across credited, reserved, debited, and
    available wholesale value.
 
 The probe signs the configured `EXTERNAL_BASE_URL` into each authorization even
@@ -115,6 +119,6 @@ dust threshold. Removing the route does not erase or refund account credit.
 ./down.sh
 ```
 
-The initial pilot does not close the rollout bead: concurrent reservation,
-receiver-restart recovery, paid-session runway, and rollback/drain evidence must
-also be captured before mainnet rollout is considered complete.
+The initial pilot does not close the rollout bead: restart recovery and
+rollback/drain evidence must also be captured before mainnet rollout is
+considered complete.

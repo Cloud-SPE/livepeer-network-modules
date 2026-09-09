@@ -42,7 +42,7 @@ import (
 // definition of what the suite expects a runner to be, and the two
 // would drift.
 func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fakes.SessionRunner,
-	jobUnit, sessUnit string, timeout time.Duration) (*harness.Runner, error) {
+	jobUnit, sessUnit string, timeout time.Duration, adminToken string) (*harness.Runner, error) {
 	if err := waitHealthy(brokerURL, timeout); err != nil {
 		return nil, fmt.Errorf("broker never became healthy: %w", err)
 	}
@@ -50,7 +50,7 @@ func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fake
 	// host id can only be enrolled once, so a fixed name works exactly
 	// once against any broker that keeps its state — the second run
 	// fails with host_id_taken and looks like a broker fault.
-	credential, hostID, err := enrollAttachCredential(brokerURL, "conformance-runner-"+harness.NewRunID())
+	credential, hostID, err := enrollAttachCredential(brokerURL, "conformance-runner-"+harness.NewRunID(), adminToken)
 	if err != nil {
 		return nil, fmt.Errorf("enrol: %w", err)
 	}
@@ -80,10 +80,10 @@ func attachSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fake
 // serveSuiteRunner attaches the runner and stays up, running no
 // scenarios. See the note above on when this is the wrong tool.
 func serveSuiteRunner(brokerURL string, backend *fakes.JobBackend, runner *fakes.SessionRunner,
-	jobUnit, sessUnit string, timeout time.Duration) int {
+	jobUnit, sessUnit string, timeout time.Duration, adminToken string) int {
 	fmt.Printf("fake job backend:     %s (error route: %s)\n", backend.URL(), backend.ErrorURL())
 	fmt.Printf("fake session runner:  %s (paths: /sessions, /sessions/{id})\n", runner.URL())
-	attached, err := attachSuiteRunner(brokerURL, backend, runner, jobUnit, sessUnit, timeout)
+	attached, err := attachSuiteRunner(brokerURL, backend, runner, jobUnit, sessUnit, timeout, adminToken)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		return 2

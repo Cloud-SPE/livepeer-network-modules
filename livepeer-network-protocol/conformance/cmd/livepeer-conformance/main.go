@@ -213,6 +213,8 @@ func run() int {
 			"URL mode: attach the suite's own runner to --broker-url before running scenarios, for a broker that has none of its own")
 		settlementSigner = flag.String("settlement-signer", "",
 			"URL mode: eth address of the broker's delegated settlement key, so the settlement-signature scenarios run instead of skipping")
+		brokerAdminToken = flag.String("broker-admin-token", os.Getenv("BROKER_ADMIN_TOKEN"),
+			"URL/serve-runner mode: broker admin bearer used to enroll attached runners (prefer BROKER_ADMIN_TOKEN env to avoid process-argument exposure)")
 	)
 	flag.Parse()
 
@@ -268,7 +270,7 @@ func run() int {
 			fmt.Fprintln(os.Stderr, "--serve-runner needs --broker-url: it attaches to a broker, it does not start one")
 			return 2
 		}
-		return serveSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout)
+		return serveSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken)
 	}
 
 	if *brokerURL != "" {
@@ -293,7 +295,7 @@ func run() int {
 		// skipping — which is better than passing without checking.
 		ctx.SettlementSigner = *settlementSigner
 		if *attachRunner {
-			attached, err := attachSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout)
+			attached, err := attachSuiteRunner(*brokerURL, backend, runner, *jobUnit, *sessUnit, *timeout, *brokerAdminToken)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, "attach the suite's runner:", err)
 				return 2
@@ -303,7 +305,7 @@ func run() int {
 			// Reusing the serving runner's would have them revoking and
 			// disconnecting the runner every other scenario depends on.
 			if ctx.AttachCredential == "" {
-				if c, h, err := enrollAttachCredential(*brokerURL, "conformance-attach-"+ctx.RunID); err == nil {
+				if c, h, err := enrollAttachCredential(*brokerURL, "conformance-attach-"+ctx.RunID, *brokerAdminToken); err == nil {
 					ctx.AttachCredential, ctx.AttachHostID = c, h
 				} else {
 					fmt.Fprintf(os.Stderr, "attach enrollment unavailable (%v); attach scenarios will skip\n", err)
@@ -331,7 +333,7 @@ func run() int {
 			os.Exit(130)
 		}()
 		ctx.BrokerURL = url
-		if cred, hostID, err := enrollAttachCredential(url, "conformance-runner"); err != nil {
+		if cred, hostID, err := enrollAttachCredential(url, "conformance-runner", conformanceAdminToken); err != nil {
 			// Not fatal: the attach scenarios skip with the reason, and
 			// every paid-path scenario still runs.
 			fmt.Fprintf(os.Stderr, "attach enrollment unavailable (%v); attach scenarios will skip\n", err)
@@ -461,7 +463,7 @@ func startReferenceBroker(brokerDir string, backend *fakes.JobBackend, runner *f
 		// The credential store is sealed under the same dir and key
 		// across restarts, so enrolment happens once per run.
 		if suiteCred == "" {
-			cred, hostID, err := enrollAttachCredential(url, "conformance-suite")
+			cred, hostID, err := enrollAttachCredential(url, "conformance-suite", conformanceAdminToken)
 			if err != nil {
 				return fmt.Errorf("enrol suite runner: %w", err)
 			}
@@ -574,13 +576,16 @@ const conformanceAdminToken = "conformance-admin-token"
 // enrollAttachCredential mints the credential the attach scenarios
 // present (runner-attach §3.1.1). Auto mode can do this because it owns
 // the broker; in URL mode the operator passes --attach-credential.
-func enrollAttachCredential(brokerURL, host string) (credential, hostID string, err error) {
+func enrollAttachCredential(brokerURL, host, adminToken string) (credential, hostID string, err error) {
+	if strings.TrimSpace(adminToken) == "" {
+		return "", "", fmt.Errorf("broker admin token is required to enroll a runner")
+	}
 	body := strings.NewReader(fmt.Sprintf(`{"host_id":%q,"label":"livepeer-conformance"}`, host))
 	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(brokerURL, "/")+"/admin/v1/enroll", body)
 	if err != nil {
 		return "", "", err
 	}
-	req.Header.Set("Authorization", "Bearer "+conformanceAdminToken)
+	req.Header.Set("Authorization", "Bearer "+adminToken)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

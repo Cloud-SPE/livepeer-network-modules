@@ -48,44 +48,58 @@ import (
 )
 
 type config struct {
-	payerSocket  string
-	payeeSocket  string
-	brokerURL    string
-	brokerURI    string
-	recipient    []byte
-	capability   string
-	offering     string
-	workUnit     string
-	priceWei     int64
-	perUnits     uint64
-	fundedWei    *big.Int
-	runnerBind   string
-	protocol     string
-	adminToken   string
-	chainID      uint64
-	accountFloat *big.Int
-	maxAuthUnits uint64
+	payerSocket             string
+	payeeSocket             string
+	brokerURL               string
+	brokerURI               string
+	recipient               []byte
+	capability              string
+	offering                string
+	workUnit                string
+	priceWei                int64
+	perUnits                uint64
+	fundedWei               *big.Int
+	runnerBind              string
+	protocol                string
+	adminToken              string
+	chainID                 uint64
+	accountFloat            *big.Int
+	maxAuthUnits            uint64
+	sessionCapability       string
+	sessionOffering         string
+	sessionWorkUnit         string
+	sessionPriceWei         int64
+	sessionPerUnits         uint64
+	sessionMaxAuthUnits     uint64
+	sessionRunnerControlURL string
 }
 
 func main() {
 	var (
-		payerSocket  = flag.String("payer-socket", "/tmp/lpm-payer.sock", "payer daemon UDS")
-		payeeSocket  = flag.String("payee-socket", "/tmp/lpm-payee.sock", "payee daemon UDS")
-		brokerURL    = flag.String("broker-url", "http://127.0.0.1:8411", "broker base URL")
-		brokerURI    = flag.String("broker-uri", "", "wholesale only: externally advertised broker origin signed into authorizations (defaults to --broker-url)")
-		recipient    = flag.String("recipient", "", "required: payee ETH address (0x-prefixed)")
-		capability   = flag.String("capability", "chain:probe", "capability id the broker serves")
-		offering     = flag.String("offering", "default", "offering id")
-		workUnit     = flag.String("work-unit", "tokens", "the offering's work unit")
-		priceWei     = flag.Int64("price-wei", 100, "the offering's amount_wei")
-		perUnits     = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
-		fundedWei    = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
-		runnerBind   = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
-		protocol     = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence | wholesale")
-		chainID      = flag.Uint64("chain-id", 42161, "chain id signed into wholesale spend authorizations")
-		accountFloat = flag.String("account-float-wei", "", "wholesale only: target available account float; defaults to the maximum authorization debit")
-		maxAuthUnits = flag.Uint64("max-authorization-units", 131072, "wholesale only: maximum units bound into each single-purpose authorization")
-		adminToken   = flag.String("payee-admin-token", "",
+		payerSocket             = flag.String("payer-socket", "/tmp/lpm-payer.sock", "payer daemon UDS")
+		payeeSocket             = flag.String("payee-socket", "/tmp/lpm-payee.sock", "payee daemon UDS")
+		brokerURL               = flag.String("broker-url", "http://127.0.0.1:8411", "broker base URL")
+		brokerURI               = flag.String("broker-uri", "", "wholesale only: externally advertised broker origin signed into authorizations (defaults to --broker-url)")
+		recipient               = flag.String("recipient", "", "required: payee ETH address (0x-prefixed)")
+		capability              = flag.String("capability", "chain:probe", "capability id the broker serves")
+		offering                = flag.String("offering", "default", "offering id")
+		workUnit                = flag.String("work-unit", "tokens", "the offering's work unit")
+		priceWei                = flag.Int64("price-wei", 100, "the offering's amount_wei")
+		perUnits                = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
+		fundedWei               = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
+		runnerBind              = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
+		protocol                = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence | wholesale")
+		chainID                 = flag.Uint64("chain-id", 42161, "chain id signed into wholesale spend authorizations")
+		accountFloat            = flag.String("account-float-wei", "", "wholesale only: target available account float; defaults to the maximum authorization debit")
+		maxAuthUnits            = flag.Uint64("max-authorization-units", 131072, "wholesale only: maximum units bound into each single-purpose authorization")
+		sessionCapability       = flag.String("session-capability", "conformance:session", "wholesale only: paid-session capability id")
+		sessionOffering         = flag.String("session-offering", "default", "wholesale only: paid-session offering id")
+		sessionWorkUnit         = flag.String("session-work-unit", "participant_minutes", "wholesale only: paid-session work unit")
+		sessionPriceWei         = flag.Int64("session-price-wei", 100, "wholesale only: paid-session price amount in wei")
+		sessionPerUnits         = flag.Uint64("session-per-units", 1, "wholesale only: paid-session units per quoted price")
+		sessionMaxAuthUnits     = flag.Uint64("session-max-authorization-units", 600, "wholesale only: paid-session cumulative unit ceiling")
+		sessionRunnerControlURL = flag.String("session-runner-control-url", "http://runner:8092", "wholesale only: conformance session runner's internal probe-control URL")
+		adminToken              = flag.String("payee-admin-token", "",
 			"rotation only: the payee's --payee-admin-token. Rotation is driven through PayeeAdmin.ResetSession, which is closed unless the operator configured a token.")
 	)
 	flag.Parse()
@@ -112,6 +126,10 @@ func main() {
 		workUnit: *workUnit, priceWei: *priceWei, perUnits: *perUnits,
 		fundedWei: funded, runnerBind: *runnerBind, protocol: *protocol, adminToken: *adminToken,
 		chainID: *chainID, accountFloat: targetFloat, maxAuthUnits: *maxAuthUnits,
+		sessionCapability: *sessionCapability, sessionOffering: *sessionOffering,
+		sessionWorkUnit: *sessionWorkUnit, sessionPriceWei: *sessionPriceWei,
+		sessionPerUnits: *sessionPerUnits, sessionMaxAuthUnits: *sessionMaxAuthUnits,
+		sessionRunnerControlURL: *sessionRunnerControlURL,
 	}
 	if cfg.brokerURI == "" {
 		cfg.brokerURI = cfg.brokerURL
@@ -177,7 +195,7 @@ func main() {
 		}
 	}
 	if cfg.protocol == "wholesale" {
-		if err := probeWholesale(ctx, cfg, pb.NewPayerDaemonClient(payer)); err != nil {
+		if err := probeWholesale(ctx, cfg, pb.NewPayerDaemonClient(payer), pb.NewPayeeDaemonClient(payee)); err != nil {
 			fmt.Printf("FAIL wholesale account: %v\n\n", err)
 			failed++
 		} else {

@@ -33,6 +33,10 @@ go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 --pause
 go run ./cmd/livepeer-conformance --broker-url http://your-broker:8080 --attach-runner
 ```
 
+Runner enrollment requires the broker's admin bearer. Supply it through
+`BROKER_ADMIN_TOKEN`; `--broker-admin-token` also exists for controlled test
+environments, but exposes the secret in the process argument list.
+
 `--attach-runner` exists because a broker in the offer-only grammar
 advertises nothing until a runner attaches — an offer's shape is frozen
 from what a runner declares, not from config — so a stack that starts only

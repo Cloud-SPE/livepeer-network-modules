@@ -13,11 +13,14 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // probeWholesale proves the economic property the legacy probe cannot: one
@@ -25,12 +28,19 @@ import (
 // later large-ceiling request mints only the small shortfall created by actual
 // prior usage. The first call models an in-path provider. The second binds an
 // ephemeral caller key and models a clearinghouse delegating invocation.
-func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient) error {
+func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient) error {
 	if cfg.maxAuthUnits == 0 || cfg.chainID == 0 {
 		return fmt.Errorf("chain-id and max-authorization-units must be positive")
 	}
+	if cfg.sessionMaxAuthUnits == 0 || cfg.sessionPriceWei <= 0 || cfg.sessionPerUnits == 0 || strings.TrimSpace(cfg.sessionRunnerControlURL) == "" {
+		return fmt.Errorf("session price, per-units, authorization units, and runner control URL must be positive/non-empty")
+	}
 	if err := waitForOffering(cfg, 90*time.Second); err != nil {
 		return err
+	}
+	sessionCfg := wholesaleSessionConfig(cfg)
+	if err := waitForOffering(sessionCfg, 90*time.Second); err != nil {
+		return fmt.Errorf("session offering: %w", err)
 	}
 
 	body := []byte(`{"model":"probe","messages":[]}`)
@@ -175,7 +185,288 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient)
 	}
 	fmt.Printf("  replay did not mint or debit; credited=%s debited=%s available=%s reserved=%s wei\n",
 		afterReplay.Credited.big(), afterReplay.Debited.big(), afterReplay.Available.big(), afterReplay.Reserved.big())
+
+	concurrencyIssued, err := probeWholesaleConcurrency(ctx, cfg, payer, payee, payerAddress, target, body)
+	if err != nil {
+		return err
+	}
+	directSessionIssued, err := probeWholesaleSession(ctx, sessionCfg, payer, payee, payerAddress, target, false)
+	if err != nil {
+		return fmt.Errorf("provider session: %w", err)
+	}
+	delegatedSessionIssued, err := probeWholesaleSession(ctx, sessionCfg, payer, payee, payerAddress, target, true)
+	if err != nil {
+		return fmt.Errorf("delegated session: %w", err)
+	}
+	final, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return fmt.Errorf("final account: %w", err)
+	}
+	if err := final.validate(); err != nil {
+		return fmt.Errorf("final account: %w", err)
+	}
+	totalIssued := new(big.Int).Add(issued, concurrencyIssued)
+	totalIssued.Add(totalIssued, directSessionIssued)
+	totalIssued.Add(totalIssued, delegatedSessionIssued)
+	if got := new(big.Int).Sub(final.Credited.big(), before.Credited.big()); got.Cmp(totalIssued) != 0 {
+		return fmt.Errorf("whole-pilot issued EV=%s but credited delta=%s", totalIssued, got)
+	}
+	if final.Reserved.big().Sign() != 0 {
+		return fmt.Errorf("whole-pilot left %s wei reserved", final.Reserved.big())
+	}
+	fmt.Printf("  whole-pilot reconciliation issued=%s debited_delta=%s remaining_available=%s reserved=0 wei\n",
+		totalIssued, new(big.Int).Sub(final.Debited.big(), before.Debited.big()), final.Available.big())
 	return nil
+}
+
+func wholesaleSessionConfig(cfg config) config {
+	cfg.capability = cfg.sessionCapability
+	cfg.offering = cfg.sessionOffering
+	cfg.workUnit = cfg.sessionWorkUnit
+	cfg.priceWei = cfg.sessionPriceWei
+	cfg.perUnits = cfg.sessionPerUnits
+	cfg.maxAuthUnits = cfg.sessionMaxAuthUnits
+	return cfg
+}
+
+func ensureWholesaleFloat(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient, payerAddress []byte, target *big.Int, tag string) (*big.Int, error) {
+	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	minted, err := mintAccountShortfall(ctx, cfg, payer, tag, target, before.Available.big())
+	if err != nil {
+		return nil, err
+	}
+	shortfall := positiveDifference(target, before.Available.big())
+	if err := assertShortfall(minted, shortfall); err != nil {
+		return nil, err
+	}
+	if shortfall.Sign() > 0 {
+		funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+		if err != nil {
+			return nil, err
+		}
+		if got := new(big.Int).SetBytes(funded.GetCreditedValueWei().GetValue()); got.Cmp(shortfall) != 0 {
+			return nil, fmt.Errorf("payee credited %s; minted %s", got, shortfall)
+		}
+	}
+	return shortfall, nil
+}
+
+func probeWholesaleConcurrency(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient, payerAddress []byte, target *big.Int, body []byte) (*big.Int, error) {
+	issued, err := ensureWholesaleFloat(ctx, cfg, payer, payee, payerAddress, target, "concurrency")
+	if err != nil {
+		return nil, fmt.Errorf("concurrency float: %w", err)
+	}
+	baseline, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	maxDebit := billFor(cfg.priceWei, cfg.perUnits, cfg.maxAuthUnits)
+	type attempt struct {
+		id   string
+		auth []byte
+		res  *pb.AdmitAuthorizationResponse
+		err  error
+	}
+	attempts := make([]attempt, 2)
+	for i := range attempts {
+		id := fmt.Sprintf("chain-probe-wholesale-concurrent-%d-%d", time.Now().UnixNano(), i)
+		auth, err := createJobAuthorization(ctx, cfg, payer, id, "request-"+id, body, maxDebit, nil)
+		if err != nil {
+			return nil, fmt.Errorf("concurrency authorization %d: %w", i, err)
+		}
+		attempts[i] = attempt{id: id, auth: auth.GetAuthorizationBytes()}
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for i := range attempts {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			<-start
+			attempts[i].res, attempts[i].err = payee.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: attempts[i].auth})
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	winners := make([]int, 0, len(attempts))
+	losers := make([]int, 0, len(attempts))
+	for i := range attempts {
+		if attempts[i].err == nil {
+			winners = append(winners, i)
+		} else if status.Code(attempts[i].err) == codes.FailedPrecondition {
+			losers = append(losers, i)
+		} else {
+			return nil, fmt.Errorf("concurrent admission %d: %w", i, attempts[i].err)
+		}
+	}
+	affordable := new(big.Int).Quo(baseline.Available.big(), maxDebit).Uint64()
+	if affordable > uint64(len(attempts)) {
+		affordable = uint64(len(attempts))
+	}
+	if uint64(len(winners)) != affordable {
+		return nil, fmt.Errorf("concurrent admissions=%d; balance %s affords %d reservations of %s", len(winners), baseline.Available.big(), affordable, maxDebit)
+	}
+	during, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	wantReserved := new(big.Int).Mul(maxDebit, big.NewInt(int64(len(winners))))
+	if got := new(big.Int).Sub(during.Reserved.big(), baseline.Reserved.big()); got.Cmp(wantReserved) != 0 {
+		return nil, fmt.Errorf("concurrent reserved delta=%s; want %s", got, wantReserved)
+	}
+	if got := new(big.Int).Sub(baseline.Available.big(), during.Available.big()); got.Cmp(wantReserved) != 0 {
+		return nil, fmt.Errorf("concurrent available delta=%s; want %s", got, wantReserved)
+	}
+	for _, i := range winners {
+		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
+			return nil, fmt.Errorf("release admitted reservation %d: %w", i, err)
+		}
+	}
+	for _, i := range losers {
+		if _, err := payee.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: attempts[i].auth}); err != nil {
+			return nil, fmt.Errorf("admit refused authorization %d after release: %w", i, err)
+		}
+		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
+			return nil, fmt.Errorf("release retried reservation %d: %w", i, err)
+		}
+	}
+	after, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	if after.Reserved.big().Sign() != 0 || after.Available != baseline.Available || after.Debited != baseline.Debited {
+		return nil, fmt.Errorf("concurrency changed settled account: before=%+v after=%+v", baseline, after)
+	}
+	fmt.Printf("  concurrent reservation race admitted exactly affordable=%d; refused=%d later admitted after release without another mint\n", len(winners), len(losers))
+	return issued, nil
+}
+
+func probeWholesaleSession(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient, payerAddress []byte, target *big.Int, delegated bool) (*big.Int, error) {
+	label := "provider"
+	var callerKey *ecdsa.PrivateKey
+	var callerPublic []byte
+	if delegated {
+		label = "delegated"
+		var err error
+		callerKey, err = crypto.GenerateKey()
+		if err != nil {
+			return nil, err
+		}
+		callerPublic = crypto.FromECDSAPub(&callerKey.PublicKey)
+	}
+	gatewayID := fmt.Sprintf("chain-probe-wholesale-session-%s-%d", label, time.Now().UnixNano())
+	requestID := "request-" + gatewayID
+	body := []byte(fmt.Sprintf(`{"gateway_session_id":%q,"session_params":{}}`, gatewayID))
+	maxDebit := billFor(cfg.priceWei, cfg.perUnits, cfg.maxAuthUnits)
+	auth, err := createSessionAuthorization(ctx, cfg, payer, gatewayID, requestID, body, maxDebit, callerPublic)
+	if err != nil {
+		return nil, err
+	}
+	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	minted, err := mintAccountShortfall(ctx, cfg, payer, "session-"+label, target, before.Available.big())
+	if err != nil {
+		return nil, err
+	}
+	shortfall := positiveDifference(target, before.Available.big())
+	if err := assertShortfall(minted, shortfall); err != nil {
+		return nil, err
+	}
+	var proof []byte
+	if delegated {
+		proof, err = invocationProof(auth.GetAuthorizationBytes(), callerKey)
+		if err != nil {
+			return nil, err
+		}
+	}
+	open, err := invokeAuthorizedSession(cfg, requestID, body, auth.GetAuthorizationBytes(), proof, minted.GetPaymentBytes())
+	if err != nil {
+		return nil, err
+	}
+	if open.status != http.StatusCreated && open.status != http.StatusOK {
+		return nil, fmt.Errorf("open status %d error=%q body=%s", open.status, open.errCode, open.body)
+	}
+	sessionID, _ := open.field("session_id").(string)
+	credential, _ := open.field("credential").(string)
+	if sessionID == "" || credential == "" {
+		return nil, fmt.Errorf("open response missing session identity: %s", open.body)
+	}
+	afterOpen, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	reservedDelta := new(big.Int).Sub(afterOpen.Reserved.big(), before.Reserved.big())
+	if reservedDelta.Sign() <= 0 || reservedDelta.Cmp(maxDebit) >= 0 {
+		return nil, fmt.Errorf("initial session reservation %s is not bounded below max debit %s", reservedDelta, maxDebit)
+	}
+	const actualUnits = uint64(9)
+	eventID := fmt.Sprintf("event-%s-%d", label, time.Now().UnixNano())
+	event := fmt.Sprintf(`{"event_id":%q,"sequence":1,"event_type":"session.usage.tick","usage":{"unit":%q,"total":%d}}`, eventID, cfg.workUnit, actualUnits)
+	eventResult, err := postJSON(strings.TrimRight(cfg.sessionRunnerControlURL, "/")+"/__livepeer_probe/event", nil, event)
+	if err != nil {
+		return nil, err
+	}
+	if eventResult.status != http.StatusOK {
+		return nil, fmt.Errorf("usage callback status %d body=%s", eventResult.status, eventResult.body)
+	}
+	afterUsage, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	if got, want := new(big.Int).Sub(afterUsage.Debited.big(), before.Debited.big()), billFor(cfg.priceWei, cfg.perUnits, actualUnits); got.Cmp(want) != 0 {
+		return nil, fmt.Errorf("usage debit=%s; want %s", got, want)
+	}
+	topupID := fmt.Sprintf("chain-probe-wholesale-session-topup-%s-%d", label, time.Now().UnixNano())
+	headers := map[string]string{"Authorization": "Bearer " + credential, "Livepeer-Request-Id": topupID}
+	topup, err := postJSON(cfg.brokerURL+"/v1/session/"+sessionID+"/topup", headers, "")
+	if err != nil {
+		return nil, fmt.Errorf("account runway topup: %w", err)
+	}
+	if topup.status != http.StatusOK {
+		return nil, fmt.Errorf("account runway topup status=%d body=%s", topup.status, topup.body)
+	}
+	replay, err := postJSON(cfg.brokerURL+"/v1/session/"+sessionID+"/topup", headers, "")
+	if err != nil {
+		return nil, fmt.Errorf("account runway topup replay: %w", err)
+	}
+	if replay.status != topup.status || replay.body != topup.body {
+		return nil, fmt.Errorf("account runway topup replay diverged status=%d/%d", topup.status, replay.status)
+	}
+	ended, err := postJSON(cfg.brokerURL+"/v1/session/"+sessionID+"/end", map[string]string{"Authorization": "Bearer " + credential}, `{"reason":"gateway_close"}`)
+	if err != nil {
+		return nil, fmt.Errorf("end: %w", err)
+	}
+	if ended.status != http.StatusOK {
+		return nil, fmt.Errorf("end status=%d body=%s", ended.status, ended.body)
+	}
+	authState, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: payerAddress, AuthorizationId: gatewayID})
+	if err != nil {
+		return nil, err
+	}
+	if authState.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED || authState.GetActualUnits() != actualUnits {
+		return nil, fmt.Errorf("authorization terminal state=%s units=%d", authState.GetState(), authState.GetActualUnits())
+	}
+	afterEnd, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	if err != nil {
+		return nil, err
+	}
+	if afterEnd.Reserved.big().Cmp(before.Reserved.big()) != 0 {
+		return nil, fmt.Errorf("session left reservation: before=%s after=%s", before.Reserved.big(), afterEnd.Reserved.big())
+	}
+	settlement, err := fetchSettlement(cfg.brokerURL, gatewayID)
+	if err != nil {
+		return nil, err
+	}
+	if got := new(big.Int).SetBytes(settlement.payload.BilledValueWei.value()); got.Cmp(billFor(cfg.priceWei, cfg.perUnits, actualUnits)) != 0 {
+		return nil, fmt.Errorf("settlement billed=%s", got)
+	}
+	fmt.Printf("  %s session reserved bounded runway=%s, settled %d units, released residual, replayed topup\n", label, reservedDelta, actualUnits)
+	return shortfall, nil
 }
 
 func acceptedPrice(cfg config) *pb.AcceptedPrice {
@@ -198,6 +489,19 @@ func createJobAuthorization(ctx context.Context, cfg config, payer pb.PayerDaemo
 		ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339Nano), RequestDigest: digest[:],
 		CallerPublicKey: callerPublicKey, BrokerUri: strings.TrimRight(cfg.brokerURI, "/"),
 		ChainId: cfg.chainID, Denomination: "wei",
+	})
+}
+
+func createSessionAuthorization(ctx context.Context, cfg config, payer pb.PayerDaemonClient, authorizationID, requestID string, body []byte, maxDebit *big.Int, callerPublicKey []byte) (*pb.CreateSpendAuthorizationResponse, error) {
+	digest := sha256.Sum256(body)
+	now := time.Now().UTC()
+	return payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{
+		Payee: cfg.recipient, AuthorizationId: authorizationID, RequestId: requestID,
+		SessionId: authorizationID, Protocol: "paid-session/v1", AcceptedPrice: acceptedPrice(cfg),
+		MaxDebitWei: &pb.BigUInt{Value: maxDebit.Bytes()}, MaxTotalUnits: cfg.maxAuthUnits,
+		NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(10 * time.Minute).Format(time.RFC3339Nano),
+		RequestDigest: digest[:], CallerPublicKey: callerPublicKey,
+		BrokerUri: strings.TrimRight(cfg.brokerURI, "/"), ChainId: cfg.chainID, Denomination: "wei",
 	})
 }
 
@@ -242,6 +546,21 @@ func invokeAuthorizedJob(cfg config, requestID string, body, authorization, call
 		headers["Livepeer-Payment"] = base64.StdEncoding.EncodeToString(payment)
 	}
 	return postJSON(cfg.brokerURL+"/v1/job", headers, string(body))
+}
+
+func invokeAuthorizedSession(cfg config, requestID string, body, authorization, callerProof, payment []byte) (*httpResult, error) {
+	headers := map[string]string{
+		"Livepeer-Capability": cfg.capability, "Livepeer-Offering": cfg.offering,
+		"Livepeer-Protocol": "paid-session/v1", "Livepeer-Request-Id": requestID,
+		"Livepeer-Authorization": base64.StdEncoding.EncodeToString(authorization),
+	}
+	if len(callerProof) > 0 {
+		headers["Livepeer-Caller-Proof"] = base64.StdEncoding.EncodeToString(callerProof)
+	}
+	if len(payment) > 0 {
+		headers["Livepeer-Payment"] = base64.StdEncoding.EncodeToString(payment)
+	}
+	return postJSON(cfg.brokerURL+"/v1/session", headers, string(body))
 }
 
 func invocationProof(authorization []byte, key *ecdsa.PrivateKey) ([]byte, error) {

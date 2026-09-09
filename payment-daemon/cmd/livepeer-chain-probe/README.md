@@ -55,20 +55,26 @@ unless selected explicitly. The broker offer must advertise
 `extra.features.wholesale_accounts: true`, and the receiver must be upgraded
 before that bit is enabled.
 
-The probe performs two unrelated 131,072-unit authorizations against one
-stable payer-payee account:
+The probe performs unrelated job and session authorizations against one stable
+payer-payee account:
 
 1. an in-path provider call using exact-scope bearer authorization;
 2. a delegated-caller call carrying an ephemeral caller public key and its
-   invocation proof.
+   invocation proof;
+3. two simultaneous reservations whose successful count must equal exactly
+   what the observed balance can afford, followed by release and retry;
+4. direct-provider and delegated-caller paid sessions with bounded initial
+   runway, cumulative usage, top-up replay, settlement, and residual release.
 
 The first call restores the account to `--account-float-wei` (by default the
 value of the maximum authorization). After actual work settles and releases
 the unused reservation, the second mint is only the shortfall created by that
 actual debit—not another maximum-sized payment. Replaying the second call must
-not mint, reserve, execute, or debit again. The probe finishes by reconciling
-issued ticket EV against changes in credited, debited, reserved, and available
-account value.
+not mint, reserve, execute, or debit again. The session runner's test-only
+control endpoint forwards usage through the real broker-issued callback without
+returning its callback credential to the probe. The run finishes by reconciling
+all issued ticket EV against changes in credited, debited, reserved, and
+available account value.
 
 ```bash
 ./chain-probe \
@@ -80,7 +86,14 @@ account value.
   --work-unit=tokens \
   --price-wei=100 \
   --per-units=1000 \
-  --max-authorization-units=131072
+  --max-authorization-units=131072 \
+  --session-capability=conformance:session \
+  --session-offering=default \
+  --session-work-unit=participant_minutes \
+  --session-price-wei=100 \
+  --session-per-units=1 \
+  --session-max-authorization-units=600 \
+  --session-runner-control-url=http://runner:8092
 ```
 
 Set `--account-float-wei` only after calculating the intended aggregate route

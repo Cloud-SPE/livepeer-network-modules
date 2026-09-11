@@ -1,86 +1,42 @@
-# chain-probe — exercise the paid path against a real chain
+# chain-probe — authorization-only paid path on a real chain
 
-Every payment defect found so far was invisible to unit tests,
-conformance and dev deployments, because all three run against a mock
-payment client. A mock credits what it is told to credit and never
-closes a session it should not close, so it cannot show:
+The chain probe exercises wholesale-account funding, single-purpose spend
+authorization, broker invocation, settlement, and restart recovery against
+real payer and receiver daemons. It is deliberately outside CI because it can
+create redeemable probabilistic tickets with real value.
 
-- a session that bills **zero** because pricing was discarded;
-- a price **nobody signed** being used to bill;
-- work served against an **empty balance**;
-- only the **first** job on a shared payment session ever billing;
-- a ledger and a signed settlement **disagreeing** about the same job.
+## Cost
 
-All five were real. All five were found here.
+Minting a ticket creates a lottery claim. A winning ticket can draw its face
+value from the payer deposit and costs the receiver gas to redeem. Review
+`--max-payment-wei`, `--max-ticket-face-value-wei`, target float, wallet,
+chain, and recipient before running.
 
-## Cost of a run
+## Supported modes
 
-Minting a ticket does not move money — a ticket is a signed lottery
-claim. Value moves only when one **wins** and the payee redeems it,
-which costs the payee gas and draws the ticket's face value from the
-payer's deposit.
-
-At the daemon's defaults (face value 0.001 ETH, win probability 1/1024)
-a run costs, in expectation, a fraction of a cent, with a 1-in-1024
-chance per ticket of actually costing 0.001 ETH. Small, real, and worth
-knowing before you type the command.
-
-**This is deliberately not part of `make test` or CI.** It spends real
-value and needs real keys. A check that runs by accident against mainnet
-is worse than no check.
-
-## Running it
-
-Bring up a payer, a payee and a broker against the same chain, then:
-
-```
-go run ./cmd/livepeer-chain-probe \
-    --recipient=0x<payee address> \
-    --protocol=both
-```
-
-Flags worth setting deliberately:
-
-| Flag | Why |
+| `--protocol` | Purpose |
 |---|---|
-| `--per-units` | **Keep it above 1.** At `per_units: 1` flooring and ceiling agree, so a rounding defect cannot surface — which is exactly how one shipped. |
-| `--price-wei` | Pick a price whose product with the unit count leaves a remainder. |
-| `--protocol` | `job`, `session`, `both`, `rotation`, `retry`, `evidence`, or `wholesale`. |
-| `--payee-admin-token` | Required for `rotation`: it drives `PayeeAdmin.ResetSession`, which is closed unless the payee was started with a matching `--payee-admin-token`. |
+| `wholesale` | Account shortfall funding, unrelated job/session authorizations, delegated caller proof, concurrency, replay, cumulative usage, and residual release. |
+| `wholesale-recovery-prepare` | Create durable mint/authorization/account state and a checkpoint before daemon restart. |
+| `wholesale-recovery-verify` | Verify the checkpoint after restart, replay idempotently, and settle the held authorization. |
+| `wholesale-evidence` | Reconcile signed broker and daemon evidence for saved checkpoints. |
 
-## The wholesale-account run
+Legacy `job`, `session`, `both`, `rotation`, `retry`, and `evidence`
+modes were payment-only workload probes and have been removed. Tickets are
+tested only as account-funding instruments.
 
-`--protocol=wholesale` is the bounded-float economic probe. It does not run
-unless selected explicitly. The broker offer must advertise
-`extra.features.wholesale_accounts: true`, and the receiver must be upgraded
-before that bit is enabled.
+## Wholesale run
 
-The probe performs unrelated job and session authorizations against one stable
-payer-payee account:
-
-1. an in-path provider call using exact-scope bearer authorization;
-2. a delegated-caller call carrying an ephemeral caller public key and its
-   invocation proof;
-3. two simultaneous reservations whose successful count must equal exactly
-   what the observed balance can afford, followed by release and retry;
-4. direct-provider and delegated-caller paid sessions with bounded initial
-   runway, cumulative usage, top-up replay, settlement, and residual release.
-
-The first call restores the account to `--account-float-wei` (by default the
-value of the maximum authorization). After actual work settles and releases
-the unused reservation, the second mint is only the shortfall created by that
-actual debit—not another maximum-sized payment. Replaying the second call must
-not mint, reserve, execute, or debit again. The session runner's test-only
-control endpoint forwards usage through the real broker-issued callback without
-returning its callback credential to the probe. The run finishes by reconciling
-all issued ticket EV against changes in credited, debited, reserved, and
-available account value.
+Bring up a payer, receiver, authorization-only broker, and the conformance
+session runner against one chain:
 
 ```bash
-./chain-probe \
+go run ./cmd/livepeer-chain-probe \
   --protocol=wholesale \
   --chain-id=42161 \
   --recipient=0x... \
+  --broker-url=https://broker.example \
+  --broker-uri=https://broker.example \
   --capability=conformance:job \
   --offering=all \
   --work-unit=tokens \
@@ -96,149 +52,46 @@ available account value.
   --session-runner-control-url=http://runner:8092
 ```
 
-Set `--account-float-wei` only after calculating the intended aggregate route
-float. It must cover the largest concurrently admitted reservation, but it is
-not supposed to mirror the sum of every customer's maximum workload. The
-sender's `--max-payment-wei`, `--max-ticket-face-value-wei`, and
-`--max-authorization-wei` remain independent circuit breakers.
+The first operation restores the stable payer-payee account to the configured
+`--account-float-wei`. After actual work settles and unused reservation is
+released, the next mint covers only actual aggregate shortfall—not another
+maximum-sized workload. Replays must not mint, credit, reserve, execute, or
+debit twice.
 
-## The rotation run
+Choose target float from aggregate burn, concurrency, refill latency, and
+route-exit tolerance. It must cover intended concurrent reservations, but it
+must not mirror the sum of customer maxima.
 
-`--protocol=rotation` drives a recipient rotation under a live session —
-the one path with no other way to test it. A mock cannot rotate a rand it
-never had, and conformance treats payment envelopes as opaque by design.
-The sequence is the one a gateway actually hits:
+## Recovery
 
-```
-open → payee resets its rand → the next payment is refused with
-recipient_rotated → the payer evicts its cached identity → a re-mint
-gets a new work_id → a top-up declaring Livepeer-Rebind-From moves the
-live session onto it
-```
+Use a persistent `--checkpoint-file`:
 
-and it then asserts what makes a rotation safe: same session, same
-credential, one generation forward, cumulative units unbroken across the
-boundary, predecessor settled, and the whole chain in the signed
-settlement.
+```bash
+go run ./cmd/livepeer-chain-probe --protocol=wholesale-recovery-prepare \
+  --checkpoint-file=/var/lib/livepeer/probe/recovery.json ...
 
-This run found that the payee **credited** payments arriving on the
-retired identity while every debit against that closed session failed —
-value in, no work billable out. Run it after any change to session
-lifecycle or ticket validation.
+# Restart payer, receiver, and broker with their original persistent stores.
 
-## The evidence run
-
-`--protocol=evidence` exercises the reconciliation surfaces a
-clearinghouse depends on, against a real signing broker:
-
-- a settled exchange is findable by the `request_id` the CONSUMER issued,
-  and carries an actual signed settlement — `SETTLED` is a claim about
-  money, so it requires the evidence rather than merely a terminal state;
-- an id nobody has heard of answers `NO_RECORD`, which is silence and not
-  a claim;
-- a non-admission is signed for an unseen id, and the SECOND ask returns
-  the same record rather than re-signing one fact under a later
-  `observed_at`;
-- that record then surfaces through the ordinary exchange lookup;
-- asking for non-admission on an ADMITTED request hands back its
-  settlement instead of a bare refusal, so the caller does not charge
-  conservatively against evidence the broker is holding.
-
-These decide how much a customer is charged when a settlement goes
-missing, and the failure they guard against is silent in both directions.
-
-The `job` run also prints and checks the expiry the payer computed from a
-REAL contract read:
-
-```
-expiry: creation_round=4310 validity_period=2 expires_after_round=4311 observed_at=...
+go run ./cmd/livepeer-chain-probe --protocol=wholesale-recovery-verify \
+  --checkpoint-file=/var/lib/livepeer/probe/recovery.json ...
 ```
 
-`validity_period` comes from `TicketBroker.ticketValidityPeriod()`, and
-the read is fail-closed — a broker that cannot read it refuses to mint.
-That makes this run the only place the ABI entry is exercised at all.
+Verification requires identical mint replay, unchanged account totals,
+surviving authorization reservation, broker settlement recovery, and
+exactly-once release. Losing authorization state while a broker session
+survives must fail closed; it is not repaired by creating a replacement
+ticket-session workload payment.
 
-## The retry run
+## Assertions
 
-`--protocol=retry` exercises the debit-retry lifecycle against a real
-ledger: work delivered, debit refused, and the exchange reaching a signed
-terminal settlement anyway.
+The probe checks money and durable evidence, not log strings:
 
-The failure has to come from outside, because the probe cannot stop a
-daemon it did not start. Point the offering's backend at something slow,
-run the probe, and **stop the payee while the backend is working**, then
-start it again:
-
-```
-# backend sleeps ~20s
-./chain-probe --protocol=retry --recipient=0x... &
-sleep 2 && kill -9 $(pgrep -f 'payment-daemon --mode=receiver')
-sleep 20 && ./payment-daemon --mode=receiver ...   # same --db
-```
-
-The probe asserts the sequence: `202 accounting_pending` while the debit
-is outstanding, then a signed terminal settlement whose `debited_units`
-reflect what the ledger finally took.
-
-Restart the payee with the **same `--db`**. The session has to survive, and
-the broker has to have left it open — a closed session refuses debits, so
-closing it at end of exchange makes every retry fail no matter how
-generous the budget. That was a real bug, and this run is what would have
-caught it.
-
-## Run it twice
-
-The second run is the one that matters. Several defects only appear on
-the **second** exchange over one ticket session — the first bills
-correctly, which is precisely the request an operator tests before
-declaring victory. A single green run proves less than it looks like.
-
-Restarting the daemons between runs wipes the ticket session and hides
-exactly these bugs. Don't.
-
-## What it asserts
-
-Not log lines — money:
-
-- the payment credited something (a zero-EV payment funds no work);
-- the ledger balance moved by **credit minus bill**, with the bill
-  recomputed here from the normative rule rather than imported from the
-  broker, so a wrong implementation cannot agree with itself;
-- the settlement is reachable without reading an HTTP trailer;
-- the settlement is **signed**, names its own exchange, and carries an
-  RFC3339 `issued_at`;
-- for sessions: the `work_id` is the payment's, usage debits, a top-up
-  replay returns the recorded outcome rather than funding twice, and the
-  runner is terminated at end;
-- the settlement carries the id its CONSUMER issued — `request_id` on a
-  job, `gateway_session_id` on a session — inside the signature. Every
-  other identifier in the record is broker-minted and reaches a
-  clearinghouse only through the customer's SDK, which is the channel
-  the signature exists to distrust;
-- a session settlement **resolves** by `gateway_session_id`, not merely
-  echoes it: that is the only key a clearinghouse holds;
-- a second session declaring a `gateway_session_id` already in use is
-  refused with `gateway_session_id_reuse`. This one costs a real payment
-  to check and is worth it — it is a new way for a gateway to fail, and
-  it fails at open.
-
-Note the last one when reading the source: the probe uses a **unique**
-`gateway_session_id` per run. It used a constant, and the uniqueness rule
-turned this file's own "run it twice" instruction into a failure at the
-second open — which is precisely the friction a gateway reusing a stable
-id will hit.
-
-## Wholesale restart checkpoints
-
-`--protocol=wholesale-recovery-prepare` and
-`--protocol=wholesale-recovery-verify` form a deliberate restart boundary.
-Prepare leaves one authorization admitted and records only non-secret replay
-coordinates at `--checkpoint-file`; verify replays the identical durable mint,
-checks the preserved account, authorization, and broker settlement, then
-settles twice to prove the second call is an idempotent replay.
-
-`--protocol=wholesale-evidence` reads the latest verified checkpoint from
-`--checkpoint-dir`, queries the live payee and broker, and emits a non-secret
-reconciliation of accepted ticket EV to settled debit plus bounded reusable
-float. It refuses while any reservation remains or the retained float exceeds
-the checkpoint target.
+- funding EV moves into one stable account;
+- account conservation holds across credited, available, reserved, and
+  debited value;
+- authorization scope, request digest, caller proof, and accepted quote bind
+  the invocation;
+- settlement bills measured units on the pinned cumulative curve;
+- unused reservation returns to aggregate availability;
+- request, mint, and authorization replay are exactly-once; and
+- signed evidence is directly reconcilable without SDK callback delivery.

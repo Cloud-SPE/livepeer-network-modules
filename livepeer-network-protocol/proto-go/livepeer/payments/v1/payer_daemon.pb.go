@@ -48,7 +48,8 @@ type CreatePaymentRequest struct {
 	TicketParamsBaseUrl string `protobuf:"bytes,2,opt,name=ticket_params_base_url,json=ticketParamsBaseUrl,proto3" json:"ticket_params_base_url,omitempty"`
 	// Accepted route/quote basis chosen by the gateway.
 	AcceptedPrice *AcceptedPrice `protobuf:"bytes,3,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
-	// Funding scope the gateway is authorizing for this minted payment batch.
+	// Upper bound and audit metadata for this funding batch. This is not a
+	// workload authorization; account_funding below is also REQUIRED.
 	Funding *FundingIntent `protobuf:"bytes,4,opt,name=funding,proto3" json:"funding,omitempty"`
 	// Caller-supplied idempotency key for this mint intent. REQUIRED.
 	//
@@ -78,8 +79,9 @@ type CreatePaymentRequest struct {
 	// would double-pay. The tombstone is a hash, not the key, so retention
 	// costs ~80 bytes per mint forever.
 	MintRequestId string `protobuf:"bytes,5,opt,name=mint_request_id,json=mintRequestId,proto3" json:"mint_request_id,omitempty"`
-	// When present, funding.funded_value_wei is treated as a legacy ceiling and
-	// the daemon mints only max(0, target_available-observed_available).
+	// REQUIRED. The daemon mints only
+	// max(0, target_available-observed_available), bounded by funding above.
+	// Omitting this field is rejected; request-ceiling ticket minting is gone.
 	AccountFunding *AccountFundingIntent `protobuf:"bytes,6,opt,name=account_funding,json=accountFunding,proto3" json:"account_funding,omitempty"`
 	unknownFields  protoimpl.UnknownFields
 	sizeCache      protoimpl.SizeCache
@@ -170,9 +172,8 @@ type CreatePaymentResponse struct {
 	// conforming sender re-quotes ticket sizing and refuses before signing
 	// when this cannot equal `funded_value_wei` exactly.
 	ExpectedValue *BigUInt `protobuf:"bytes,3,opt,name=expected_value,json=expectedValue,proto3" json:"expected_value,omitempty"`
-	// Effective funding intent used for this payment: the legacy requested
-	// value, or the account shortfall for an account-aware mint. This is the
-	// amount the caller authorized, not a winning ticket's face value.
+	// Effective account shortfall funded by this payment. This is not a
+	// workload maximum or a winning ticket's face value.
 	FundedValueWei *BigUInt `protobuf:"bytes,4,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
 	// Quote identity serialized into the payment context.
 	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,5,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`

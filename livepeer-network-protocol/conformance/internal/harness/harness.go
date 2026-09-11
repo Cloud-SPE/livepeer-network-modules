@@ -9,26 +9,32 @@ package harness
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/conformance/internal/fakes"
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Livepeer wire headers (headers/livepeer-headers.md).
 const (
-	HdrCapability = "Livepeer-Capability"
-	HdrOffering   = "Livepeer-Offering"
-	HdrPayment    = "Livepeer-Payment"
-	HdrProtocol   = "Livepeer-Protocol"
-	HdrRequestID  = "Livepeer-Request-Id"
+	HdrCapability    = "Livepeer-Capability"
+	HdrOffering      = "Livepeer-Offering"
+	HdrPayment       = "Livepeer-Payment"
+	HdrAuthorization = "Livepeer-Authorization"
+	HdrProtocol      = "Livepeer-Protocol"
+	HdrRequestID     = "Livepeer-Request-Id"
 
 	HdrWorkUnits    = "Livepeer-Work-Units"
 	HdrWorkUnitName = "Livepeer-Work-Unit"
@@ -39,10 +45,11 @@ const (
 
 // Error codes the suite asserts on (headers/livepeer-headers.md).
 const (
-	ErrTransportUnsupported = "protocol_transport_unsupported"
-	ErrJobInFlight          = "job_in_flight"
-	ErrRequestIDReuse       = "request_id_reuse"
-	ErrRefillRefused        = "refill_refused"
+	ErrTransportUnsupported  = "protocol_transport_unsupported"
+	ErrJobInFlight           = "job_in_flight"
+	ErrRequestIDReuse        = "request_id_reuse"
+	ErrRefillRefused         = "refill_refused"
+	ErrAuthorizationRequired = "authorization_required"
 )
 
 // Protocol tags.
@@ -123,6 +130,12 @@ type Ctx struct {
 	// host id that enrollment records.
 	AttachCredential string
 	AttachHostID     string
+
+	authMu           sync.Mutex
+	sessionAuth      map[string]string
+	sessionGateway   map[string]string
+	sessionOffering  map[string]string
+	sessionRevisions map[string]string
 }
 
 // NewRunID returns a short random run nonce.
@@ -155,17 +168,103 @@ func PaymentEnvelope(seed string) string {
 	return base64.StdEncoding.EncodeToString([]byte("conformance-payment:" + seed))
 }
 
+func (c *Ctx) authorization(capability, offering, protocol, requestID, sessionID, predecessor string, body []byte) string {
+	amount, per, unit := int64(1), uint64(1), c.JobUnit
+	if protocol == ProtoPaidSession {
+		amount, unit = 10, c.SessionUnit
+	} else if offering == c.JobOfferingFractional {
+		amount, per = 100, 1000
+	}
+	maxUnits := uint64(1_000_000)
+	maxDebit := new(big.Int).Mul(big.NewInt(amount), new(big.Int).SetUint64(maxUnits))
+	maxDebit.Add(maxDebit, new(big.Int).SetUint64(per-1)).Div(maxDebit, new(big.Int).SetUint64(per))
+	digest := sha256.Sum256(body)
+	revision := uint64(0)
+	if predecessor != "" {
+		revision = 1
+	}
+	p := &pb.SpendAuthorizationPayload{
+		Domain: "livepeer-spend-authorization/v1", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+		ChainId: 42161, Denomination: "wei", AuthorizationId: "conf-auth-" + requestID, Revision: revision, PredecessorAuthorizationId: predecessor,
+		RequestId: requestID, SessionId: sessionID, Protocol: protocol, Capability: capability, Offering: offering, BrokerUri: strings.TrimRight(c.BrokerURL, "/"),
+		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(amount).Bytes()}, UnitsPerPrice: per, WorkUnitName: unit, Capability: capability, Offering: offering, QuoteRef: &pb.QuoteRef{QuoteId: "conformance-quote", QuoteVersion: 1, ConstraintFingerprint: []byte{1}, RouteFingerprint: []byte{2}}},
+		MaxDebitWei:   &pb.BigUInt{Value: maxDebit.Bytes()}, MaxTotalUnits: maxUnits, RequestDigest: digest[:],
+	}
+	wire, _ := proto.Marshal(&pb.SpendAuthorization{Payload: p})
+	return base64.StdEncoding.EncodeToString(wire)
+}
+
+func gatewaySessionID(body []byte) string {
+	var v struct {
+		GatewaySessionID string `json:"gateway_session_id"`
+	}
+	_ = json.Unmarshal(body, &v)
+	return v.GatewaySessionID
+}
+
+func (c *Ctx) rememberSessionAuthorization(sessionID, authorizationID, gatewayID, offering string) {
+	if sessionID == "" || authorizationID == "" {
+		return
+	}
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+	if c.sessionAuth == nil {
+		c.sessionAuth = map[string]string{}
+	}
+	if c.sessionGateway == nil {
+		c.sessionGateway = map[string]string{}
+	}
+	if c.sessionOffering == nil {
+		c.sessionOffering = map[string]string{}
+	}
+	c.sessionAuth[sessionID] = authorizationID
+	c.sessionGateway[sessionID] = gatewayID
+	c.sessionOffering[sessionID] = offering
+}
+
+func (c *Ctx) SessionRevisionAuthorization(sessionID, requestID string) string {
+	c.authMu.Lock()
+	if c.sessionRevisions != nil {
+		if prior := c.sessionRevisions[sessionID+"|"+requestID]; prior != "" {
+			c.authMu.Unlock()
+			return prior
+		}
+	}
+	predecessor := c.sessionAuth[sessionID]
+	gatewayID := c.sessionGateway[sessionID]
+	offering := c.sessionOffering[sessionID]
+	c.authMu.Unlock()
+	authorization := c.authorization(c.SessionCapability, offering, ProtoPaidSession, requestID, gatewayID, predecessor, nil)
+	c.authMu.Lock()
+	if c.sessionRevisions == nil {
+		c.sessionRevisions = map[string]string{}
+	}
+	c.sessionRevisions[sessionID+"|"+requestID] = authorization
+	c.authMu.Unlock()
+	return authorization
+}
+
+func (c *Ctx) rememberSessionRevision(sessionID, authorizationID string) {
+	c.authMu.Lock()
+	defer c.authMu.Unlock()
+	if c.sessionAuth == nil {
+		c.sessionAuth = map[string]string{}
+	}
+	c.sessionAuth[sessionID] = authorizationID
+}
+
 // ---------------------------------------------------------------------------
 // paid-job helpers
 
 // JobRequest describes one POST /v1/job exchange.
 type JobRequest struct {
-	Offering    string
-	RequestID   string
-	Payment     string // already base64
-	Body        []byte
-	Accept      string
-	ContentType string
+	Offering          string
+	RequestID         string
+	Payment           string // already base64
+	Body              []byte
+	Accept            string
+	ContentType       string
+	OmitAuthorization bool
 }
 
 // JobResponse is the fully-read exchange result. Trailer values are
@@ -191,6 +290,9 @@ func (c *Ctx) DoJob(jr JobRequest) (*JobResponse, error) {
 	req.Header.Set(HdrProtocol, ProtoPaidJob)
 	req.Header.Set(HdrRequestID, jr.RequestID)
 	req.Header.Set(HdrPayment, jr.Payment)
+	if !jr.OmitAuthorization {
+		req.Header.Set(HdrAuthorization, c.authorization(c.JobCapability, jr.Offering, ProtoPaidJob, jr.RequestID, "", "", jr.Body))
+	}
 	if jr.Accept != "" {
 		req.Header.Set("Accept", jr.Accept)
 	}
@@ -248,6 +350,7 @@ func (c *Ctx) DoJobAbort(jr JobRequest, readChunks int) error {
 	req.Header.Set(HdrProtocol, ProtoPaidJob)
 	req.Header.Set(HdrRequestID, jr.RequestID)
 	req.Header.Set(HdrPayment, jr.Payment)
+	req.Header.Set(HdrAuthorization, c.authorization(c.JobCapability, jr.Offering, ProtoPaidJob, jr.RequestID, "", "", jr.Body))
 	if jr.Accept != "" {
 		req.Header.Set("Accept", jr.Accept)
 	}
@@ -313,6 +416,28 @@ func (c *Ctx) OpenSession(requestID, payment, body string) (*HTTPResult, error) 
 	req.Header.Set(HdrProtocol, ProtoPaidSession)
 	req.Header.Set(HdrRequestID, requestID)
 	req.Header.Set(HdrPayment, payment)
+	req.Header.Set(HdrAuthorization, c.authorization(c.SessionCapability, c.SessionOffering, ProtoPaidSession, requestID, gatewaySessionID([]byte(body)), "", []byte(body)))
+	req.Header.Set("Content-Type", "application/json")
+	res, err := c.do(req)
+	if err == nil && res.Status >= 200 && res.Status < 300 {
+		m := res.JSON()
+		c.rememberSessionAuthorization(FieldString(m, "session_id"), FieldString(m, "work_id"), gatewaySessionID([]byte(body)), c.SessionOffering)
+	}
+	return res, err
+}
+
+// OpenPaymentOnlySession probes the mandatory authorization boundary. The
+// payment is present deliberately; it must fund no workload by itself.
+func (c *Ctx) OpenPaymentOnlySession(requestID, payment, body string) (*HTTPResult, error) {
+	req, err := http.NewRequest(http.MethodPost, c.BrokerURL+"/v1/session", strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(HdrCapability, c.SessionCapability)
+	req.Header.Set(HdrOffering, c.SessionOffering)
+	req.Header.Set(HdrProtocol, ProtoPaidSession)
+	req.Header.Set(HdrRequestID, requestID)
+	req.Header.Set(HdrPayment, payment)
 	req.Header.Set("Content-Type", "application/json")
 	return c.do(req)
 }
@@ -338,8 +463,14 @@ func (c *Ctx) OpenSessionOffering(offering, requestID, payment, body string) (*H
 	req.Header.Set(HdrProtocol, ProtoPaidSession)
 	req.Header.Set(HdrRequestID, requestID)
 	req.Header.Set(HdrPayment, payment)
+	req.Header.Set(HdrAuthorization, c.authorization(c.SessionCapability, offering, ProtoPaidSession, requestID, gatewaySessionID([]byte(body)), "", []byte(body)))
 	req.Header.Set("Content-Type", "application/json")
-	return c.do(req)
+	res, err := c.do(req)
+	if err == nil && res.Status >= 200 && res.Status < 300 {
+		m := res.JSON()
+		c.rememberSessionAuthorization(FieldString(m, "session_id"), FieldString(m, "work_id"), gatewaySessionID([]byte(body)), offering)
+	}
+	return res, err
 }
 
 // SessionStatus fetches GET /v1/session/{id} with the session credential.
@@ -361,7 +492,18 @@ func (c *Ctx) SessionTopUp(sessionID, credential, requestID, payment string) (*H
 	req.Header.Set("Authorization", "Bearer "+credential)
 	req.Header.Set(HdrRequestID, requestID)
 	req.Header.Set(HdrPayment, payment)
-	return c.do(req)
+	authorization := c.SessionRevisionAuthorization(sessionID, requestID)
+	req.Header.Set(HdrAuthorization, authorization)
+	res, err := c.do(req)
+	if err == nil && res.Status >= 200 && res.Status < 300 {
+		if raw, decErr := base64.StdEncoding.DecodeString(authorization); decErr == nil {
+			var auth pb.SpendAuthorization
+			if proto.Unmarshal(raw, &auth) == nil {
+				c.rememberSessionRevision(sessionID, auth.GetPayload().GetAuthorizationId())
+			}
+		}
+	}
+	return res, err
 }
 
 // SessionEnd requests session end.

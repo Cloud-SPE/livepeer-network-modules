@@ -56,7 +56,6 @@ func OfferTuple(o config.Offer, shape FrozenShape) *offeringsCapabilityV1 {
 		if p := o.SessionPolicy; p != nil {
 			sess.Attachment = orDefault(p.Attachment, "external")
 			sess.Refill = orDefault(p.Refill, "extensible")
-			sess.MaxRotations = p.MaxRotations
 			sess.ToleranceBandPct = p.ToleranceBandPct
 			sess.RunwayIncrementUnits = p.RunwayIncrementUnits
 			if p.Heartbeat.IntervalSeconds > 0 || p.Heartbeat.MissedThreshold > 0 {

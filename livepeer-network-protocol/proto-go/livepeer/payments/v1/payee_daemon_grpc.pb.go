@@ -2,9 +2,10 @@
 //
 // The PayeeDaemon runs next to a payee application — a Livepeer
 // orchestrator or any consumer app accepting payment for work. It
-// validates incoming payment blobs, tracks per-(sender, work_id)
-// balances, and (post chain integration) redeems winning tickets
-// on-chain via the TicketBroker.
+// validates incoming payment blobs, funds stable payer-payee wholesale
+// accounts, enforces single-purpose spend authorizations, and redeems winning
+// tickets on-chain via the TicketBroker. Per-(sender, work_id) balances are a
+// legacy ticket-crediting implementation detail and MUST NOT authorize work.
 //
 // Mounted only when the daemon is started with `--mode=receiver`.
 // Calls to it in sender mode return UNIMPLEMENTED.
@@ -81,13 +82,11 @@ type PayeeDaemonClient interface {
 	// Return the daemon's full configured capability catalog. Drives
 	// the worker's `/capabilities` HTTP response.
 	ListCapabilities(ctx context.Context, in *ListCapabilitiesRequest, opts ...grpc.CallOption) (*ListCapabilitiesResponse, error)
-	// Open a payee-side session and bind authoritative pricing metadata
-	// to `work_id`. The worker later seals the session's sender on the
-	// first successful ProcessPayment.
+	// Legacy ticket-funding primitive used while validating and transferring a
+	// payment into the wholesale account. It is not workload admission.
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*OpenSessionResponse, error)
-	// Validate an incoming payment blob, credit the sender's balance by
-	// the payment's expected value, and queue any winning tickets for
-	// redemption. Requires a previously-opened session for `work_id`.
+	// Legacy ticket-funding primitive used internally by account funding.
+	// Calling it never authorizes a workload.
 	ProcessPayment(ctx context.Context, in *ProcessPaymentRequest, opts ...grpc.CallOption) (*ProcessPaymentResponse, error)
 	// Credit a validated ticket batch to the stable payer-payee account without
 	// admitting work. This lets an out-of-path payer replenish aggregate float
@@ -103,17 +102,21 @@ type PayeeDaemonClient interface {
 	SettleAuthorization(ctx context.Context, in *SettleAuthorizationRequest, opts ...grpc.CallOption) (*SettleAuthorizationResponse, error)
 	GetWholesaleAccount(ctx context.Context, in *GetWholesaleAccountRequest, opts ...grpc.CallOption) (*GetWholesaleAccountResponse, error)
 	GetSpendAuthorization(ctx context.Context, in *GetSpendAuthorizationRequest, opts ...grpc.CallOption) (*GetSpendAuthorizationResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
 	// after the payee has actually done the work. Retries are
 	// idempotent by `(sender, work_id, debit_seq)`. Returns the new
 	// balance.
 	DebitBalance(ctx context.Context, in *DebitBalanceRequest, opts ...grpc.CallOption) (*DebitBalanceResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it.
 	// Check whether a (sender, work_id) balance covers a minimum number
 	// of session-priced work units, without debiting.
 	SufficientBalance(ctx context.Context, in *SufficientBalanceRequest, opts ...grpc.CallOption) (*SufficientBalanceResponse, error)
-	// Get the current balance for a (sender, work_id) pair.
+	// Deprecated legacy accounting RPC. Use GetWholesaleAccount.
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
-	// Close and garbage-collect a work session. Any residual credit is
+	// Deprecated legacy accounting RPC. Workload close settles its
+	// authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
 	// forfeited.
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
 	// Admin / observability: list winning tickets currently queued for
@@ -356,13 +359,11 @@ type PayeeDaemonServer interface {
 	// Return the daemon's full configured capability catalog. Drives
 	// the worker's `/capabilities` HTTP response.
 	ListCapabilities(context.Context, *ListCapabilitiesRequest) (*ListCapabilitiesResponse, error)
-	// Open a payee-side session and bind authoritative pricing metadata
-	// to `work_id`. The worker later seals the session's sender on the
-	// first successful ProcessPayment.
+	// Legacy ticket-funding primitive used while validating and transferring a
+	// payment into the wholesale account. It is not workload admission.
 	OpenSession(context.Context, *OpenSessionRequest) (*OpenSessionResponse, error)
-	// Validate an incoming payment blob, credit the sender's balance by
-	// the payment's expected value, and queue any winning tickets for
-	// redemption. Requires a previously-opened session for `work_id`.
+	// Legacy ticket-funding primitive used internally by account funding.
+	// Calling it never authorizes a workload.
 	ProcessPayment(context.Context, *ProcessPaymentRequest) (*ProcessPaymentResponse, error)
 	// Credit a validated ticket batch to the stable payer-payee account without
 	// admitting work. This lets an out-of-path payer replenish aggregate float
@@ -378,17 +379,21 @@ type PayeeDaemonServer interface {
 	SettleAuthorization(context.Context, *SettleAuthorizationRequest) (*SettleAuthorizationResponse, error)
 	GetWholesaleAccount(context.Context, *GetWholesaleAccountRequest) (*GetWholesaleAccountResponse, error)
 	GetSpendAuthorization(context.Context, *GetSpendAuthorizationRequest) (*GetSpendAuthorizationResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
 	// after the payee has actually done the work. Retries are
 	// idempotent by `(sender, work_id, debit_seq)`. Returns the new
 	// balance.
 	DebitBalance(context.Context, *DebitBalanceRequest) (*DebitBalanceResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it.
 	// Check whether a (sender, work_id) balance covers a minimum number
 	// of session-priced work units, without debiting.
 	SufficientBalance(context.Context, *SufficientBalanceRequest) (*SufficientBalanceResponse, error)
-	// Get the current balance for a (sender, work_id) pair.
+	// Deprecated legacy accounting RPC. Use GetWholesaleAccount.
 	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
-	// Close and garbage-collect a work session. Any residual credit is
+	// Deprecated legacy accounting RPC. Workload close settles its
+	// authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
 	// forfeited.
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
 	// Admin / observability: list winning tickets currently queued for

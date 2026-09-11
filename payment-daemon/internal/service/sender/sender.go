@@ -667,9 +667,9 @@ func mintResponseFrom(rec *store.MintRecord) *pb.CreatePaymentResponse {
 	return out
 }
 
-func accountShortfall(in *pb.AccountFundingIntent, legacy *big.Int) (*big.Int, error) {
+func accountShortfall(in *pb.AccountFundingIntent, maximum *big.Int) (*big.Int, error) {
 	if in == nil {
-		return new(big.Int).Set(legacy), nil
+		return nil, errors.New("account_funding is required; funding alone cannot mint for a workload ceiling")
 	}
 	target, err := parseBigUInt("target_available_wei", in.GetTargetAvailableWei())
 	if err != nil {
@@ -682,7 +682,14 @@ func accountShortfall(in *pb.AccountFundingIntent, legacy *big.Int) (*big.Int, e
 	if available.Cmp(target) >= 0 {
 		return new(big.Int), nil
 	}
-	return new(big.Int).Sub(target, available), nil
+	shortfall := new(big.Int).Sub(target, available)
+	if maximum == nil || maximum.Sign() < 0 {
+		return nil, errors.New("funding.funded_value_wei must provide a non-negative mint ceiling")
+	}
+	if shortfall.Cmp(maximum) > 0 {
+		return nil, fmt.Errorf("account shortfall %s exceeds funding ceiling %s", shortfall, maximum)
+	}
+	return shortfall, nil
 }
 
 func marshalQuoteRef(qr *pb.QuoteRef) ([]byte, error) {

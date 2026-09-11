@@ -1,8 +1,8 @@
 ---
 spec_name: offering-axes
-version: 1.0.10-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-09-09
+last_updated: 2026-09-11
 ---
 
 # Offering declared axes
@@ -62,20 +62,6 @@ offerings):
 | `runway_increment_units` | no | integer; advisory | Seller-suggested top-up sizing. Buyers own their actual increment (it is their exposure bound), but a suggestion aids first-contact sizing. |
 | `session_params_schema` | no | object; advisory | The runner's own description of the `session_params` it expects, relayed verbatim from the runner's attach document (`runner-attach.md` §3.2). Lets a gateway validate before opening rather than discovering the requirement as a create-time failure after payment was validated. Not operator-authored and never broker-enforced. |
 
-### 3.1 `session.max_rotations`
-
-Caps how many times a session may be rebound onto a rotated payment
-identity (paid-session §3.3.1). Optional, default **3**.
-
-The bound exists because a rebind costs the payer a funded envelope: an
-unbounded rotate-and-rebind loop spends deposit without delivering work.
-A broker also refuses a rebind whose predecessor generation delivered no
-units at all, whatever this value says — that catches a loop after one
-round rather than after `max_rotations` of them.
-
-Consumers gate on nothing here; it is the broker's own bound, advertised
-so an operator can see it.
-
 ## 4. Who consumes what
 
 | Consumer | Gates on | Treats as opaque |
@@ -128,57 +114,40 @@ bills `per_units` times the intended rate.
 
 ### 6.1 The cumulative billing rule
 
-For `U` **cumulative** work units delivered on the payment session —
-identified by `work_id`, which a gateway reuses across many exchanges:
+For `U` cumulative work units delivered under one job authorization or one
+logical session authorization chain:
 
 ```
 bill(U) = ceil(U × price_per_unit_wei / per_units)
 ```
 
 - **Ceiling**, so a payee is never left short on work already delivered.
-- **Cumulative**, and this is the load-bearing half. A debit or a refill
+- **Cumulative**, and this is the load-bearing half. An authorization advance
   costs `bill(U_after) − bill(U_before)`. Rounding each increment on its
   own would cost the payer up to one wei per increment and — far worse —
   would make two honest implementations disagree, because the total then
   depends on how the work happened to be chunked.
 
-Both sides of a session MUST compute this identical function. It is
-written here, once, so neither re-derives it.
+Both payer and payee MUST compute this identical function. For a paid job,
 
-**This spans exchanges, not just ticks.** A `paid-job/v1` exchange is one
-increment on its payment session's curve, exactly like a session's usage
-tick: the first job on a session costs `bill(u)`, and the next costs
-`bill(2u) − bill(u)`, which is smaller whenever a remainder carried.
-Charging each exchange an independent ceiling would overcharge by up to
-one wei per job — the drift this rule exists to remove — and the payee
-could not do otherwise if it wanted to, since it sees debits on a
-`work_id` and cannot tell a job boundary from a tick.
+```text
+billed_value_wei = bill(actual_units)
+```
 
-**A settlement MUST attest what the ledger charged**, not a value the
-attesting party recomputed. The two disagree for every exchange after the
-first, and a clearinghouse that recomputes the rule fails closed on the
-difference.
+For a paid session, every usage event and successor authorization stays on the
+same logical cumulative curve. The terminal billed value is `bill(total
+debited_units)`; event boundaries and authorization revisions do not introduce
+additional ceilings.
 
-Records carry `payment_cumulative_units` — the running total on the
-`work_id`, not on the logical session — so a reader can place a charge on
-the curve. What that buys differs by protocol, and the difference is
-worth stating rather than discovering:
+The curve does **not** span unrelated jobs merely because they share a payer,
+payee, account, funding generation, capability, or offering. Stable accounts
+aggregate value, not workload identity. `payment_cumulative_units` is a
+historical ticket-session field and MUST be zero in authorization-only
+settlements.
 
-- **`paid-job/v1`**: fully recomputable. One exchange is one increment,
-  so `billed_value_wei` MUST equal
-  `bill(payment_cumulative_units) − bill(payment_cumulative_units − debited_units)`.
-- **`paid-session/v1`**: **not** recomputable when the identity is
-  shared. A session's charge is the sum of its own debits, and two
-  sessions interleaving on one `work_id` do not occupy contiguous
-  stretches of the curve. The signature is what makes a session's charge
-  trustworthy; `payment_cumulative_units` lets a reader verify the
-  **aggregate** across every record on an identity, and notice a missing
-  one.
-
-`debited_units` is scoped to the exchange (`paid-job`) or to the logical
-session (`paid-session`). It is never the identity's total — that is what
-`payment_cumulative_units` is for, and conflating them means a reader has
-to know which protocol produced a record before it can interpret it.
+**A settlement MUST attest what the account ledger charged** and carry enough
+authorization, quote, units, and account-version data for the payer to verify
+it.
 
 ### 6.2 Pinning
 
@@ -187,13 +156,15 @@ life of the session. A price change on the
 offering applies to sessions opened after it; it never moves an open
 session's cumulative curve.
 
-**Refill sizing never changes session identity.** A payee pins its
-recipient rand — and therefore `work_id` — to the stable
-`(sender, recipient, capability, offering)` tuple for as long as its
-ticket session is open. A payer MUST NOT key its own session cache on the
-funded value: doing so produces a second cache entry and a redundant
-ticket-params fetch that returns the same identity anyway, and it implies
-an invariant the protocol does not have.
+The accepted price and denominator are pinned by the job authorization or the
+first session authorization. A successor session authorization MUST carry the
+same curve. New offering prices apply only to new authorization chains.
+
+Ticket recipient rand is a funding-generation identity only. It may remain
+stable across many account replenishments or rotate without changing any job
+or session identity. Payers key workload state on authorization IDs and
+account state on `(chain, payer, payee, denomination)`, never on recipient rand
+or funded value.
 
 Ticket face value and win probability are not identity and are not pinned. A
 payer re-quotes the target expected value for each replenishment while the
@@ -224,6 +195,7 @@ refused.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.1.0-draft | 2026-09-11 | Moves the cumulative billing curve from shared ticket-session identity to one job authorization or logical session authorization chain. Removes `session.max_rotations`; recipient rand now identifies funding generations only. |
 | 1.0.10-draft | 2026-09-09 | §6.2 makes exact-EV sizing economically symmetric: the payee retains a redeemable winning face and varies win probability. Shrinking face value to a small account shortfall avoided payer surplus only by creating payee-side uneconomic winners. |
 | 1.0.9-draft | 2026-09-09 | §6.2 corrects stale face-value pinning: face value is mutable per-replenishment sizing, not session identity. Payers re-quote in both directions under the stable recipient rand and refuse any signed-EV mismatch, preventing both nonce-exhausting underfund and surplus account float. |
 | 1.0.8-draft | 2026-09-02 | `attachment: inband-ws` and `metering: broker-observed` removed (plan 0045, decision 13 of the 2026-09-02 walkthrough). Both were accepted by brokers and served by none: the broker's session WebSocket is the §8 control socket, not a media relay. Every session data plane is external; a pool member exposes it through the pool's member-edge feature. The enums keep one value each so a future value is an addition, not a redefinition. |

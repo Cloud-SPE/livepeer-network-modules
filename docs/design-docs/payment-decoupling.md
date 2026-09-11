@@ -1,7 +1,7 @@
 ---
 title: Payment decoupling
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-09-11
 ---
 
 # Payment decoupling
@@ -9,9 +9,10 @@ last-reviewed: 2026-05-11
 What changed in `payment-daemon` for the rewrite vs the suite. Short version:
 **the daemon stops enforcing a closed enum of capability or work-unit names.**
 
-This is the one daemon-side change that the workload-agnostic broker depends
-on. Everything else (sender / receiver split, ticket params, redemption,
-hot/cold identity) is preserved.
+The sender / receiver split, ticket parameters, redemption, and hot/cold
+identity remain. Paid workload accounting now adds a stable payer-payee
+wholesale account and single-purpose spend authorizations; legacy ticket
+session balances are funding internals and cannot authorize broker work.
 
 ## The problem this solves
 
@@ -95,7 +96,7 @@ combination of:
 See [`../../livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md)
 for the wire-level spec.
 
-### The `CreatePayment` / `ProcessPayment` API
+### The payment and authorization API
 
 Before (suite):
 
@@ -105,7 +106,7 @@ CreatePayment(recipient, accepted_price, funding, ticket_params_base_url)
 ProcessPayment(payment_bytes, work_id)
 ```
 
-After (rewrite):
+After the workload-agnostic string rewrite:
 
 ```
 CreatePayment(recipient,
@@ -118,6 +119,22 @@ ProcessPayment(payment_bytes,
 
 Anything that was an enum on the daemon API is now a string. Anything new is
 load-bearing for the broker's routing-refusal check.
+
+Current authorization-only workload flow:
+
+```
+CreateSpendAuthorization(route, request_or_session_scope,
+                         accepted_price, maximum_debit)
+CreatePayment(account_funding_target, observed_account_balance,
+              funding_ceiling) // only when a shortfall exists
+AdmitAuthorization(authorization, optional_payment, reservation)
+AdvanceAuthorization(authorization_id, cumulative_units,
+                     target_reserved_runway) // sessions
+SettleAuthorization(authorization_id, actual_units)
+```
+
+`ProcessPayment` remains an internal ticket-crediting primitive used by
+account funding. It is not a broker workload-admission API.
 
 ## Why this is safe
 

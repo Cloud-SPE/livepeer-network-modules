@@ -1,7 +1,7 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.1.0-draft
-last_updated: 2026-09-08
+spec_version: 1.2.0-draft
+last_updated: 2026-09-11
 ---
 
 # Livepeer wire headers
@@ -32,8 +32,8 @@ Out of scope:
 |---|---|---|---|---|
 | `Livepeer-Capability` | request → broker | yes | gateway | broker, payment-daemon |
 | `Livepeer-Offering` | request → broker | yes | gateway | broker, payment-daemon |
-| `Livepeer-Payment` | request → broker | legacy path; optional account top-up | gateway (via payment-daemon sender) | broker (via payment-daemon receiver) |
-| `Livepeer-Authorization` | request → broker | account-funded requests | payer (via payment-daemon sender) | broker, payment-daemon receiver |
+| `Livepeer-Payment` | request → broker | optional account funding | payer (via payment-daemon sender) | broker (via payment-daemon receiver) |
+| `Livepeer-Authorization` | request → broker | every paid workload request | payer (via payment-daemon sender) | broker, payment-daemon receiver |
 | `Livepeer-Caller-Proof` | request → broker | when authorization binds `caller_public_key` | delegated caller | broker |
 | `Livepeer-Protocol` | request → broker | yes | gateway | broker |
 | `Livepeer-Request-Id` | request → broker | yes | gateway | broker (idempotency key; echoed back) |
@@ -91,15 +91,15 @@ Behavior:
 - The envelope's wire shape is owned by `payment-daemon`; the protobuf definition
   lives there. This document references it; do not duplicate.
 
-On an account-funded request carrying `Livepeer-Authorization`, this header is
-optional when the stable payer-payee account already has enough available
-value. When present it funds only the account shortfall; it does not define the
-engagement's maximum authority.
+This header is valid at the dedicated account-funding endpoint or as optional
+shortfall funding alongside `Livepeer-Authorization`. It never authorizes a
+workload by itself. A paid workload request carrying only this header MUST fail
+before tickets are processed or work is dispatched.
 
 ### `Livepeer-Authorization`
 
-Base64-encoded `livepeer.payments.v1.SpendAuthorization`. Required for the
-wholesale-account path defined in
+Base64-encoded `livepeer.payments.v1.SpendAuthorization`. Required for every
+paid job, session open, and session authorization revision under
 [`wholesale-account.md`](../protocols/wholesale-account.md).
 
 It grants one request or logical session a bounded debit from a stable
@@ -148,20 +148,6 @@ content is `request_id_reuse`.
 - **Example:** `Livepeer-Request-Id: 550e8400-e29b-41d4-a716-446655440000`
 - The broker MUST echo the value in response headers and SHOULD emit it in
   logs and metrics labels.
-
-### `Livepeer-Rebind-From`
-
-Optional, `paid-session/v1` top-up only. Declares a recipient rotation: the
-value is the `work_id` the session is moving **off**. Present only on the
-retry after a `recipient_rotated` refusal.
-
-A rebind is declared, never inferred from a payment whose identity differs
-from the session's — see paid-session §3.3.1 for the three rules a broker
-verifies before moving a session, and for why inference is unsafe.
-
-- **Example:** `Livepeer-Rebind-From: b3d1f0…c47a`
-- The control-WS mirror carries the same value as `rebind_from` in the
-  `session.topup` frame, since a frame has no headers.
 
 ### `Livepeer-Backoff`
 
@@ -342,16 +328,15 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `offering_not_served` | 404 | The capability is served but the requested offering is not. |
 | `payment_envelope_mismatch` | 401 | `Livepeer-Payment` envelope contents disagree with header values. |
 | `payment_invalid` | 401 | Ticket failed validation (signature, replay, insufficient face value). |
+| `authorization_required` | 401 | A paid workload request omitted `Livepeer-Authorization`. A payment ticket cannot substitute for workload authority. |
 | `protocol_unsupported` | 505 | Broker does not implement the requested `Livepeer-Protocol` for this capability. |
 | `protocol_transport_unsupported` | 400 | The request selected a transport the offering does not declare (paid-job §2). |
 | `job_in_flight` | 409 | Retry of a request id whose original exchange is still executing (paid-job §4). Retryable. |
 | `request_id_reuse` | 400 | Request id replayed with different capability, offering, envelope, or body (paid-job §4; paid-session §3.1 opens and §3.3 top-ups). |
 | `gateway_session_id_reuse` | 409 | Session open declared a `gateway_session_id` already bound to a retained session. The id is the settlement query's only consumer-issued key, so it must resolve to exactly one session; accepting a duplicate breaks the lookup for both. Choose an unused id — no retry of the same open succeeds. |
-| `accounting_pending` | 202 | The exchange was delivered but its debit has not landed and is being retried. Distinct from a job still running: nothing further is expected from the backend, only from the ledger. It will reach a terminal settlement — signed once the debit lands, or `DEBIT_FAILED` on retry exhaustion (paid-job §5.2). Hold the encumbrance; do not book or write off. |
-| `ambiguous_identifier` | 409 | A settlement query key matches more than one session — a `work_id` shared across sessions on one ticket session. Returning one would be a valid signature for the wrong session. Re-query by `gateway_session_id` or `session_id`. |
+| `accounting_pending` | 202 | Work completed but authorization settlement is uncertain and is being durably retried. Hold the encumbrance; do not book, release, or write it off. |
+| `ambiguous_identifier` | 409 | A historical lookup key matches more than one retained pre-authorization session. Re-query by `gateway_session_id` or `session_id`; new authorization IDs are single-purpose. |
 | `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
-| `recipient_rotated` | 409 | The payee rotated its recipient rand, so every ticket in the batch was rejected. Mechanical remedy: re-fetch ticket params, re-mint, retry — for a session, declaring `Livepeer-Rebind-From` (paid-session §3.3.1). |
-| `rebind_refused` | 409 | A declared rotation rebind the broker would not perform: wrong predecessor, a successor that did not credit, a different sender, or a rotation bound reached (paid-session §3.3.1). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
 | `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
 | `insufficient_balance` | 402 | The payer's balance does not cover the work. Emitted **before** the backend runs when the credited balance cannot cover one work unit (paid-job §4.5), and mid-flight when a long-running session's runway runs out. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
@@ -381,7 +366,7 @@ Error responses SHOULD include a JSON body with at minimum:
 - HTTP headers are case-insensitive (RFC 7230). Implementations SHOULD emit the
   canonical mixed-case form (`Livepeer-Capability`) and accept any case on read.
 - No required ordering. The five required request headers (`Livepeer-Capability`,
-  `Livepeer-Offering`, `Livepeer-Payment`, `Livepeer-Protocol`,
+  `Livepeer-Offering`, `Livepeer-Authorization`, `Livepeer-Protocol`,
   `Livepeer-Request-Id`) MUST all be present on any paid request.
 
 ## Forwarding behavior (broker → backend)

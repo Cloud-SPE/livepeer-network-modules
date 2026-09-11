@@ -3,7 +3,6 @@ package payment
 import (
 	"context"
 	"errors"
-	"math/big"
 
 	"google.golang.org/grpc/status"
 
@@ -46,13 +45,6 @@ func (m *metered) GetTicketParams(ctx context.Context, req GetTicketParamsReques
 func (m *metered) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error) {
 	done := observability.StartPaymentClientCall("open_session")
 	res, err := m.inner.OpenSession(ctx, req)
-	done(resultLabel(err))
-	return res, err
-}
-
-func (m *metered) ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResult, error) {
-	done := observability.StartPaymentClientCall("process_payment")
-	res, err := m.inner.ProcessPayment(ctx, req)
 	done(resultLabel(err))
 	return res, err
 }
@@ -135,34 +127,6 @@ func (m *metered) GetSpendAuthorization(ctx context.Context, payer []byte, autho
 	res, err := a.GetSpendAuthorization(ctx, payer, authorizationID)
 	done(resultLabel(err))
 	return res, err
-}
-
-func (m *metered) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
-	done := observability.StartPaymentClientCall("debit_balance")
-	res, err := m.inner.DebitBalance(ctx, req)
-	done(resultLabel(err))
-	return res, err
-}
-
-func (m *metered) SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error) {
-	done := observability.StartPaymentClientCall("sufficient_balance")
-	res, err := m.inner.SufficientBalance(ctx, req)
-	done(resultLabel(err))
-	return res, err
-}
-
-func (m *metered) GetBalance(ctx context.Context, sender []byte, workID string) (*big.Int, error) {
-	done := observability.StartPaymentClientCall("get_balance")
-	res, err := m.inner.GetBalance(ctx, sender, workID)
-	done(resultLabel(err))
-	return res, err
-}
-
-func (m *metered) CloseSession(ctx context.Context, sender []byte, workID string) error {
-	done := observability.StartPaymentClientCall("close_session")
-	err := m.inner.CloseSession(ctx, sender, workID)
-	done(resultLabel(err))
-	return err
 }
 
 // Compile-time interface check.

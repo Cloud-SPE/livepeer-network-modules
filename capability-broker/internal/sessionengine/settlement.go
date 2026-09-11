@@ -12,12 +12,10 @@ import (
 
 // Settlement for paid-session/v1.
 //
-// A job settles in one exchange against one payment identity, so its
-// record is built from the payment envelope alone. A session outlives
-// many payments and may change identity mid-flight, so its record is
-// built from the broker's own durable state: the cumulative totals it
-// kept, the generation chain a rotation left behind, and the price the
-// session was pinned to at open.
+// A session settlement is built from the broker's durable cumulative usage,
+// authorization, account result, and quote binding. Ticket-funding generation
+// state is deliberately absent: it funds the aggregate account and neither
+// identifies nor authorizes this workload.
 //
 // The authoritative billing quantity is cumulative debited_units — what
 // the ledger moved — not claimed_units, which is only what a runner
@@ -43,20 +41,12 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		perUnits = 1
 	}
 
-	// One ceiling over the cumulative total — never a sum of
-	// per-generation ceilings, which would reintroduce the per-chunk
-	// rounding drift the cumulative rule exists to prevent.
-	// What the ledger charged, summed across this session's debits. A
-	// ceiling recomputed over the session's own total is right only when
-	// the payment session is not shared — and it is shared whenever a
-	// gateway mints more than once from one ticket session.
+	// One ceiling over the cumulative total — never a sum of per-event
+	// ceilings, which would reintroduce rounding drift.
 	billed := payment.BillFor(amount, perUnits, rec.DebitedTotal)
 	if v, ok := new(big.Int).SetString(rec.BilledWei, 10); ok && v != nil && v.Sign() > 0 {
 		billed = v
 	}
-	generationUnits := rec.DebitedTotal - rec.GenerationStartUnits
-	generationBilled := new(big.Int).Sub(billed, payment.BillFor(amount, perUnits, rec.GenerationStartUnits))
-
 	out := &pb.SettlementRecord{
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               rec.QuoteID,
@@ -73,23 +63,12 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		// The consumer's own identifier. session_id is broker-local and
 		// work_id can be shared, so this is the only field that binds a
 		// record to the session a clearinghouse issued.
-		GatewaySessionId:   rec.GatewaySessionID,
-		WorkId:             rec.WorkID,
-		PredecessorWorkId:  rec.PredecessorWorkID,
-		RotationGeneration: rec.RotationGeneration,
+		GatewaySessionId: rec.GatewaySessionID,
+		WorkId:           rec.AccountAuthorizationID,
 
-		ClaimedUnits: rec.ClaimedTotal,
-		DebitedUnits: rec.DebitedTotal,
-		// Where this session's last debit landed on the shared identity's
-		// curve. Not this session's total — see the proto comment for
-		// what it does and does not let a reader verify.
-		PaymentCumulativeUnits: rec.PaymentCumulativeUnits,
-
-		GenerationDebitedUnits:   generationUnits,
-		GenerationBilledValueWei: &pb.BigUInt{Value: generationBilled.Bytes()},
-
-		FundedValueWei:           &pb.BigUInt{Value: decimalBytes(rec.FundedWei)},
-		GenerationFundedValueWei: &pb.BigUInt{Value: decimalBytes(rec.GenerationFundedWei)},
+		ClaimedUnits:   rec.ClaimedTotal,
+		DebitedUnits:   rec.DebitedTotal,
+		FundedValueWei: &pb.BigUInt{Value: decimalBytes(rec.FundedWei)},
 
 		AmountWei: &pb.BigUInt{Value: amount.Bytes()},
 		PerUnits:  perUnits,
@@ -103,6 +82,7 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		out.AuthorizedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationMaxDebitWei)}
 		out.ReservedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReservedWei)}
 		out.ReleasedValueWei = &pb.BigUInt{Value: decimalBytes(rec.AuthorizationReleasedWei)}
+		out.AccountFundingValueWei = &pb.BigUInt{Value: decimalBytes(rec.FundedWei)}
 	}
 	breakdown := make(map[string]string, 4)
 	if rec.CloseReason != "" {
@@ -129,11 +109,8 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 	return out
 }
 
-// RecordSettlement stamps a session's settlement, advancing the
-// per-session sequence. settlement_seq is monotonic per session_id, not
-// per work_id: a rotation mints a new work_id, and a per-identity
-// counter would restart mid-session and leave a reader unable to order
-// two records from one session.
+// RecordSettlement stamps a session's settlement, advancing the per-session
+// sequence. Authorization revisions do not reset this sequence.
 func (e *Engine) RecordSettlement(ctx context.Context, sessionID string) (*pb.SettlementRecord, error) {
 	mu := e.sessionMu(sessionID)
 	mu.Lock()

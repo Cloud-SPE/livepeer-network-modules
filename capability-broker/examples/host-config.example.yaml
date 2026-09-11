@@ -436,7 +436,6 @@ offers:
   #     refill: extensible
   #     lease_policy: funding-tracking
   #     heartbeat: { interval_seconds: 10, missed_threshold: 3 }
-  #     max_rotations: 3
   #   certification:
   #     - { name: ready, type: readiness }
   #     - name: open

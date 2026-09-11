@@ -157,7 +157,6 @@ func sessionPolicyFor(tmpl templates.Template) *brokeradmin.OfferPushSessionPoli
 		LeaseMaxSeconds:      p.LeaseMaxSeconds,
 		BurnRatePerSec:       p.BurnRatePerSec,
 		MinRunwayUnits:       p.MinRunwayUnits,
-		MaxRotations:         p.MaxRotations,
 		ToleranceBandPct:     p.ToleranceBandPct,
 		RunwayIncrementUnits: p.RunwayIncrementUnits,
 	}

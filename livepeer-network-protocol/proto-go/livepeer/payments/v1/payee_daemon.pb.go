@@ -2,9 +2,10 @@
 //
 // The PayeeDaemon runs next to a payee application — a Livepeer
 // orchestrator or any consumer app accepting payment for work. It
-// validates incoming payment blobs, tracks per-(sender, work_id)
-// balances, and (post chain integration) redeems winning tickets
-// on-chain via the TicketBroker.
+// validates incoming payment blobs, funds stable payer-payee wholesale
+// accounts, enforces single-purpose spend authorizations, and redeems winning
+// tickets on-chain via the TicketBroker. Per-(sender, work_id) balances are a
+// legacy ticket-crediting implementation detail and MUST NOT authorize work.
 //
 // Mounted only when the daemon is started with `--mode=receiver`.
 // Calls to it in sender mode return UNIMPLEMENTED.

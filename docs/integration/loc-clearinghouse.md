@@ -1,108 +1,117 @@
-# LOC — what to change
+# Clearinghouse integration
 
-You verify signed evidence and decide what a customer is charged. This
-is what the broker gives you and what it deliberately does not.
+A clearinghouse is the wholesale payer and settlement consumer while an end
+user may invoke the broker directly. The clearinghouse owns account funding,
+route selection, spend authorization, and reconciliation; it does not need to
+proxy workload bytes.
 
-## 1. Verifying a settlement
+## 1. Fund aggregate wholesale float
 
-`Livepeer-Settlement` is base64 of `{payload, signature}`. The payload is
-JCS-canonical JSON of a `SettlementRecord`; the signature is EIP-191
-secp256k1 over **those exact bytes**.
+Maintain a bounded target balance for each stable
+`(chain, payer, payee, denomination)` account. Query the selected broker's
+TLS-bound account view, calculate:
 
-Verify over the payload **as received**, never over a re-serialization —
-re-encoding silently repairs a broker that does not canonicalize, which
-is the thing the canonical form exists to catch. Use
-`livepeer-network-protocol/verify`, which is the same code the
-conformance suite uses.
+```text
+shortfall = max(0, target_available - observed_available)
+```
 
-The recovered signer must be a key the orch's manifest delegates in
-`settlement_keys`, with a validity window containing `issued_at`.
+and mint only that shortfall. Fund through
+`POST /v1/payment/account/fund`, or attach the shortfall payment to a valid
+authorization. Tickets are account-funding instruments. They are not tied to
+one end user, request maximum, capability, or session, and they never authorize
+work.
 
-## 2. Binding a record to your job
+The target float is an operating policy based on expected aggregate burn,
+replenishment latency, concurrency, route-exit tolerance, and acceptable
+service interruption. It should not grow with the maximum token or media
+duration declared by every request.
 
-| Path | Bind on |
+## 2. Authorize one invocation
+
+After route and quote selection, mint a single-purpose
+`SpendAuthorization`. For a job, bind the caller-selected
+`Livepeer-Request-Id` and exact request digest. For a session, bind the
+globally unique `gateway_session_id`, exact open digest, cumulative maximum,
+and optional delegated caller key.
+
+The user receives the broker URL and authorization. If the authorization has a
+`caller_public_key`, the user proves possession on each invocation with
+`Livepeer-Caller-Proof`. A raw HTTP implementation is allowed; the SDK only
+constructs and reports the same protocol messages.
+
+Every successor session authorization names its predecessor. A payment alone,
+an old authorization, or a generic bearer credential cannot start unrelated
+work.
+
+## 3. Bind settlement to clearinghouse state
+
+Verify the broker's signed `SettlementRecord` using the delegated settlement
+key from the signed registry manifest. Verify the received canonical payload;
+do not repair or re-serialize it before signature verification.
+
+| Path | Clearinghouse binding |
 |---|---|
-| paid-job | `request_id` — the id **you** issued, signed into the record |
-| paid-session | `gateway_session_id` — same principle |
+| paid job | `request_id` and `authorization_id` |
+| paid session | `gateway_session_id` and current authorization chain |
 
-`job_id` and `session_id` are broker-minted and reach you through the
-customer's SDK, which is the channel the signature exists to distrust.
-`work_id` is shared across every exchange on one ticket session.
+`job_id` and `session_id` are broker identifiers useful for lookup.
+`work_id` carries the authorization ID in authorization-only settlements; it
+is not a shared ticket-session account.
 
-`gateway_session_id` must be globally unique and ≥96 bits of CSPRNG
-entropy; a UUIDv4 qualifies. It is collision and enumeration resistance,
-not authentication.
+Also require the pinned `accepted_quote_ref`, route fingerprint, capability,
+offering, work unit, payer, payee, chain, denomination, and account version to
+match the clearinghouse record.
 
-## 3. Billing arithmetic
+## 4. Reconcile wholesale and retail independently
 
-- **paid-job:** verify as
-  `bill(payment_cumulative_units) - bill(payment_cumulative_units - debited_units)`.
-- **paid-session:** the signed `billed_value_wei` is authoritative. Two
-  sessions interleaving on one identity do not occupy contiguous
-  stretches of the curve, so it cannot be recomputed from the record.
-- `debited_units` is the billing quantity and is scoped to the exchange
-  (job) or the session. `actual_units` is what was measured.
+The broker's `billed_value_wei` and `debited_units` describe wholesale
+settlement against the stable payer-payee account. Verify billed value using
+the pinned cumulative price curve. Funding, reservation, debit, and release
+are separate quantities; neither a large authorization maximum nor a funding
+ticket is customer usage.
 
-## 4. Terminal outcomes
+Retail USD billing is a separate clearinghouse ledger. Apply the product's
+retail rate, minimum, discounts, and customer balance to the independently
+recorded retail usage. Reconcile that customer record to the wholesale
+`request_id` or `gateway_session_id`; never make the orchestrator's account
+key customer-specific.
 
-| Evidence | Outcome |
-|---|---|
-| valid signed settlement | settle on it |
-| no terminal evidence | remain unresolved |
-| your operational deadline passes with none | conservative full charge, marked as such |
-| signed non-admission | retain as audit evidence |
+## 5. Reconcile without trusting callback delivery
 
-**There is no automatic refund**, and the reason is worth carrying in
-your code comments: `Livepeer-Request-Id` is not cryptographically bound
-into `payment_bytes`, so a non-admission record does not retire the
-envelope. The same envelope can be presented under a different request
-id, and a governance increase to `ticketValidityPeriod` can revive it
-after the record was signed.
-
-## 5. Expiry is conditional
-
-`CreatePayment` returns `creation_round`, `expires_after_round`
-(`creation_round + period - 1`, the last redeemable round) and the
-`ticket_validity_period` those came from, plus an `observed_at`.
-`GetDepositInfo` returns `current_round` from the same clock and the
-chain's current period, read fresh.
-
-```
-not currently spendable  iff  current_round > expires_after_round
-                         and  the period is unchanged
-```
-
-Equality stays encumbered. Missing, zero or regressing values stay
-encumbered. Compare the recorded period against the chain's to **detect**
-a governance change — it is telemetry, not a trigger to re-encumber,
-which is not implementable once credit has moved.
-
-## 6. Reconciling without the customer
-
-```
+```text
 GET /v1/exchange/{request_id}
+GET /v1/settlement/{job_id-or-session-id}
 POST /v1/non-admission/{request_id}
+POST /v1/payment/account
 ```
 
-The first returns the outcome keyed on your own id — see the gateway
-guide for the table. Use it **before** applying a conservative charge:
-the broker may hold a settlement the customer withheld.
+Response trailers, SDK callbacks, and user reports are latency optimizations.
+The clearinghouse can query the locked broker directly using identifiers it
+issued.
 
-The second returns a signed `NOT_ADMITTED` record. It requires full
-context — protocol, work id, sender, recipient, quote id and version,
-both fingerprints, and `job_issued_at` — and refuses if any field is
-missing or malformed. It also refuses when the broker's own records
-begin after your job was issued (`coverage_gap`), or when the request
-turns out to have been admitted (in which case it returns the outcome
-rather than a bare refusal).
+- A valid terminal settlement releases the authorization encumbrance and is
+  booked exactly once.
+- `accounting_pending` remains encumbered and is polled; absence is not zero
+  usage.
+- A signed `expired_unused`/non-admission outcome for the same authorization
+  permits release of that unused authorization hold.
+- A missing or unverifiable outcome remains unresolved under clearinghouse
+  policy; it must not be silently rewritten as settled.
 
-`coverage_started_at` is an **attributable broker assertion, not proof of
-uninterrupted storage**. It detects a wiped store, because a fresh one
-re-stamps it. It does not detect a restored backup. If you want rollback
-resistance, the anchor has to live outside the broker's store.
+Ticket expiry is relevant only to funding-intent reconciliation. It does not
+decide whether a workload authorization was admitted or settled.
 
-## 7. Sidecar topology
+## 6. Restart and route change
 
-The payer sender and the registry resolver are meant to run co-located
-with you over unix sockets, not exposed over a network — they are
-trusted interfaces. `--socket` on both.
+Persist selected quote bindings, authorization bytes and predecessor chain,
+request/session IDs, account observations, and the highest accepted settlement
+version before handing authority to a user.
+
+After restart, recover by querying the broker and payer daemon. Do not mint a
+second authorization for uncertain work until the first authorization's state
+is known. Stop funding a route before deselection, drain admitted work, and
+consume its bounded residual float where practical; v1 does not promise
+cross-payee transfer or automatic cash refund.
+
+The payer sender and registry resolver are trusted sidecars intended for
+co-location over Unix sockets, not public network exposure.

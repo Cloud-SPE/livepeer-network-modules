@@ -14,16 +14,12 @@ import (
 // OpenSession mints a session whose recipient rand the sender never saw,
 // and every ticket in the payment fails validation against it.
 //
-// This lives here, not in a caller, because both protocols depend on the
-// same derivation: paid-job through the payment middleware and
-// paid-session through the session engine. They disagreed once — the
-// session path minted a UUID — and the disagreement was invisible
-// until it reached a real payee daemon.
+// Workload admission no longer uses this identity. It remains relevant only
+// while validating a funding ticket generation before moving credited value
+// into the stable payer-payee account.
 //
-// Returns ("", false) for legacy mock/stub payment blobs that carry no
-// ticket params. Callers fall back to the request id, which keeps
-// in-process stubs and fixtures working; a payment that cannot be parsed
-// has no payee session to collide with anyway.
+// Returns ("", false) for malformed or opaque payment blobs that carry no
+// ticket params.
 func DerivePayeeWorkID(paymentBytes []byte) (string, bool) {
 	var pay pb.Payment
 	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {

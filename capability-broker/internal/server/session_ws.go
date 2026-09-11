@@ -1,18 +1,25 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"log"
+	"math/big"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/proto"
 )
 
 // Control-WS binding (paid-session/v1 §8): an optional push mirror of
@@ -159,20 +166,59 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 	}
 	switch f.Type {
 	case "session.topup":
-		hdr, _ := f.Body["payment_header"].(string)
-		paymentBytes, err := base64.StdEncoding.DecodeString(hdr)
-		if err != nil || len(paymentBytes) == 0 {
-			fail("payment_invalid", "body.payment_header must be base64 payment bytes")
-			return
-		}
 		// The WS is a mirror of the HTTP verb, so it carries the same
 		// idempotency key — in-frame, since a frame has no headers. A
 		// gateway that reconnects and re-sends must not fund twice.
 		requestID, _ := f.Body["request_id"].(string)
-		// A declared rotation rebind, when the gateway is retrying after
-		// its payee rotated. Absent on every ordinary top-up.
-		rebindFrom, _ := f.Body["rebind_from"].(string)
-		res, err := s.sessionEngine.TopUpRebind(ctx, sessionID, requestID, rebindFrom, paymentBytes)
+		if requestID == "" {
+			fail("request_id_required", "body.request_id is required")
+			return
+		}
+		authHeader, _ := f.Body["authorization_header"].(string)
+		authorizationBytes, err := base64.StdEncoding.DecodeString(authHeader)
+		if err != nil || len(authorizationBytes) == 0 {
+			fail(livepeerheader.ErrAuthorizationRequired, "body.authorization_header must be a base64 Livepeer-Authorization")
+			return
+		}
+		var paymentBytes []byte
+		if hdr, _ := f.Body["payment_header"].(string); hdr != "" {
+			paymentBytes, err = base64.StdEncoding.DecodeString(hdr)
+			if err != nil {
+				fail("payment_invalid", "body.payment_header must be base64 payment bytes")
+				return
+			}
+		}
+		rec, err := s.sessionStore.Get(sessionID)
+		if err != nil {
+			fail("session_not_found", err.Error())
+			return
+		}
+		var auth paymentsv1.SpendAuthorization
+		if proto.Unmarshal(authorizationBytes, &auth) != nil || auth.GetPayload() == nil {
+			fail("payment_invalid", "authorization revision is malformed")
+			return
+		}
+		p := auth.GetPayload()
+		spec := s.specForRecord(rec)
+		emptyDigest := sha256.Sum256(nil)
+		if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") || !bytes.Equal(p.GetRequestDigest(), emptyDigest[:]) {
+			fail(livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session.topup")
+			return
+		}
+		price := p.GetAcceptedPrice()
+		wantPer := spec.PerUnits
+		if wantPer == 0 {
+			wantPer = 1
+		}
+		if price == nil || price.GetCapability() != rec.Capability || price.GetOffering() != rec.Offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
+			fail(livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision price does not match session")
+			return
+		}
+		if err := middleware.ValidateCallerProof(authorizationBytes, p.GetCallerPublicKey(), stringValue(f.Body["caller_proof"])); err != nil {
+			fail("payment_invalid", err.Error())
+			return
+		}
+		res, err := s.sessionEngine.ReviseAuthorization(ctx, sessionID, requestID, authorizationBytes, paymentBytes, sessionRunwayReservation(p, spec))
 		if err != nil {
 			fail(sessionErrCode(err), err.Error())
 			return
@@ -196,6 +242,11 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 	default:
 		fail("unknown_frame", "unsupported frame type "+f.Type)
 	}
+}
+
+func stringValue(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 // sessionErrCode maps engine errors to stable frame codes.

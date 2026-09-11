@@ -274,11 +274,6 @@
           ],
           "description": "Origin of the seller's usage claims: runner events. The only value since offering-axes 1.0.8 \u2014 no session traffic transits the broker."
         },
-        "max_rotations": {
-          "type": "integer",
-          "minimum": 0,
-          "description": "Cap on how many times a session may be rebound onto a rotated payment identity (protocols/paid-session.md \u00a73.3.1). Absent or 0 means the default, 3. Consumers gate on nothing here; it is the broker's own bound, advertised so an operator can see it. Note a 'bounded' offering cannot survive a rotation at all \u2014 its successor identity starts at a zero balance."
-        },
         "refill": {
           "enum": [
             "extensible",

@@ -1,768 +1,258 @@
 ---
-spec_name: paid-session
-version: 1.2.1-draft
+title: Paid Session Protocol
+version: 1.3.0-draft
 status: draft
-last_updated: 2026-09-09
+last_updated: 2026-09-11
 ---
 
-# Protocol: `paid-session/v1`
+# Paid Session Protocol
 
-A long-lived paid engagement: the gateway opens a session with the broker,
-the broker binds a runner-owned runtime and becomes the durable authority for
-that session's payment, lease, and lifecycle, and usage flows back as claims
-until the session ends. Media and workload data never transit the broker.
+`paid-session/v1` governs long-lived, metered workloads such as live video,
+rooms, realtime inference, and interactive media. It is workload-agnostic: the
+runner descriptor defines how the caller reaches the workload; this protocol
+defines authority, accounting, lifecycle, replay, and recovery.
 
-`paid-session/v1` replaces every session-family interaction mode
-(`ws-realtime@v0`, `rtmp-ingress-hls-egress@v0`, `session-control-plus-media@v0`,
-`live-session-remote-runner@v0`, `live-session-gateway-ingest@v0`). What the
-runtime *is* — an SFU room, an RTMP ingest, a generative-video scope — lives
-entirely in the session's [runtime descriptor](./runtime-descriptor.md)
-schema, never in the protocol.
+## 1. Roles and invariants
 
-Durability is not an extension. A broker that cannot survive its own restart
-without orphaning runners and stranding customer balances does not implement
-this protocol.
+- The provider or clearinghouse is the payer and wholesale-account owner.
+- The orchestrator is the payee and runs the broker, payment daemon, and runner.
+- The workload caller may be distinct from the payer. A caller proof delegates
+  invocation without delegating ticket minting or account ownership.
+- Tickets add expected value to the stable payer-payee account. They never
+  authorize a workload.
+- Every open and refill carries a signed, single-purpose
+  `Livepeer-Authorization`. `Livepeer-Payment` is optional shortfall funding.
+- Admission atomically reserves the authorization maximum. Usage debits the
+  reservation; settlement releases unused value to the aggregate account.
+- No offer flag negotiates this behavior and no payment-only compatibility path
+  exists.
 
-The key words MUST, MUST NOT, SHOULD, and MAY are to be interpreted as in
-RFC 2119.
+The authorization and account wire objects are defined by
+[`wholesale-account.md`](./wholesale-account.md). Header encoding and stable
+errors are defined by [`livepeer-headers.md`](../headers/livepeer-headers.md).
 
-## 1. Roles and trust context
+## 2. Offering contract
 
-Per the trust-model doc, both sides meter and neither trusts the other's
-meter:
+An offering uses `protocol: paid-session/v1` and declares one canonical work
+unit and price. `session_policy` defines attachment, refill, lease, runway, and
+heartbeat behavior. Account authorization is implicit for every paid offering;
+operators MUST NOT advertise `extra.features.wholesale_accounts` as a feature
+switch.
 
-- The **broker** is the seller's edge: it validates payment before binding a
-  runtime, converts the runner's cumulative usage claims into debits, and
-  fails closed — no funded runway, no running runtime.
-- The **gateway** is the buyer's edge: it holds the session's admission
-  grants, meters attach/join/duration at its own edge, bills its customers
-  from that signal, and treats broker/runner usage strictly as claims for
-  runway accounting and divergence detection.
-- The **runner** owns the runtime and is the source of usage claims. It never
-  talks to the payment layer.
+The accepted authorization price MUST exactly match the selected offering:
+capability, offering, work-unit name, price amount, denominator, and quote
+reference. Price or route mismatch fails before account or runner effects.
 
-The exposure bound is structural: a gateway funds runway in increments, so a
-dishonest counterparty is worth at most the outstanding increment before the
-tolerance band trips and funding stops.
-
-## 2. Session lifecycle
-
-```
-open ──► active ──► winding_down ──► ended
-  │         │                          ▲
-  └─────────┴──────── failed ──────────┘
-```
-
-- `active` — runtime bound, lease current, claims flowing.
-- `winding_down` — terminal path entered (end requested, runway exhausted,
-  heartbeat breach, refill refused); runtime termination and payment close in
-  progress.
-- `ended` / `failed` — terminal, with a stable `close_reason`. Terminal
-  session records MUST remain queryable for an operator-configured retention
-  window, then be evicted; the store is bounded.
-
-## 3. Gateway ↔ broker wire shape
-
-A session carries **two identifiers, and only one of them is authoritative
-for money.**
-
-- **`work_id` — the payment identity.** It MUST be the hex-encoded
-  `recipient_rand_hash` the payee issued with the `TicketParams` that the
-  payment's tickets were minted against. A broker MUST NOT mint one of its
-  own: the payee daemon binds both its session and its recipient rand to
-  that value, so any other identifier binds the session to a rand the
-  sender never saw, and no ticket in the payment can validate against it.
-  `work_id` is the key for the payee lifecycle (`OpenSession`,
-  `ProcessPayment`, `DebitBalance`, `CloseSession`), the public lookup key
-  for a clearinghouse, and what a settlement record binds.
-
-- **`session_id` — an opaque broker-local resource id.** It addresses the
-  session on the broker's own surface (`/v1/session/{id}`) and correlates
-  logs. It is never a payment key, and a payee daemon never sees it.
-
-The same rule holds for `paid-job/v1`; it is stated here because a session
-outlives many payments and the temptation to mint a stable local id and
-bill against it is strongest.
+## 3. Gateway-broker wire contract
 
 ### 3.1 Open
 
-`POST /v1/session`
+`POST /v1/session` requires:
 
-Required headers: `Livepeer-Protocol: paid-session/v1`, `Livepeer-Capability`,
-`Livepeer-Offering`, and `Livepeer-Request-Id`. The legacy path requires
-`Livepeer-Payment`. The wholesale-account path requires
-`Livepeer-Authorization` and carries `Livepeer-Payment` only for an account
-shortfall; see [`wholesale-account.md`](./wholesale-account.md).
+- `Livepeer-Capability`
+- `Livepeer-Offering`
+- `Livepeer-Protocol: paid-session/v1`
+- `Livepeer-Request-Id`
+- `Livepeer-Authorization`
+- JSON containing a non-empty, caller-issued `gateway_session_id` and
+  workload-specific `session_params`
 
-Open is idempotent on `Livepeer-Request-Id` under the same contract as
-`paid-job/v1` §4: a retried open converges on the original outcome and never
-mints a second session or a second `work_id`.
+`Livepeer-Payment` MAY accompany the request only to cover aggregate account
+shortfall. A request with payment but no authorization MUST return `401
+authorization_required` before ticket processing, capacity acquisition, or
+runner invocation.
 
-**A replay returns the *usable* outcome — credential and grants included.**
-Delivering secrets exactly once reads as good hygiene and is the wrong trade:
-a gateway whose open response was lost in flight would hold a funded session
-it can never drive, with nothing to do but wait out the lease. Re-delivery is
-bounded instead, and a broker MUST require all of:
+The authorization MUST bind the exact request body digest, request id,
+gateway-session id, protocol, capability, offering, broker URI, payer, payee,
+chain, denomination, accepted price, maximum cumulative units, and maximum
+debit. If `caller_public_key` is present, `Livepeer-Caller-Proof` MUST prove
+possession for this exact authorization.
 
-- the same `Livepeer-Request-Id`;
-- an identical open fingerprint — capability, offering, `gateway_session_id`,
-  `session_params`, and the payment envelope;
-- the payment envelope in that fingerprint is what proves the same payer: an
-  identical fingerprint means the same funded intent from the same sender, so
-  what is returned goes back to whoever bought it;
-- the exact recorded outcome, with no re-execution and no second runner
-  binding.
+Successful admission:
 
-Possession of a request id alone MUST NOT authorize credential recovery, and a
-reused id with different content is `request_id_reuse` — answering it with the
-recorded session's credential would hand a caller the keys to a session it
-never opened.
+1. verifies the envelope and optional caller proof;
+2. atomically funds any shortfall and reserves bounded runway;
+3. acquires capacity and creates the runner session;
+4. durably records authorization, quote binding, usage watermark, credential,
+   runner binding, and recovery obligations;
+5. returns `session_id`, `gateway_session_id`, `work_id`, session credential,
+   sanitized runtime descriptor, control URLs, lease, and balance view.
 
-The credential and grant secrets MUST be held encrypted at rest for the replay
-window and MUST be destroyed when the session winds down: the window is the
-session's life, and secrets outliving what they unlock is how a store becomes
-a liability.
-
-Body: `{ "gateway_session_id": "<uuid>", "session_params": { … } }` —
-`session_params` is opaque capability data, passed to the runner verbatim.
-
-A payee daemon reports ticket outcomes **in its result, not as an error**.
-If every ticket in the open payment was rejected, the open MUST fail closed
-with `payment_invalid` and the payee session MUST be closed: a session with
-no funded runway would open, then die at its first lease check, presenting
-a payment fault as a broker fault. A partially rejected batch credits what
-it credited — the resulting balance is the honest one, and §5's runway
-enforcement handles the consequences.
-
-Response (success):
-
-```json
-{
-  "session_id": "sess_01jx…",
-  "work_id": "b3d1f0…c47a",
-  "state": "active",
-  "runtime": {
-    "schema": "sfu-room/v1",
-    "public": { … },
-    "grants": [ … ]
-  },
-  "credential": "sc_9b2f…",
-  "lease": { "expires_at": "2026-08-18T21:40:00Z" },
-  "balance": { … §6 … },
-  "control": {
-    "status_url": "…/v1/session/sess_01jx…",
-    "topup_url":  "…/v1/session/sess_01jx…/topup",
-    "end_url":    "…/v1/session/sess_01jx…/end",
-    "events_ws":  "wss://…/v1/session/sess_01jx…/ws"
-  }
-}
-```
-
-Rules:
-
-- The broker MUST bind the runner session before returning success, and MUST
-  fail closed (terminate any partial binding, close payment state) on any
-  open-path failure after payment validation.
-- `runtime` is the descriptor's sanitized public view plus grants, exactly as
-  the framework spec requires: grants here, once, never again.
-- `credential` is the resumable session credential (§4).
+`work_id` equals the active `authorization_id`; it is correlation state, not a
+balance account. The stable economic owner is the payer-payee account.
 
 ### 3.2 Status
 
-`GET /v1/session/{session_id}` — authenticated by the session credential.
+`GET /v1/session/{session_id}` requires the session credential and returns the
+current public session view. At minimum it includes identifiers, state, lease,
+cumulative usage, current authorization/account balance view, runtime public
+descriptor, and output health:
 
-Returns `session_id`, `work_id`, `state`, the **identical** sanitized
-`runtime.public` (no grants, ever), `lease`, `balance`, `usage` (cumulative
-claimed units + unit name), timestamps, `output_state` (`unknown` when it has
-not been reported), optional `output_state_since` and `last_failure_code`, and
-`close_reason` when terminal.
-Served from the broker's durable session record; the broker MUST NOT need a
-synchronous runner round-trip to answer.
+- `output_state`: `waiting`, `producing`, `stalled`, or `unknown` for an older
+  runner whose state has not yet been observed;
+- optional `output_state_since`;
+- optional sanitized `last_failure_code`.
 
-### 3.3 Top-up
+Private runner material and grant secrets MUST NOT appear.
 
-`POST /v1/session/{session_id}/topup` — session credential plus a new
-`Livepeer-Payment` envelope, idempotent on `Livepeer-Request-Id`, which is
-**required**.
+### 3.3 Authorization revision (refill)
 
-Rules:
+`POST /v1/session/{session_id}/topup` requires the session credential,
+`Livepeer-Request-Id`, and a successor `Livepeer-Authorization`.
+`Livepeer-Payment` remains optional account funding.
 
-- **Replay returns the recorded outcome** — the `lease` and `balance` the
-  original call was given, not a fresh reading of state that has moved on.
-  The broker MUST NOT re-present the envelope to its payment layer on a
-  replay. The same request id with a different envelope is
-  `request_id_reuse`.
-- The replay check precedes every other check, including the terminal and
-  `refill_refused` ones: a caller retrying a top-up that succeeded gets its
-  answer back even if the session has since ended. Only a *new* request id
-  meets a refusal.
-- A retry whose envelope the payment layer reports as **already credited**
-  (every ticket rejected for nonce replay) is not a payment failure — the
-  funds landed on the first attempt. The broker returns the current lease
-  and balance, **unextended**: an envelope already spent buys no new runway.
-  This closes the window between a credit and the broker's own record of it.
+The successor MUST bind the same payer, payee, session, route, price, chain, and
+denomination; name the current `authorization_id` in
+`predecessor_authorization_id`; increment revision; and MUST NOT reduce the
+cumulative unit or debit cap. The broker atomically admits the successor before
+making it current. A bounded-refill offering returns `refill_refused`.
 
-- Credits the **existing** payee-side payment session for the same `work_id`;
-  a top-up MUST NOT create a new logical session.
-- **A successful top-up extends the lease** (§5). Funding and lifetime move
-  together; the response carries the new `lease` and `balance`.
-- If the broker will refuse further refills (winddown pending, offering cap
-  reached), it MUST have been advertising `will_refuse_next_refill: true` in
-  `balance` beforehand, and MUST refuse with `refill_refused` and a stable
-  reason — never accept payment it won't honor with lease.
+Replay is checked before current-predecessor and terminal checks. The same
+request id plus identical authorization and payment returns the recorded result
+without funding or reserving twice. The same request id with different bytes
+returns `request_id_reuse`.
 
-#### 3.3.1 Recipient rotation
-
-A payee's recipient rand anchors the payment session: tickets are signed
-against it, `work_id` is its hash, and every ticket is validated by
-recomputing that hash. When the payee rotates it — a restart that lost the
-rand, an operator reset, an exhausted nonce space — every subsequent ticket
-from the payer is rejected.
-
-**Rotation is payee-authorized, always.** A payer cannot request one and a
-broker MUST NOT perform one on a gateway's say-so. If a payer could force
-rotation it could force the nonce watermark to reset, which would make
-replay protection a payer-controlled property.
-
-**The signal.** A batch rejected in full for an invalid recipient rand MUST
-be reported as `recipient_rotated`, on both protocols. It is a distinct code
-because the remedy is mechanical and a client must be able to run it without
-matching prose: re-fetch ticket params, re-mint, retry.
-
-**A retired identity MUST take no more money.** A payee that has rotated
-away from a `work_id` MUST reject payments arriving on it — before
-validating any ticket, crediting nothing and queueing no winner — and MUST
-report that rejection as an invalid recipient rand so the signal above is
-raised. Accepting them is not a conservative choice: a retired session
-cannot be debited, so its credit buys work that can never be delivered, and
-a winning ticket banked there is redeemed on chain against a session the
-payer can never draw on. The obligation is on the payee because it is the
-only party that knows the rotation happened.
-
-The rotation retires the identity for **future** work only. Tickets already
-minted against the old rand remain valid for redemption; a rotation MUST NOT
-be used to repudiate them.
-
-**A gateway needs no rotation notice to rebind.** The predecessor to
-declare is the last `work_id` the gateway held for the session, which is
-by definition the identity the broker still has recorded — the rotation
-happened payee-side and the broker learns of it from the same refusal the
-gateway did. A gateway that lost its own state reads it back from
-`GET /v1/session/{id}`, which returns the session's current `work_id`.
-
-So `session.rebound` and the §8 socket are an optimisation, not a
-precondition: a gateway that drives sessions over HTTP and polls status
-has everything the rebind requires. This is stated because the natural
-reading of the paragraph below — that a session "moves to the rotated
-identity on a top-up that declares its predecessor" — is that you must
-have been *told* about the rotation first, and the only place you are
-told is a channel not every consumer holds.
-
-**The rebind.** A session moves to the rotated identity on an ordinary
-top-up that **declares** its predecessor (`Livepeer-Rebind-From`, or
-`rebind_from` in the §8 control frame). It is a declaration, never an
-inference from a payment whose identity differs from the session's:
-inference would absorb a caller's own mistake — retrying one session's
-top-up with another's payment — as a silent identity change.
-
-A broker MUST verify all three before rebinding, and MUST refuse with
-`rebind_refused` otherwise:
-
-1. the declared predecessor is the session's current `work_id`;
-2. the successor payment **credits** — a batch rejected in full proves
-   nothing about the successor and MUST NOT move the session;
-3. the sender the payee sealed matches the session's.
-
-(2) carries the weight: tickets minted against a fake or stale identity
-cannot validate, so a credit is proof the successor is genuine. A broker
-MUST NOT verify by requesting ticket params for the stable tuple — with no
-open ticket session that request mints a fresh rand and would itself cause a
-rotation.
-
-**What the rebind preserves.** `session_id`, the session credential, the
-grants and the runner binding are untouched; the runner is never told.
-Cumulative `claimed_units` and `debited_units` span every generation and
-never reset. `debit_seq` restarts, because exactly-once is keyed
-`(sender, work_id, debit_seq)` and the successor's sequence space is its
-own.
-
-**What it settles first.** Outstanding claimed-but-undebited units MUST be
-debited against the **predecessor** before it is closed. A rebind that
-cannot settle the predecessor MUST NOT proceed; the session winds down
-instead. Carrying unsettled work across an identity change would make the
-ledger unauditable.
-
-**Bounds.** A broker MUST bound rebinding, and both bounds end the session
-rather than refusing in place — a session whose identity is already
-rejecting payment has no way forward:
-
-- at most `session.max_rotations` (default 3) per session;
-- a rotation whose predecessor generation debited **nothing** is refused
-  immediately whatever the count: it bought no work, and funding another is
-  a loop that costs the payer and delivers nothing.
-
-The terminal reason is `payment_unrecoverable` — the consequence, not the
-mechanism.
-
-**A `refill: bounded` offering cannot survive rotation.** Its successor
-identity starts at a zero balance and the predecessor's remaining funding is
-stranded, so a rebind would mean paying twice for one session. The rebind is
-refused and the session ends at its lease.
-
-**Visibility.** A *completed* rotation is settlement-only: it is
-infrastructure recovery the customer neither caused nor can act on, and it
-MUST NOT be surfaced as a session lifecycle event. It MUST appear in the
-session's settlement record with the stable `session_id`,
-`rotation_generation`, `predecessor_work_id`, the current `work_id`, and
-cumulative continuity across generations.
-
-`gateway_session_id` MUST be globally unique across a broker's retained
-sessions — not per-payer. A consumer looking a settlement up holds only
-the id it issued, so scoping uniqueness to a tenant would require it to
-supply a second key it has no reason to hold, and would couple the broker
-to a tenant model it otherwise has none of.
-
-A producer MUST generate it with at least 96 bits of CSPRNG entropy; a
-UUIDv4 satisfies this. The broker cannot verify entropy from a value and
-does not try — this is collision and enumeration resistance, **not
-authentication**. Possession of the id is not authority over the session;
-it is only what makes the settlement query usable and its keyspace
-impractical to walk.
-
-`gateway_session_id` is REQUIRED on open. A broker MUST refuse an open
-that omits it, or sends it empty, with `invalid_request` (400) — the same
-failure a colliding one produces, reached by the other road. Enforcing
-uniqueness only when the field is present lets a client that never sends
-it open sessions indefinitely and receive settlements carrying an empty
-value for the one identifier their consumer issued itself. Two such
-clients do not even collide: the broker retains two unresolvable records
-rather than refusing one open.
-
-A session settlement MUST also carry `gateway_session_id`. It is the only
-identifier in the record that its consumer issued itself: `session_id` is
-broker-local and reaches a clearinghouse through the customer-controlled
-SDK — the channel the signature exists to distrust — and `work_id` can be
-shared by several sessions. Without it a signed record cannot be bound to
-the session it is evidence for. It MUST appear in the direct settlement
-query response too.
-
-A session settlement MUST carry the exact `accepted_quote_ref` admitted at
-open. The broker validates that reference before work starts and retains it in
-durable session state; it MUST NOT reconstruct it later from current registry
-state or accept it from runner events. The reference is unchanged by broker
-restart, top-up, or payment-identity rotation. Without it, a gateway or
-clearinghouse cannot prove that the signed debit used the route and price it
-selected, and MUST reject the record rather than guess.
-
-Carrying it is not enough: **`GET /v1/settlement/{id}` MUST resolve it.** A
-consumer that cannot look a record up by the only key it holds is left
-querying by `work_id`, which can match several sessions — and a broker that
-answers with one of them returns a correctly signed record for the wrong
-session, indistinguishable from the right one by inspection. Two
-obligations follow:
-
-- A broker MUST keep `gateway_session_id` unique across retained sessions,
-  refusing a colliding open with `gateway_session_id_reuse` (409). Accepting
-  a duplicate would break the lookup for the earlier session as well as the
-  new one, so the collision has to be refused at open rather than resolved
-  at query time.
-- A query whose key matches more than one session MUST fail with
-  `ambiguous_identifier` (409) and name a key that resolves, rather than
-  return any one of the matches.
-
-The `session.rebound` control
-message (§8) is broker↔gateway signalling, not session history. Failure is
-visible as the resulting degraded or terminal session state, never as the
-rotation itself.
-
-**Stranded balance is a known cost.** Credited-but-unspent value on a
-rotated-away `work_id` is lost to the payer: balances are per payee session
-and this spec defines no transfer between them. Fund in increments you are
-willing to strand.
+Ticket-session rotation and `Livepeer-Rebind-From` are not part of this
+contract. Funding generations are internal to the stable account and cannot
+change workload identity.
 
 ### 3.4 End
 
-`POST /v1/session/{session_id}/end` — session credential; idempotent.
-`{ "reason": "gateway_close" }`. The broker MUST terminate the runner
-session, close payment state, record the stable reason, and answer with the
-terminal state. Repeat calls return the same terminal record.
+`POST /v1/session/{session_id}/end` requires the session credential. It is
+idempotent. The broker terminates the runner, settles the active authorization
+at actual cumulative usage, releases unused reservation and capacity, writes a
+terminal state, and emits signed settlement evidence.
 
-The signed terminal `SettlementRecord.breakdown` carries the durable,
-customer-safe diagnosis available to independent reconcilers:
+### 3.5 Settlement lookup
 
-- `termination_reason` when the broker recorded a close reason;
-- `output_state` and `output_state_since` when output health was reported;
-- `last_failure_code` when the runner supplied a safe failure code.
+`GET /v1/settlement/{id}` resolves `session_id`, the unique
+`gateway_session_id`, or an unambiguous retained `work_id`. Ambiguous identifiers
+return `409 ambiguous_identifier`; the broker MUST NOT choose an arbitrary
+session.
 
-These optional keys do not affect settlement arithmetic. They are signed so a
-clearinghouse that invokes no work itself—and therefore does not hold the
-session credential—can distinguish `output_failed` from a healthy close
-without trusting an SDK callback. Older consumers ignore the map entries.
+The signed settlement includes the unchanged accepted `QuoteRef`, session and
+gateway identifiers, authorization id, cumulative actual/billed units, billed,
+reserved, released, and account-funding values, account version, terminal
+state/reason, and output-health details when present.
 
-## 4. The session credential
+## 4. Runner descriptor and grants
 
-Open returns a bearer `credential` scoped to exactly this session. Status,
-top-up, end, and the control-WS attach all require it. Properties:
+The runner creates the workload only after admission. Its descriptor schema is
+selected by the offering and validated strictly with unknown-field rejection
+and a bounded payload size. The broker exposes only the schema-defined public
+projection. Grant secrets are delivered once on the successful open response,
+may be replayed only while the original open remains replayable, and are erased
+on winddown. Restarts MUST NOT mint replacement grants.
 
-- It survives broker restart (it authenticates against the durable record,
-  stored hashed).
-- It is the *gateway's* continuity object: a gateway that restarts needs only
-  `(session_id, credential)` to resume full control — no re-derived quote
-  context, no encrypted bearer vaults, no reattach protocol.
-- It is not an admission grant: it controls the session, not the runtime.
-  Customer-facing attach credentials come from descriptor grants and are the
-  gateway's business.
-- Presenting a valid session id with an invalid credential and presenting an
-  unknown session id MUST produce indistinguishable `401` responses (no
-  existence oracle). Comparison is constant-time against the stored hash.
+## 5. Events and metering
 
-## 5. Lease and heartbeat enforcement
+Runner callbacks are authenticated and ordered by `(event_id, sequence)`.
+Events are committed atomically with their usage and output-health watermark.
+Duplicate events return the prior outcome; sequence regression, unit mismatch,
+and malformed health details change neither usage nor health.
 
-Every session carries a lease (`expires_at`) and every offering declares a
-heartbeat interval and missed-event threshold.
+For a cumulative usage total `u`, the broker calls `AdvanceAuthorization` with
+the same cumulative total and an idempotent advance sequence. Billing uses one
+cumulative ceiling:
 
-- **Lease**: the normative default is funding-tracking —
-  `expires_at = now + (runway_units ÷ declared burn rate)`, capped by an
-  operator-configured maximum, recomputed on open and on every successful
-  top-up. An offering MAY declare a different lease policy in its manifest,
-  which gateways can then read before opening; absent a declaration, the
-  default applies. A session whose lease expires enters `winding_down` with
-  reason `lease_expired` — but only after a grace window of one heartbeat
-  interval past `expires_at`, so a top-up in flight at expiry never loses the
-  race to the sweeper. Recording a timestamp is not enforcement; the broker
-  MUST run the winddown.
-- **Heartbeat**: the runner emits liveness events (§7). **Any accepted event
-  refreshes liveness** — a `session.usage.tick` counts, so a runner already
-  reporting usage inside `interval × missed_threshold` needs no separate
-  `session.heartbeat` emitter. When the missed-event threshold is exceeded
-  the broker MUST prevent an unmetered runtime from continuing: it MAY first query the runner's status path, then MUST
-  idempotently terminate the runner session, close payment state, release
-  held capacity, and record `heartbeat_lost`.
-- Winddown from **any** trigger (end, lease expiry, heartbeat loss, runway
-  exhaustion, refill refusal) runs the same idempotent terminal path with a
-  stable machine-readable reason.
-- **Precedence.** When more than one trigger is due at the same sweep,
-  `heartbeat_lost` takes precedence over `lease_expired`: a dead runner is
-  the more specific fact, and it points the operator at the runtime rather
-  than at funding.
+`bill(u) = ceil(price_amount_wei * u / per_units)`
+
+The delta from the last committed cumulative bill is debited. When the
+authorization cap is reached, the broker records the bounded total and winds
+down with `authorization_exhausted`; it never bills beyond the signed cap.
+
+Recognized output events include `session.ladder.restart` and
+`session.output.stalled`. `details.output_state` and safe
+`details.last_failure_code` persist with the same event watermark. A stalled
+event is not evidence of healthy output. Persistent stall or
+`session.failed`/`output_failed` winds the session down; `output_failed` remains
+the terminal reason rather than being rewritten to `runner_failed`.
 
 ## 6. Balance and runway
 
-The `balance` object is normative — it is the buyer's sole spec'd window into
-seller-side funding state, and drives gateway top-up loops:
+The public balance object is derived from the authorization reservation and
+account state, not a ticket-session balance. It reports sufficient information
+to distinguish account availability, current reserved value, cumulative billed
+value, cap remaining, and whether the next revision will be refused.
+
+Fixed-lease offerings may end independently of funding. Funding-tracking
+offerings clamp reserved runway to policy bounds and the signed authorization
+maximum. A payment can increase aggregate account availability but cannot
+extend authority without a valid successor authorization.
+
+## 7. Idempotency and uncertain settlement
+
+Open is idempotent on `Livepeer-Request-Id` plus the exact body,
+authorization, and optional payment. A concurrent identical open either replays
+the recorded result or returns `open_in_flight`; different content returns
+`request_id_reuse`. No duplicate account reservation or runner session may be
+created.
+
+Advance and settlement operations are idempotent. If the daemon response is
+uncertain, the broker retains the reservation and retries the same operation;
+it MUST NOT write the debit off, release the reservation, or create a second
+authorization to guess the result.
+
+## 8. Control WebSocket binding
+
+`control.events_ws` is an optional push mirror; HTTP remains authoritative.
+Attachment requires the session credential. Broker-to-caller frames include
+usage, balance, output health, state, and terminal events.
+
+The gateway-to-broker `session.topup` body requires:
 
 ```json
 {
-  "status": "ok" | "low" | "exhausted",
-  "claimed_units": 1284,
-  "debited_units": 1284,
-  "unit": "participant_minutes",
-  "runway_units": 716,
-  "runway_seconds_estimate": 430,
-  "will_refuse_next_refill": false
+  "request_id": "...",
+  "authorization_header": "<base64 SpendAuthorization>",
+  "payment_header": "<optional base64 Payment>",
+  "caller_proof": "<optional proof>"
 }
 ```
 
-`runway_seconds_estimate` is advisory; `runway_units` is arithmetic.
-`will_refuse_next_refill` is the one-refill-ahead winddown warning: a gateway
-seeing it can drain gracefully instead of discovering refusal mid-broadcast.
+The authorization request digest is SHA-256 of the empty HTTP-equivalent refill
+body. The same scope, price, predecessor, proof, replay, and bounded-refill rules
+as §3.3 apply. Payment-only frames return `authorization_required`. Every
+gateway-initiated frame receives an ack or stable error frame.
 
-## 7. Runner ↔ broker contract
+## 9. Durability, recovery, and cutover
 
-> Implementing a runner? [§11](#11-runner-obligations--the-implementers-checklist)
-> collects every obligation this protocol places on you in one table,
-> with the failure signature for each.
+Nonterminal records persist the active authorization id and caps, payer, quote
+reference, usage/billing/event watermarks, session and runner bindings,
+credentials in sealed/hashed form, output health, and settlement obligations.
+Open reservations persist enough state to undo runner creation and release an
+authorization after a crash.
 
-### 7.1 Backend paths are configuration
+On restart the broker verifies that the runner session and active authorization
+still exist. If both survive, processing resumes from durable watermarks. If
+the authorization is absent or unverifiable, the broker marks the payment
+obligation unavailable, terminates the runner, releases capacity, and reaches
+`recovery_failed`; it MUST NOT keep serving unbillable work.
 
-The broker reaches the runner via operator-configured paths declared with the
-backend — create, status, terminate — with no default URL space imposed by
-the protocol. (The old contract hard-coded `/v1/video/live/sessions`; nothing
-video-shaped survives here.) The broker authenticates to the runner with
-operator-configured credentials. On create, the broker passes
-`session_params` verbatim plus its callback coordinates; the runner's create
-response carries the runtime descriptor per the framework spec.
+This release is a hard cut. Before deployment, operators MUST stop admission,
+drain every payment-only nonterminal session and paid open reservation, and
+verify none remain. Broker startup refuses such records. Terminal legacy
+records may remain queryable through retention but cannot be resumed.
 
-Callback coordinates handed to the runner MUST be derived from operator
-configuration, never from inbound request `Host`/`X-Forwarded-Proto`
-headers.
+## 10. Minimum conformance
 
-### 7.1.1 Self-description — superseded
+A conforming implementation proves at least:
 
-> **Superseded 2026-08-26** by the
-> [runner attach contract](./runner-attach.md) (plan 0043 §3.2). Runners
-> no longer serve a describe path; they attach outbound and send one
-> versioned document that declares `descriptor_schemas`, `work_unit`,
-> `metering`, `heartbeat`, `paths`, `readiness`, `session_params_schema`,
-> and `schema_versions` for every protocol. The rules this section used to
-> state — a runner's declaration is never adopted into what is advertised,
-> a contradiction is fatal to that capability, `session_params_schema` is
-> a description and never a validator — survive unchanged in
-> `runner-attach.md` §4–§5; what changed is that the operator no longer
-> restates the facts at all, so there is no second source of truth to
-> cross-check.
-
-### 7.2 Runner events
-
-`POST /v1/session/{session_id}/events`, authenticated by a per-session
-callback token the broker minted at create time (stored hashed; verified
-constant-time; auth checked before any session-existence disclosure —
-unknown session and bad token are indistinguishable).
-
-Event envelope:
-
-```json
-{
-  "event_id": "evt_01jx…",
-  "sequence": 17,
-  "event_type": "session.usage.tick",
-  "event_time": "2026-08-18T21:13:00Z",
-  "state": "active",
-  "usage": { "unit": "participant_minutes", "total": 60 },
-  "close_reason": null,
-  "details": { }
-}
-```
-
-Required event types: `session.started`, `session.heartbeat`,
-`session.usage.tick`, `session.failed`, `session.ended`.
-
-#### Optional output health
-
-An output-producing runner MAY report these standardized keys in `details`:
-
-| Key | Shape | Meaning |
-|---|---|---|
-| `output_state` | `waiting \| producing \| stalled` | `waiting`: no output is expected yet; `producing`: useful output is advancing; `stalled`: output was expected but is not advancing. |
-| `output_state_since` | RFC3339 timestamp | Optional: when the reported state began. The broker uses receipt time when absent. |
-| `last_failure_code` | `^[a-z][a-z0-9_]{0,63}$` | Optional, customer-safe machine code. It MUST contain no diagnostics, identifiers, URLs, or credentials. |
-
-The serialized `details` object is limited to 2048 bytes. A broker that
-implements this extension MUST reject a malformed standardized field without
-advancing the event watermark. It persists the latest values in the same
-atomic commit as `event_id`, `sequence`, usage, and debit progress, and exposes
-them from status. Absence means `output_state: unknown`; it is not an error.
-
-Runner liveness and useful output are separate facts. Every accepted event,
-including a stalled-output event, refreshes runner liveness. Only
-`output_state: producing` proves advancing output. Repeated `stalled` reports
-MUST NOT reset the beginning of the broker-observed stall. A continuously
-stalled state is wound down after 60 seconds with `output_failed`; a runner MAY
-fail sooner. `waiting` has no protocol deadline because some workloads
-legitimately wait for input.
-
-`session.failed` preserves a present safe `close_reason`; `runner_failed` is
-the fallback when the runner supplies none. `output_failed` is the standard
-reason for an output-producing session that failed closed.
-
-Event names remain open-world. Descriptor schemas may define additional names
-and detail keys; the broker accepts them and interprets only standardized
-paid-session fields. It never needs workload-specific knowledge to do so.
-
-Unknown fields in the event envelope and unknown keys in `details` are
-**tolerated and ignored** — the
-broker is a tolerant reader here, so runners may carry their own
-correlation fields (their session ids, a per-event delta) without
-coordinating a spec change. Note that a per-event usage delta is ignored
-by rule, not merely unread: cumulative `usage.total` is the only debit
-basis.
-
-Rules:
-
-- `event_id` MUST be unique and non-empty; `sequence` MUST be positive and
-  monotonic per session. Violations are protocol errors that advance
-  nothing.
-- `usage.total` is the cumulative claim and the debit basis; the broker
-  derives deltas from it and MUST ignore any per-event delta field.
-- `usage.unit` MUST equal the offering's declared work unit. A mismatch is a
-  protocol error and MUST NOT advance event idempotency, sequence, or
-  cumulative-usage progress.
-- A close reason and every standardized safe failure code MUST match
-  `^[a-z][a-z0-9_]{0,63}$`.
-
-### 7.3 Exactly-once debit
-
-The core accounting invariant, stated observably:
-
-> Event deduplication MUST be committed only together with durable debit
-> progress. A transient payment failure followed by the runner's retry of the
-> same event produces exactly one debit — never zero (acknowledged but
-> uncharged) and never two.
-
-A durable transaction, an outbox, or a payment-layer idempotency key are all
-acceptable implementations. Consequences the fixtures pin: a failed debit
-leaves the event unprocessed (the retry really retries); concurrent events
-for one session never reuse a debit sequence; runway/insufficiency checks are
-not lost on the retry path.
-
-## 8. Control-WS binding (optional)
-
-An offering MAY expose `control.events_ws`. Attaching requires the session
-credential. Frames mirror the HTTP surface — broker→gateway:
-`session.usage.tick` (cumulative claim), `session.balance` (the §6 object,
-emitted at least on every `low`/`will_refuse_next_refill` transition),
-`session.output.health` (the latest standardized output-health fields),
-`session.state`, `session.ended`; gateway→broker: `session.topup` (payment
-envelope in-frame, plus `request_id` — a frame has no headers, and the
-mirror carries the same idempotency key as §3.3 — and `rebind_from` when
-declaring a rotation rebind), `session.end`. The broker→gateway
-`session.rebound` message reports a completed rebind; it is control-plane
-signalling and a gateway MUST NOT surface it as session history (§3.3.1). Every gateway-initiated frame is
-acknowledged; the HTTP surface remains available and authoritative — the WS
-is a push optimization, and a gateway ignoring it loses nothing but latency.
-
-## 9. Durability and recovery
-
-### 9.1 What must survive
-
-Active session authority survives broker restart. Persisted or securely
-reconstructable, per session: all identifiers (session, gateway, runner,
-work); capability, offering, backend binding; payment sender and payee
-session; session credential and callback token (hashed); descriptor (public
-and private per the framework's storage rules) and grant audit metadata (ids
-and hashes, never secrets); last accepted `event_id` and `sequence`; claimed
-and debited cumulative totals and the payment-layer debit sequence; lease;
-state, `close_reason`, payment-close status; held capacity ownership.
-When output health has been reported, the latest state, state-since timestamp,
-broker-observed stall anchor, last productive-output time, and safe failure
-code are part of the same durable authority.
-
-The payment-layer debit sequence is called out deliberately: the payee
-daemon durably remembers `(sender, work_id, debit_seq)`, so a broker that
-resumes at sequence 1 has its real debits silently swallowed as replays.
-
-### 9.2 Recovery outcomes
-
-After restart, each non-terminal session reaches exactly one of two
-outcomes:
-
-1. **Rebind** — status, top-up, end, events, and the session credential all
-   continue against the same `work_id`. Grants are not re-minted. The broker
-   MAY query the runner's status path to reconcile state before accepting
-   new events. Before accepting events the broker MUST re-assert the
-   payee-side payment session for the work id; that call is idempotent, so
-   it is a no-op when the payment layer kept its state and is what lets a
-   session survive a payment daemon that restarted independently of the
-   broker. If the payment session cannot be re-asserted, the session takes
-   the terminal outcome below rather than accepting unbillable usage.
-2. **Explicit terminal** — where safe rebinding is impossible, the broker
-   runs the standard winddown (terminate runner, close payment, stable
-   reason `recovery_failed`), never leaving limbo.
-
-Forbidden outcomes, each with a conformance fixture: minting a second
-`work_id` for the same session; accepting a stale callback against the wrong
-session; silently skipping usage; double-debiting; and a runner left serving
-without broker payment authority.
-
-## 10. Conformance obligations
-
-Executable fixtures every broker implementation MUST pass:
-
-- open→claims→debit→topup(lease extended)→end happy path, descriptor public
-  view byte-identical between open and status, grants absent from status;
-- restart tests: status, top-up, end, and events succeed across a broker
-  restart for an active session (rebind); recovery-impossible case reaches
-  the explicit terminal outcome;
-- fault injection: duplicate and reordered events are safe; transient debit
-  failure charges exactly once after retry; unit mismatch rejected without
-  advancing totals; empty `event_id` rejected;
-- heartbeat breach forces idempotent runner and payment closure with a
-  stable reason; lease expiry does the same; `will_refuse_next_refill` is
-  advertised before any refill refusal;
-- output health is atomically ordered with the event watermark; repeated
-  stalled events do not extend the 60-second backstop; `output_failed` survives
-  terminal mapping and old runners remain `unknown` without being rejected;
-- auth: unknown session vs bad credential/token indistinguishable on both
-  the control surface and the events endpoint;
-- a second open with the same `Livepeer-Request-Id` returns the original
-  session, not a sibling.
-
-## 11. Runner obligations — the implementer's checklist
-
-Everything a runner must do, in one place. This section is normative but
-**derivative**: each obligation is specified in full where it is
-referenced, and where this checklist and a numbered section differ, the
-numbered section governs. It exists because a runner author should not
-have to reverse-engineer their contract from a protocol written mostly
-from the broker's point of view.
-
-The third column is the point of the exercise. A runner that gets one of
-these wrong sees a specific failure, and knowing the signature in advance
-is the difference between a diagnosable bug and an afternoon.
-
-### Session creation
-
-| Obligation | Specified in | Failure signature if violated |
-|---|---|---|
-| Respond to create with `runner_session_id` and a `runtime` descriptor | §7.1 | Open fails `502`; broker terminates any partial binding and closes payment state. |
-| Emit exactly the four descriptor keys (`schema`, `public`, `private`, `grants`); no others | [descriptor §2](./runtime-descriptor.md) | Open rejected: `unknown top-level key at path $.<key>`. Unknown keys are a partition-bypass vector, not a compatibility affordance. |
-| `schema` MUST equal the offering's declared `descriptor_schema` | descriptor §2.1 | Open rejected naming both tags. A runner that upgrades its schema without the offering being updated fails here, every time. |
-| Keep the serialized `runtime` object within the size cap (16 KiB default) | descriptor §3 | Open rejected with the observed size and the cap. |
-| Put nothing in `public` that the schema does not declare public | the schema's own doc | Not caught at runtime — the broker relays `public` verbatim. Caught by the schema's conformance fixtures, which is why they exist. |
-| Never place long-lived credentials (API keys, TURN secrets) anywhere in the descriptor | descriptor §2.3 and the schema | Not caught at runtime. This one is on you. |
-| The public part is immutable for the session's lifetime | descriptor §2.2 | No update mechanism exists in v1; coordinates that change mean the session ends and a new one opens. |
-
-### Grants
-
-| Obligation | Specified in | Failure signature if violated |
-|---|---|---|
-| Provide a grant for every operation the schema declares, with `id`, non-empty `operations`, `secret`, and `expires_at` | descriptor §2.4 | Open rejected: `grant[N] missing required field`. |
-| Honour the grant secret on **every** operation the schema names (e.g. both `participant-token-mint` and `room-status` for `sfu-room/v1`) | the schema's own doc | Not caught by the broker — it is not in the grant's data path. The gateway simply cannot use the coordinate, which usually surfaces as a customer-visible failure. |
-| Scope granted operations to this session only | descriptor §2.4 | Not broker-observable. A cross-session grant is a security defect in your runner. |
-| Enforce `expires_at` and `max_uses`, and **refuse all grant operations once the session is terminal** — expiry is a backstop, not the lifetime | descriptor §2.4 rule 5 | Not broker-observable. A grant honoured after end is an unmetered runtime. |
-| Do not expect grants to be re-issued: they are delivered once at open and never re-minted, including after a broker restart | descriptor §2.4 rules 1 and 3 | A runner that assumes re-issue will wait forever. |
-
-### Usage events
-
-| Obligation | Specified in | Failure signature if violated |
-|---|---|---|
-| Send `event_id` non-empty and unique per session | §7.2 | Protocol error; **nothing advances** — not idempotency, not sequence, not usage. |
-| Send `sequence` positive and strictly monotonic per session | §7.2 | Same. An event at or below the committed watermark is treated as a duplicate and acknowledged without effect. |
-| Report `usage.total` as a **cumulative** total, never a per-event delta | §7.2 | A runner sending deltas as totals under-reports permanently: the broker derives its debit from the cumulative figure. A per-event delta field is ignored *by rule*. |
-| `usage.unit` MUST equal the offering's declared work unit | §7.2 | Protocol error advancing nothing — so a unit mismatch rejects **every** usage event for the session's lifetime. The single most common integration failure. |
-| Never let cumulative usage go backwards | §7.2 | Protocol error (`usage_regression`), nothing advances. |
-| Emit the required event types: `session.started`, `session.heartbeat`, `session.usage.tick`, `session.failed`, `session.ended` | §7.2 | A session that never reports is torn down as `heartbeat_lost`. |
-| Emit *something* within `interval × missed_threshold` — any accepted event refreshes liveness, so a usage tick suffices | §5 | Torn down with `heartbeat_lost`: runner terminated, payment closed, capacity released. |
-| Retry on `5xx`, with the same `event_id` and `sequence` | §7.3 | The broker's exactly-once contract depends on it: a transient debit failure leaves the event uncommitted precisely so your retry completes it. A runner that gives up loses that usage permanently. |
-| Extra envelope fields and non-standard detail keys are tolerated and ignored | §7.2 | None — carry bounded, non-secret correlation details freely. |
-| If reporting output health, use a valid state/timestamp and only a bounded safe failure code | §7.2 | Malformed standardized fields reject the event without advancing its sequence. |
-| Authenticate every event with the callback token from create, at the callback URL from create | §7.1, §7.2 | `401`, indistinguishable from an unknown session (no existence oracle). |
-
-### Termination
-
-| Obligation | Specified in | Failure signature if violated |
-|---|---|---|
-| Make terminate idempotent; terminating an unknown or already-terminated session succeeds | §7.1 | A non-idempotent terminate turns every winddown retry into a spurious error and can leave the broker's state and yours disagreeing. |
-| Actually stop serving on terminate — the broker treats it as authoritative | §5, §9.2 | Serving after terminate is unmetered work; the broker has already closed payment. |
-| Attach with a truthful [attach document](./runner-attach.md) and re-send it on any change | [runner-attach](./runner-attach.md) §2–§4 | An invalid entry is rejected naming the field and both sides; a shape that disagrees with a frozen offer makes you ineligible for it. |
-| Answer the status path truthfully, including after termination | §7.1, §9.2 | Recovery uses it: reporting a session gone that you still serve strands it; reporting alive one you dropped delays the terminal outcome. |
-
-### What the runner never does
-
-- **Never talk to the payment layer.** The broker is the sole network-payment
-  authority; a runner that contacts `payment-daemon` is outside the protocol.
-- **Never set price.** Price is the operator's declaration; a runner that
-  reports monetary value rather than work units is misusing the contract.
-- **Never treat its usage claims as billing truth for the buyer.** They are
-  the seller's meter (see the dual-meter trust model). The gateway bills
-  its own customers from its own edge.
+- payment-only open and refill fail before payment or runner effects;
+- authorization scope, body digest, caller proof, route, and price fail closed;
+- open and revision replay are exactly-once;
+- usage advances and settlement use cumulative ceiling arithmetic;
+- unused reservation returns to the stable account;
+- restart preserves authorization/account state and watermarks;
+- lost authorization state terminates the runner fail closed;
+- quote binding survives restart and appears unchanged in every settlement;
+- output health is atomic with event ordering and persistent stall terminates;
+- control-WS authorization revision mirrors HTTP behavior.
 
 ## Changelog
 
 | Version | Date | Change |
 |---|---|---|
-| 1.2.1-draft | 2026-09-09 | Requires every session settlement to carry the exact accepted quote reference retained durably from admission; fixes independently verified closes that otherwise fail as `quote_mismatch`. |
-| 1.2.0-draft | 2026-09-09 | Adds optional, workload-agnostic output health in event details; separates runner liveness from productive output; persists health atomically; preserves safe runner failure reasons including `output_failed`; fails continuously stalled sessions closed after 60 seconds; and carries the safe terminal diagnosis in signed settlements for independent reconcilers. Old runners remain valid with `unknown` health. |
-| 1.1.0-draft | 2026-09-09 | Adds cumulative single-purpose session authorization over a stable wholesale account. Admission reserves bounded runway, usage advances the cumulative debit and replaces runway atomically, aggregate shortfall funding is optional, and wind-down releases the remainder. |
-| 1.0.11-draft | 2026-08-26 | §7.1.1 superseded by `protocols/runner-attach.md` (plan 0043): self-description becomes the mandatory, versioned attach document for every protocol; the describe path is gone. Never-adopt, contradiction-fatal, and schema-not-validator rules carried over. §11 row updated. |
-| 1.0.10-draft | 2026-08-21 | §3.3.1: state that `gateway_session_id` uniqueness is GLOBAL across a broker's retained sessions rather than per-payer, and that a producer MUST generate it with at least 96 bits of CSPRNG entropy (UUIDv4 qualifies). The broker cannot verify entropy and does not try: this is collision and enumeration resistance, not authentication. Confirmed with LOC. |
-| 1.0.9-draft | 2026-08-21 | §3.3.1: `gateway_session_id` is REQUIRED on open and an omitted or empty one MUST be refused with `invalid_request` — uniqueness was enforced only when the field was present, so a client that never sent it opened sessions indefinitely and got settlements nobody could resolve, with no signal at any point. Also states that a gateway needs no rotation notice to rebind: the predecessor is the last `work_id` it held, readable from `GET /v1/session/{id}`, so the §8 socket is an optimisation and not a precondition. Both raised by the meeting team. |
-| 1.0.8-draft | 2026-08-21 | §3.3.1: `GET /v1/settlement/{id}` MUST resolve `gateway_session_id`, not merely echo it — it is the only lookup key a clearinghouse issues itself. Brokers MUST keep it unique across retained sessions (`gateway_session_id_reuse`, 409), and a query matching several sessions MUST answer `ambiguous_identifier` (409) instead of returning one of them. LOC could reject a wrong-session record but had no key that would find the right one; the reference broker's `work_id` lookup returned whichever session sorted last. |
-| 1.0.7-draft | 2026-08-21 | §3.3.1: a payee that has rotated away from a `work_id` MUST refuse payments arriving on it — before validating any ticket, crediting nothing, queueing no winner — and report an invalid recipient rand so `recipient_rotated` is raised. The spec mandated the signal but never the refusal that produces it, and the reference receiver credited those payments while every debit against the closed session failed: real value in, no work ever billable out, and a winning ticket redeemable on chain against a session the payer could not draw on. Also states that rotation retires an identity for future work only and MUST NOT be used to repudiate tickets already minted. Found on Arbitrum One. |
-| 1.0.6-draft | 2026-08-20 | §3.1: an open replay now returns the **usable** recorded outcome — credential and grants re-delivered — under four conditions (same request id, identical open fingerprint including the payment envelope, same payer proven by that envelope, exact recorded outcome). Reverses exactly-once secret delivery: a lost open response otherwise left a funded session nobody could drive. Adds the fingerprint requirement, so a reused id with different content is `request_id_reuse` rather than somebody else's session, and requires replay secrets encrypted at rest and destroyed at winddown. |
-| 1.0.5-draft | 2026-08-20 | Add §3.3.1, recipient rotation: payee-authorized only, `recipient_rotated` as the signal, a **declared** rebind on top-up with three verification rules, predecessor settled before close, continuity of session/credential/cumulative accounting, `session.max_rotations` and the zero-delivery bound, `payment_unrecoverable` as the terminal reason, bounded offerings excluded, settlement-only visibility, and stranded balance stated as a known cost. §8 gains `rebind_from` and `session.rebound`. |
-| 1.0.4-draft | 2026-08-20 | §3.3: `Livepeer-Request-Id` is required on top-up (and §8's `session.topup` frame carries it as `request_id`) and its replay semantics are stated — recorded outcome returned verbatim, replay checked before terminal/refusal, and an already-credited envelope (nonce replay) answered with the current lease unextended. The reference implementation ignored the header entirely, so a gateway retrying a top-up after a lost response funded the session twice. |
-| 1.0.3-draft | 2026-08-20 | §3: state the two-identifier rule — `work_id` MUST be the payee-issued `recipient_rand_hash`, `session_id` is an opaque broker-local handle and never a payment key. §3.1: an open whose payment had every ticket rejected MUST fail closed with `payment_invalid`. Both were silences the reference implementation filled differently on each protocol. |
-| 1.0.2-draft | 2026-08-19 | Add §7.1.1 optional runner self-description: advisory-never-authoritative, contradiction fatal to the capability, unreachability only a warning; a runner MAY also declare its `session_params` shape. |
-| 1.0.1-draft | 2026-08-19 | Add §11, the consolidated runner-obligations checklist, with the failure signature for each violation. Derivative and non-normative where it conflicts with a numbered section. |
-| 1.0.0-draft | 2026-08-18 | Initial protocol. Replaces the five session-family modes; durable authority, exactly-once debit, lease/heartbeat enforcement, session credential, and the balance object become normative. Absorbs meeting-handoff requirements B1–B5 and A4. |
+| 1.3.0-draft | 2026-09-11 | Makes wholesale accounts and single-purpose authorization the only paid-session accounting path; replaces ticket-session top-up/rebind with predecessor-bound authorization revisions; specifies account-only recovery, WebSocket revision frames, and the coordinated hard cut. |
+| 1.2.0-draft | 2026-09-09 | Added accepted quote persistence and output-health settlement fields. |
+| 1.1.0-draft | 2026-09-08 | Added standardized live output-health events and terminal behavior. |

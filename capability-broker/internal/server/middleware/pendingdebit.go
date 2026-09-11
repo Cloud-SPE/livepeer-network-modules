@@ -15,32 +15,22 @@ import (
 // that owns the durable job record (idempotency), and the response has
 // usually been written by the time the debit runs.
 type PendingDebit struct {
-	AccountAuthorization bool
-	AuthorizationBytes   []byte
-	Sender               []byte
-	WorkID               string
-	DebitSeq             uint64
-	// Units is what THIS debit is for — the final flush, which on a long
-	// exchange is less than the exchange's total.
-	Units uint64
-	// DebitedUnits already landed: interim ticks that succeeded. They
-	// took real value and must survive in the settlement even if the
-	// retry never lands.
-	DebitedUnits uint64
+	AuthorizationBytes []byte
+	Sender             []byte
+	WorkID             string
+	DebitSeq           uint64
 
-	// Inputs for building the settlement once the charge is known.
-	PaymentBytes      []byte
-	FundedValueWei    *big.Int
+	// Inputs for completing authorization settlement after an uncertain
+	// daemon response. The reservation remains encumbered until the
+	// idempotent settlement operation returns an authoritative result.
 	ReservedValueWei  *big.Int
 	AccountFundingWei *big.Int
 	AccountVersion    uint64
 	ActualUnits       uint64
 	MeasuredUnits     uint64
 	WorkUnitName      string
-	TerminationReason string
 	JobID             string
 	RequestID         string
-	IssuedAt          string
 }
 
 // PendingDebitSlot is a one-shot holder the outer layer installs and the

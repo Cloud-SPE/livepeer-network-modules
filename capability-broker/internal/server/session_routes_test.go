@@ -2,13 +2,14 @@ package server
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -205,11 +206,39 @@ func sessionOpenReq(t *testing.T, srv *httptest.Server, requestID string) *http.
 	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setSessionTestAuthorization(t, req, "gws-1", "")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func setSessionTestAuthorization(t *testing.T, req *http.Request, gatewaySessionID, predecessor string) {
+	t.Helper()
+	body, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(body))
+	digest := sha256.Sum256(body)
+	requestID := req.Header.Get(livepeerheader.RequestID)
+	revision := uint64(0)
+	if predecessor != "" {
+		revision = 1
+	}
+	payload := &paymentsv1.SpendAuthorizationPayload{
+		Domain: "livepeer-spend-authorization/v1", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID, Revision: revision, PredecessorAuthorizationId: predecessor,
+		RequestId: requestID, SessionId: gatewaySessionID, Protocol: "paid-session/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example.com",
+		AcceptedPrice: &paymentsv1.AcceptedPrice{PricePerUnitWei: &paymentsv1.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: "participant_minutes", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), QuoteRef: &paymentsv1.QuoteRef{QuoteId: "quote-test", QuoteVersion: 1}},
+		MaxDebitWei:   &paymentsv1.BigUInt{Value: big.NewInt(1_000_000).Bytes()}, MaxTotalUnits: 100_000, RequestDigest: digest[:],
+	}
+	wire, err := proto.Marshal(&paymentsv1.SpendAuthorization{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(livepeerheader.Authorization, base64.StdEncoding.EncodeToString(wire))
 }
 
 func decode(t *testing.T, resp *http.Response) map[string]any {
@@ -363,73 +392,28 @@ func TestSessionSurfaceEndToEnd(t *testing.T) {
 	}
 }
 
-func TestTopUpResponseReturnsTheSuccessorWorkID(t *testing.T) {
+func TestSessionTopUpRejectsPaymentOnly(t *testing.T) {
 	srv, _ := newSessionTestServer(t)
-
-	// One wallet, two ticket identities — a rotation. Both payments must
-	// carry the SAME sender or the rebind is refused for a mismatch the
-	// scenario does not have.
-	wallet := []byte("0123456789abcdef0123")
-	pay := func(rand string) string {
-		t.Helper()
-		raw, err := proto.Marshal(&paymentsv1.Payment{
-			Sender:       wallet,
-			TicketParams: &paymentsv1.TicketParams{RecipientRandHash: []byte(rand)},
-			// Must match the offering (10 wei per 1 unit) or the
-			// envelope check refuses it. Opaque stub payments are
-			// tolerated because they do not parse; a real one is held to
-			// the price the sender signed.
-			ExpectedPrice: &paymentsv1.PriceInfo{
-				PricePerUnit:  10,
-				PixelsPerUnit: 1,
-				Constraint: "cap=meet:sfu-room;off=default;wu=participant_minutes;" +
-					"est=100;qid=q;qv=1;cfp=aa;rfp=bb",
-			},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return base64.StdEncoding.EncodeToString(raw)
-	}
-
-	openReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session",
-		strings.NewReader(`{"gateway_session_id":"gws-rebind","session_params":{}}`))
-	openReq.Header.Set(livepeerheader.Capability, "meet:sfu-room")
-	openReq.Header.Set(livepeerheader.Offering, "default")
-	openReq.Header.Set(livepeerheader.Protocol, "paid-session/v1")
-	openReq.Header.Set(livepeerheader.RequestID, "req-topup-rebind")
-	openReq.Header.Set(livepeerheader.Payment, pay("original-rand-0123456789abcdef0"))
-	openResp, err := http.DefaultClient.Do(openReq)
-	if err != nil {
-		t.Fatal(err)
-	}
+	openResp := sessionOpenReq(t, srv, "req-topup-payment-only")
 	open := decode(t, openResp)
-	sessionID := open["session_id"].(string)
-	credential := open["credential"].(string)
-	originalWorkID := open["work_id"].(string)
+	sessionID, _ := open["session_id"].(string)
+	credential, _ := open["credential"].(string)
+	if sessionID == "" || credential == "" {
+		t.Fatalf("session open failed: %v", open)
+	}
 
 	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/session/"+sessionID+"/topup", nil)
 	req.Header.Set("Authorization", "Bearer "+credential)
-	req.Header.Set(livepeerheader.RequestID, "topup-rebind-1")
-	req.Header.Set(livepeerheader.RebindFrom, originalWorkID)
-	req.Header.Set(livepeerheader.Payment, pay("successor-rand-0123456789abcdef"))
+	req.Header.Set(livepeerheader.RequestID, "topup-payment-only-1")
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("ticket")))
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
+	if resp.StatusCode != http.StatusUnauthorized || resp.Header.Get(livepeerheader.Error) != livepeerheader.ErrAuthorizationRequired {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("rebinding top-up status %d: %s", resp.StatusCode, body)
-	}
-	var got map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&got); err != nil {
-		t.Fatal(err)
-	}
-	want := hex.EncodeToString([]byte("successor-rand-0123456789abcdef"))
-	if got["work_id"] != want {
-		t.Fatalf("work_id = %v; want the successor %s (returning %s sends the caller "+
-			"back to the identity it just rotated away from)", got["work_id"], want, originalWorkID)
+		t.Fatalf("payment-only top-up = %d error=%q body=%s", resp.StatusCode, resp.Header.Get(livepeerheader.Error), body)
 	}
 }
 
@@ -444,6 +428,7 @@ func sessionOpenWithGatewayID(t *testing.T, srv *httptest.Server, requestID, gat
 	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setSessionTestAuthorization(t, req, gatewayID, "")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -530,6 +515,7 @@ func TestSessionOpenRequiresGatewaySessionID(t *testing.T) {
 			req.Header.Set(livepeerheader.RequestID, "gws-required-"+tc.name)
 			req.Header.Set(livepeerheader.Payment,
 				base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+			setSessionTestAuthorization(t, req, "", "")
 			resp, err := http.DefaultClient.Do(req)
 			if err != nil {
 				t.Fatal(err)

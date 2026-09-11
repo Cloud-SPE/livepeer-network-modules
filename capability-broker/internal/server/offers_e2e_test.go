@@ -92,7 +92,7 @@ func TestOfferFreezeAdvertiseAcceptShape(t *testing.T) {
 
 	// Before any runner: spec_version stamped, no capabilities.
 	payload := offeringsPayloadOf(t, srv)
-	if payload["spec_version"] != "2.4.1" {
+	if payload["spec_version"] != "3.0.0" {
 		t.Fatalf("spec_version: %v", payload["spec_version"])
 	}
 	if n := len(payload["capabilities"].([]any)); n != 0 {

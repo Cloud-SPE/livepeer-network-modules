@@ -74,11 +74,11 @@ curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/healthz" >/dev/null
 registry=""
 for _ in $(seq 1 120); do
   registry="$(curl -fsS "http://127.0.0.1:${PAID_PORT:-8411}/registry/offerings" 2>/dev/null || true)"
-  if grep -q 'conformance:job' <<<"$registry" && grep -q 'wholesale_accounts' <<<"$registry"; then break; fi
+  if grep -q 'conformance:job' <<<"$registry" && grep -q 'conformance:session' <<<"$registry"; then break; fi
   sleep 1
 done
 grep -q 'conformance:job' <<<"$registry" || { echo "runner did not freeze the pilot offer" >&2; exit 1; }
-grep -q 'wholesale_accounts' <<<"$registry" || { echo "pilot offer did not advertise wholesale accounts" >&2; exit 1; }
+grep -q 'conformance:session' <<<"$registry" || { echo "runner did not freeze the paid-session pilot offer" >&2; exit 1; }
 payer_running_before="$("${compose[@]}" ps -q --status running payer)"
 payer_since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "${compose[@]}" up -d payer

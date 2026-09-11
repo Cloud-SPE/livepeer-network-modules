@@ -33,10 +33,6 @@ func (s *Server) handlePaymentAccountFund(w http.ResponseWriter, r *http.Request
 		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed, "offering is not served")
 		return
 	}
-	if !supportsWholesaleAccounts(group.Published) {
-		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "offering does not advertise wholesale account support")
-		return
-	}
 	encoded := r.Header.Get(livepeerheader.Payment)
 	paymentBytes, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil || len(paymentBytes) == 0 {

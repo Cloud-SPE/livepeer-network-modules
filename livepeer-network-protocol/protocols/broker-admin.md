@@ -455,7 +455,7 @@ that is the only automatic freeze and it is why `run` is a write.
 `GET /registry/offerings` gains a required root field:
 
 ```json
-{ "spec_version": "2.0.0", "orch_eth_address": "0x…", "offers_revision": "ctl-rev-4182", "capabilities": [ … ] }
+{ "spec_version": "3.0.0", "orch_eth_address": "0x…", "offers_revision": "ctl-rev-4182", "capabilities": [ … ] }
 ```
 
 - `spec_version` MUST equal the protocol module's exported `VERSION` the
@@ -480,7 +480,7 @@ of an operator copying a 130-character public key out of a log line.
 
 ```json
 {
-  "spec_version": "2.4.1",
+  "spec_version": "3.0.0",
   "orch_eth_address": "0xd003…3c7f",
   "keys": [
     {

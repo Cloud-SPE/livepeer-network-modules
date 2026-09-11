@@ -339,20 +339,17 @@ and effective price. It must not trap a payer on a bad or overpriced route.
 
 ## Migration constraints
 
-Legacy `work_id` balances cannot be silently declared equivalent to the new
-stable account. Migration must inventory each generation, prevent double
-credit, preserve redeemable tickets, and either transfer verified residual or
-drain it under the old protocol. Mixed peers fail closed unless a specified
-compatibility mode can preserve every accounting invariant.
+Wholesale accounts are the sole paid-workload accounting model. There is no
+offer feature flag and no payment-only workload fallback. A
+`Livepeer-Payment` can fund the stable account, but only a single-purpose
+`Livepeer-Authorization` can authorize a job, session open, or session refill.
 
-Migration is fenced per payer-payee route. Before a payer's first account
-authorization, it stops issuing legacy envelopes for that route and waits for
-its legacy in-flight jobs and session debits to reach durable outcomes. The
-receiver can then atomically zero a drained generation and move its verified
-residual into the stable account. Different payers may opt in at different
-times; one payer MUST NOT run legacy and account-backed debits concurrently on
-the same ticket generation. This prevents an account migration from moving
-credit that a legacy in-flight debit still expects to consume.
+The transition is a coordinated hard cut. Operators stop new admissions,
+drain legacy in-flight jobs, sessions, and debit retries to durable outcomes,
+then migrate each verified generation residual into the stable account exactly
+once. Existing sessions are never assigned synthetic authorization state.
+Mixed-version peers fail closed, because preserving both accounting paths on
+one ticket generation would permit double-credit or unbound work.
 
 ## Non-goals
 

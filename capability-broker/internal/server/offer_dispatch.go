@@ -106,7 +106,6 @@ func offerSessionCap(view offers.View, shape *offers.Frozen) *config.SessionCap 
 		sess.LeaseMaxSeconds = p.LeaseMaxSeconds
 		sess.BurnRatePerSec = p.BurnRatePerSec
 		sess.MinRunwayUnits = p.MinRunwayUnits
-		sess.MaxRotations = p.MaxRotations
 		sess.ToleranceBandPct = p.ToleranceBandPct
 		sess.RunwayIncrementUnits = p.RunwayIncrementUnits
 		sess.Heartbeat = p.Heartbeat

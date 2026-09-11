@@ -236,18 +236,18 @@ sequenceDiagram
     participant PD as payment-daemon<br/>(receiver, unix socket)
     participant Runner as attached runner<br/>(vLLM / OpenAI / FFmpeg / …)
 
-    GW->>Broker: POST /v1/job<br/>Livepeer-Protocol: paid-job/v1<br/>Livepeer-Capability: <id><br/>Livepeer-Offering: <id><br/>Livepeer-Request-Id: <uuid><br/>Livepeer-Payment: ticket
+    GW->>Broker: POST /v1/job<br/>route headers + Livepeer-Authorization<br/>optional Livepeer-Payment shortfall
     Broker->>Offer: lookup (capability_id, offering_id)
     Offer-->>Broker: { protocol, price } from the offer<br/>{ work_unit, extractor, path } from the frozen<br/>runner declaration
-    Broker->>PD: ProcessPayment(payment_bytes, work_id)
-    PD-->>Broker: ok (sender, credited_ev, balance)
+    Broker->>PD: AdmitAuthorization(auth, optional payment,<br/>maximum reservation)
+    PD-->>Broker: authorization reserved against<br/>stable payer-payee account
 
     Broker->>Runner: forward over the runner's attach tunnel<br/>(transport from the frozen shape)
     Runner-->>Broker: response payload
 
     Broker->>Broker: extractor → actualUnits<br/>(openai-usage / response-jsonpath /<br/>bytes-counted / seconds-elapsed / …)
-    Broker->>PD: ReportUsage(work_id, actualUnits)
-    PD-->>Broker: ok
+    Broker->>PD: SettleAuthorization(authorization_id, actualUnits)
+    PD-->>Broker: actual wholesale debit + unused release
     Broker-->>GW: response payload
 ```
 
@@ -255,8 +255,9 @@ sequenceDiagram
 
 - The broker resolves `(capability_id, offering_id)` from the inbound headers
   before doing anything else — mismatched routing fails closed.
-- Payment validation happens **before** the backend call; the only thing the
-  broker knows about money is "did the daemon say yes."
+- Authorization verification and account reservation happen **before** the
+  backend call. A ticket can fund an account shortfall, but cannot authorize
+  the workload.
 - `actualUnits` is whatever the declared extractor returns; the broker doesn't
   know what a "token" or "pixel-second" is.
 
@@ -769,11 +770,12 @@ The `Livepeer-Payment` header remains the wire-format payment envelope while
 `Livepeer-Capability` and `Livepeer-Offering` carry the routed tuple so the
 broker can refuse mismatched routing.
 
-### Per-exchange payment (`paid-job/v1`)
+### Per-exchange authorization (`paid-job/v1`)
 
-One ticket per inbound request. Settles on-chain only if the ticket is winning;
-otherwise it's expected-value credit. `actualUnits` is reported after the
-backend response so over- and under-spend are both true-ups, not gambles.
+Every request carries a signed, single-purpose spend authorization. The payee
+atomically reserves its maximum wholesale debit from the stable payer-payee
+account, runs the workload, debits actual delivered units, and releases the
+remainder. A ticket is included only when the aggregate account needs funding.
 
 ```mermaid
 sequenceDiagram
@@ -782,33 +784,32 @@ sequenceDiagram
     participant Sender as payment-daemon<br/>sender (gateway side)
     participant Broker as Capability Broker
     participant Receiver as payment-daemon<br/>receiver (worker side)
-    participant TB as TicketBroker<br/>(chain)
     participant Backend as backend
 
-    GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
-    Sender-->>GW: signed ticket
-    GW->>Broker: forward request<br/>+ Livepeer-Payment header
-    Broker->>Receiver: ProcessPayment(payment_bytes, work_id)
-    alt ticket is winning
-        Receiver->>TB: redeemWinningTicket
-        TB-->>Receiver: faceValue credited to orch reserve
-    else not winning
-        Receiver->>Receiver: expected-value credit (in-memory)
+    GW->>Sender: CreateSpendAuthorization(route, request,<br/>accepted price, maximum debit)
+    Sender-->>GW: signed authorization
+    opt account shortfall
+        GW->>Sender: CreatePayment(account target,<br/>observed available, mint ceiling)
+        Sender-->>GW: signed funding ticket
     end
-    Receiver-->>Broker: ok (sender, credited_ev)
+    GW->>Broker: request + Livepeer-Authorization<br/>+ optional Livepeer-Payment
+    Broker->>Receiver: AdmitAuthorization(auth, optional payment,<br/>maximum reservation)
+    Receiver-->>Broker: reserved
 
     Broker->>Backend: forward
     Backend-->>Broker: response + raw usage signal
     Broker->>Broker: extractor → actualUnits
-    Broker->>Receiver: ReportUsage(work_id, actualUnits)
-    Receiver-->>Broker: ok (final price = price_per_unit × actualUnits)
+    Broker->>Receiver: SettleAuthorization(id, actualUnits)
+    Receiver-->>Broker: actual debit + unused release
     Broker-->>GW: response
 ```
 
-### Session payment (`paid-session/v1`)
+### Session authorization (`paid-session/v1`)
 
-Amortized billing: one `OpenSession` at open, `Debit` driven by the runner's
-cumulative usage claims, `CloseSession` on winddown. The normative contract is
+A session uses a bounded-runway authorization and, when necessary, a successor
+authorization bound to the same logical session. Cumulative runner usage
+advances the active authorization; terminal settlement releases unused runway.
+The normative contract is
 [`protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md)
 §7/§9 and the trust framing is [`dual-meter-trust.md`](./dual-meter-trust.md).
 (The older [`streaming-workload-pattern.md`](./streaming-workload-pattern.md) is
@@ -823,35 +824,34 @@ sequenceDiagram
     participant Receiver as payment-daemon<br/>receiver (worker)
     participant Backend as backend<br/>(session-runner / FFmpeg / …)
 
-    Note over GW,Backend: 1. Open — single ticket bootstraps the session balance
-    GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
-    Sender-->>GW: ticket
-    GW->>Broker: POST .../sessions/start<br/>+ Livepeer-Payment
-    Broker->>Receiver: OpenSession(payment_bytes, work_id,<br/>capability_id, offering_id)
-    Receiver-->>Broker: { sender, credited_ev, balance }
+    Note over GW,Backend: 1. Open — authorize bounded runway
+    GW->>Sender: CreateSpendAuthorization(session scope,<br/>accepted price, bounded maximum)
+    Sender-->>GW: signed authorization
+    GW->>Broker: POST .../sessions/start<br/>+ Livepeer-Authorization<br/>+ optional funding payment
+    Broker->>Receiver: AdmitAuthorization(auth, optional payment,<br/>runway reservation)
+    Receiver-->>Broker: authorization reserved
     Broker->>Backend: forward open
     Backend-->>Broker: session active
-    Broker-->>GW: { work_id, session_id }
+    Broker-->>GW: { authorization_id, session_id }
 
-    Note over GW,Backend: 2. Live — periodic debits + top-ups against the same work_id
+    Note over GW,Backend: 2. Live — cumulative usage advances reserved runway
     loop usage tick (continuous)
         Backend-->>Broker: media / control frames<br/>(units accrue)
-        Broker->>Receiver: DebitBalance(sender, work_id, units)
-        Broker->>Receiver: SufficientBalance(sender, work_id, min_runway)
-        Receiver-->>Broker: ok / low-runway warning
+        Broker->>Receiver: AdvanceAuthorization(id,<br/>cumulative units, target runway)
+        Receiver-->>Broker: billed delta + reserved runway
         Broker-->>GW: session.usage.tick
-        alt low runway
-            GW->>Sender: CreatePayment(recipient,<br/>accepted_price, funding,<br/>ticket_params_base_url)
-            Sender-->>GW: ticket
-            GW->>Broker: TopUp(work_id, payment_bytes)
-            Broker->>Receiver: CreditBalance(sender, work_id, payment_bytes)
+        alt authorization ceiling nearing exhaustion
+            GW->>Sender: CreateSpendAuthorization(same session,<br/>predecessor id, next revision)
+            Sender-->>GW: successor authorization
+            GW->>Broker: successor authorization<br/>+ optional funding payment
+            Broker->>Receiver: AdmitAuthorization(successor, optional payment,<br/>runway reservation)
         end
     end
 
-    Note over GW,Backend: 3. Close — settle remaining balance
-    GW->>Broker: CloseSession(work_id)
-    Broker->>Receiver: CloseSession(work_id)
-    Receiver-->>Broker: final balance
+    Note over GW,Backend: 3. Close — settle actual units and release runway
+    GW->>Broker: close session
+    Broker->>Receiver: SettleAuthorization(active id, actual units)
+    Receiver-->>Broker: actual debit + unused release
     Broker-->>GW: session.closed
 ```
 
@@ -893,12 +893,12 @@ flowchart TD
     Tuple --> ProtoSwitch{protocol?}
 
     ProtoSwitch -->|paid-job/v1| A1["job client<br/>(unary / stream / multipart<br/>negotiated per request)"]
-    ProtoSwitch -->|paid-session/v1| A2["session client<br/>(open / topup / status / end<br/>+ the descriptor schema)"]
+    ProtoSwitch -->|paid-session/v1| A2["session client<br/>(open / successor auth / status / end<br/>+ the descriptor schema)"]
 
-    A1 --> Sender["payment-daemon sender<br/>CreatePayment"]
+    A1 --> Sender["payment-daemon sender<br/>CreateSpendAuthorization<br/>+ optional shortfall payment"]
     A2 --> Sender
 
-    Sender --> Wrap["wrap headers:<br/>Authorization (customer bearer)<br/>Livepeer-Payment (ticket)<br/>Livepeer-Capability / Offering"]
+    Sender --> Wrap["wrap headers:<br/>customer bearer<br/>Livepeer-Authorization<br/>optional Livepeer-Payment<br/>Livepeer-Capability / Offering"]
     Wrap --> Broker["Capability Broker<br/>(worker-orch host)"]
 ```
 

@@ -54,7 +54,7 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   the redemption pipeline.
 - **Chain mode requires a spend limit.** A sender daemon will not start
   without `--max-payment-wei`, the most actual expected value it may sign in
-  one replenishment or legacy payment. This is a circuit breaker, not a
+  one account replenishment. This is a circuit breaker, not a
   workload-size setting. Optional `--max-ticket-face-value-wei` separately
   caps one winning ticket's worst-case payout exposure. Optional
   `--max-authorization-wei` independently caps

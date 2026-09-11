@@ -239,6 +239,29 @@ func TestCreatePaymentFundsOnlyAccountShortfall(t *testing.T) {
 	}
 }
 
+func TestCreatePaymentRejectsAccountShortfallAboveFundingCeiling(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+	req := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 20, "https://broker.example")
+	req.AccountFunding = &pb.AccountFundingIntent{
+		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100).Bytes()},
+		ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(70).Bytes()},
+	}
+	if _, err := client.CreatePayment(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("shortfall above funding ceiling error=%v", err)
+	}
+}
+
+func TestCreatePaymentRejectsFundingWithoutAccountIntent(t *testing.T) {
+	client, cleanup := stand(t)
+	defer cleanup()
+	req := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 100, "https://broker.example")
+	req.AccountFunding = nil
+	if _, err := client.CreatePayment(context.Background(), req); status.Code(err) != codes.InvalidArgument {
+		t.Fatalf("payment without account_funding error=%v", err)
+	}
+}
+
 func TestCreatePayment_NonceAdvances(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()
@@ -631,6 +654,9 @@ func TestCreatePayment_RejectsEmptyFields(t *testing.T) {
 		{"empty funded value", &pb.CreatePaymentRequest{
 			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "y", "token", 1, 1), Funding: &pb.FundingIntent{},
 		}},
+		{"missing account funding", &pb.CreatePaymentRequest{
+			Recipient: []byte("r"), AcceptedPrice: baseAcceptedPrice("x", "y", "token", 1, 1), Funding: baseFunding(1, 1),
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -737,6 +763,7 @@ func makeCreatePaymentRequest(recipient []byte, capability, offering, workUnit s
 		TicketParamsBaseUrl: baseURL,
 		AcceptedPrice:       baseAcceptedPrice(capability, offering, workUnit, pricePerUnitWei, unitsPerPrice),
 		Funding:             baseFunding(fundedValueWei, unitsPerPrice),
+		AccountFunding:      &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: new(big.Int).SetUint64(fundedValueWei).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 		MintRequestId:       fmt.Sprintf("test-mint-%d", mintSeq.Add(1)),
 	}
 }

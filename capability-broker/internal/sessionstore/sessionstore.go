@@ -43,11 +43,9 @@ const (
 	openRequestsBucket = "open_requests"
 	// gatewaySessionsBucket maps the GATEWAY's own session id ->
 	// session id. A clearinghouse holds only the id it issued itself:
-	// session_id is broker-local and reaches it through the customer's
-	// SDK, and work_id is shared by every session on a ticket session.
-	// Without this index the only key it can present resolves
-	// ambiguously, which returns a valid signed record for the wrong
-	// session.
+	// session_id is broker-local and reaches it through the workload
+	// caller. This durable consumer-owned index makes recovery independent
+	// of callback delivery.
 	gatewaySessionsBucket = "gateway_sessions"
 	// openReservationsBucket holds an open that is in flight: the request
 	// id is claimed before any payment or runner side effect (plan 0048
@@ -127,16 +125,8 @@ type Record struct {
 	// obligations a winddown owes; a record leaves winding_down only
 	// when both are true (plan 0048 §2.3).
 	RunnerTerminated bool `json:"runner_terminated,omitempty"`
-	// SharedPaymentIdentity is true when work_id came from the payment
-	// (the payee's ticket-session rand hash), which many sessions and
-	// jobs can share. The broker MUST NOT close such a session: closing
-	// strands every other holder and forfeits credit that is not this
-	// session's to forfeit. False only for the stub fallback, where the
-	// identity belongs to this session alone.
-	SharedPaymentIdentity bool `json:"shared_payment_identity,omitempty"`
-	// AccountAuthorizationID selects the stable wholesale-account path.
-	// WorkID remains a runner correlation handle but is not an economic
-	// balance owner in this mode.
+	// AccountAuthorizationID is the single-purpose authority and economic
+	// reservation for this workload. WorkID mirrors it for correlation.
 	AccountAuthorizationID   string `json:"account_authorization_id,omitempty"`
 	AuthorizationMaxUnits    uint64 `json:"authorization_max_units,omitempty"`
 	AuthorizationMaxDebitWei string `json:"authorization_max_debit_wei,omitempty"`
@@ -172,34 +162,23 @@ type Record struct {
 	PrivateSealed     []byte          `json:"descriptor_private_sealed,omitempty"`
 	Grants            []GrantAudit    `json:"grants,omitempty"`
 
-	// Rotation chain. A recipient rotation rebinds the session to a new
-	// payment identity; session_id and the credential do not move, so
-	// this is the only record of which work_id paid for which stretch.
-	// GenerationStartUnits is the cumulative debited total at the moment
-	// this generation began, so a generation's own subtotal is
-	// DebitedTotal - GenerationStartUnits without a second counter to
-	// keep in step.
+	// Historical ticket-session fields remain readable so terminal records can
+	// be retained through their evidence window. Authorization-only records do
+	// not populate them.
 	RotationGeneration uint32 `json:"rotation_generation,omitempty"`
-	// SettlementSeq orders settlement records for this session. Per
-	// session, not per work_id: a rotation mints a new identity, and a
-	// per-identity counter would restart mid-session.
+	// SettlementSeq orders settlement records for this logical session across
+	// authorization revisions.
 	SettlementSeq uint64 `json:"settlement_seq,omitempty"`
-	// FundedWei is cumulative credited value over the whole logical
-	// session; GenerationFundedWei covers the current identity only.
-	// Both are decimal strings, because a wei total outgrows int64.
-	// Funding is per identity while billing is cumulative, so a reader
-	// reconciling one envelope needs the generation figure and one
-	// reconciling the whole session needs the total.
+	// FundedWei is optional account funding credited alongside this
+	// authorization chain. It is not reservation or workload usage.
 	FundedWei string `json:"funded_wei,omitempty"`
 	// BilledWei is what the LEDGER reported charging this session, summed
 	// across its debits. Not recomputed from units: billing is
 	// cumulative over the payment session, which two sessions can share,
 	// so only the ledger knows what this one actually cost.
 	BilledWei string `json:"billed_wei,omitempty"`
-	// PaymentCumulativeUnits is the running unit total on the PAYMENT
-	// identity, as the ledger last reported it. Sessions sharing a
-	// work_id advance it together, so it is not this session's total —
-	// it is where this session's last debit landed on the shared curve.
+	// Deprecated pre-authorization accounting fields. Kept only for decoding
+	// retained terminal records; new records leave them zero/empty.
 	PaymentCumulativeUnits uint64 `json:"payment_cumulative_units,omitempty"`
 	GenerationFundedWei    string `json:"generation_funded_wei,omitempty"`
 	PredecessorWorkID      string `json:"predecessor_work_id,omitempty"`
@@ -630,11 +609,9 @@ func (s *Store) unseal(raw []byte) (*Record, error) {
 	return &rec, nil
 }
 
-// GetByWorkID finds a session by a payment identity it holds or held.
-// Rotation means a reader can arrive with a superseded work_id — a
-// settlement forwarded through a slow path, say — and matching only the
-// current one would answer "unknown session" about a session that is
-// right there.
+// GetByWorkID finds a session by authorization id. The predecessor lookup and
+// ambiguity refusal are retained only for terminal records created before the
+// authorization-only cutover.
 func (s *Store) GetByWorkID(workID string) (*Record, error) {
 	if workID == "" {
 		return nil, ErrNotFound
@@ -653,14 +630,9 @@ func (s *Store) GetByWorkID(workID string) (*Record, error) {
 			if rec.WorkID != workID && rec.PredecessorWorkID != workID {
 				return nil
 			}
-			// A work_id is a PAYMENT identity, and a gateway reuses one
-			// ticket session across many logical sessions. This used to
-			// keep the last match in iteration order, so a query with
-			// several sessions on one identity returned whichever
-			// session id sorted last — a correctly signed record for the
-			// wrong session, which the caller cannot tell is wrong.
-			// Refusing is the only honest answer; the caller has a key
-			// that resolves, in gateway_session_id.
+			// Historical payment identities could match several sessions.
+			// Returning an arbitrary signed record would be unsafe; the
+			// caller can resolve by gateway_session_id instead.
 			if out != nil && out.SessionID != rec.SessionID {
 				return ErrAmbiguous
 			}
@@ -688,12 +660,14 @@ const (
 // OpenReservation is an open in flight: the request id is claimed and the
 // side effects performed so far are recorded.
 type OpenReservation struct {
-	RequestID            string    `json:"request_id"`
-	Fingerprint          []byte    `json:"fingerprint"`
-	Stage                string    `json:"stage"`
-	WorkID               string    `json:"work_id,omitempty"`
-	Sender               []byte    `json:"sender,omitempty"`
-	SharedIdentity       bool      `json:"shared_identity,omitempty"`
+	RequestID   string `json:"request_id"`
+	Fingerprint []byte `json:"fingerprint"`
+	Stage       string `json:"stage"`
+	WorkID      string `json:"work_id,omitempty"`
+	Sender      []byte `json:"sender,omitempty"`
+	// AccountAuthorization is retained as a durable cutover marker. Startup
+	// refuses paid reservations written without it; no legacy recovery path
+	// remains.
 	AccountAuthorization bool      `json:"account_authorization,omitempty"`
 	BackendRef           string    `json:"backend_ref,omitempty"`
 	RunnerSessionID      string    `json:"runner_session_id,omitempty"`

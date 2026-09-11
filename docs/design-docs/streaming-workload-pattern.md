@@ -1,7 +1,7 @@
 ---
 title: Streaming workload pattern
 status: superseded
-last-reviewed: 2026-08-19
+last-reviewed: 2026-09-11
 ---
 
 # Streaming workload pattern
@@ -14,6 +14,8 @@ last-reviewed: 2026-08-19
 > §7.3/§9; its "broker meters for the gateway" framing is superseded by
 > [`dual-meter-trust.md`](./dual-meter-trust.md). Kept as design provenance —
 > do not implement against it.
+> It also predates mandatory wholesale accounts and spend authorizations: all
+> `work_id` balance, debit, top-up, and close sequences below are historical.
 
 Cross-cutting blueprint for long-lived, continuously-metered capabilities on
 the Livepeer network. This is the pattern new streaming capabilities should

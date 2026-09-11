@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/gorilla/websocket"
 )
 
@@ -36,6 +37,17 @@ func wsRead(t *testing.T, conn *websocket.Conn) map[string]any {
 		t.Fatalf("read frame: %v", err)
 	}
 	return f
+}
+
+func wsRevisionAuthorization(t *testing.T, requestID, predecessor string) string {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, "https://broker.example.com/v1/session/revision", strings.NewReader(""))
+	req.Header.Set(livepeerheader.Capability, "meet:sfu-room")
+	req.Header.Set(livepeerheader.Offering, "default")
+	req.Header.Set(livepeerheader.Protocol, "paid-session/v1")
+	req.Header.Set(livepeerheader.RequestID, requestID)
+	setSessionTestAuthorization(t, req, "gws-1", predecessor)
+	return req.Header.Get(livepeerheader.Authorization)
 }
 
 func TestSessionControlWS(t *testing.T) {
@@ -90,8 +102,9 @@ func TestSessionControlWS(t *testing.T) {
 	// its own request_id: a frame has no headers, and the WS mirror is
 	// idempotent on the same key as the HTTP verb (§3.3, §8).
 	topup := map[string]any{"type": "session.topup", "body": map[string]any{
-		"request_id":     "ws-topup-1",
-		"payment_header": base64.StdEncoding.EncodeToString([]byte("ws-topup")),
+		"request_id":           "ws-topup-1",
+		"authorization_header": wsRevisionAuthorization(t, "ws-topup-1", "auth-req-ws-1"),
+		"payment_header":       base64.StdEncoding.EncodeToString([]byte("ws-topup")),
 	}}
 	if err := conn.WriteJSON(topup); err != nil {
 		t.Fatal(err)
@@ -132,8 +145,9 @@ func TestSessionControlWS(t *testing.T) {
 	// request id, because replaying the successful one above is answered
 	// from its record and never reaches the terminal check (§3.3).
 	postTerminal := map[string]any{"type": "session.topup", "body": map[string]any{
-		"request_id":     "ws-topup-2",
-		"payment_header": base64.StdEncoding.EncodeToString([]byte("ws-topup")),
+		"request_id":           "ws-topup-2",
+		"authorization_header": wsRevisionAuthorization(t, "ws-topup-2", "auth-ws-topup-1"),
+		"payment_header":       base64.StdEncoding.EncodeToString([]byte("ws-topup")),
 	}}
 	_ = conn.WriteJSON(postTerminal)
 	refused := wsRead(t, conn)

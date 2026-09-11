@@ -134,7 +134,7 @@ session_policy:
   # point: a dead runner holding an open socket is billing nobody and serving
   # nobody.
   heartbeat: { interval_seconds: 5, missed_threshold: 3 }
-  # max_rotations and tolerance_band_pct are unset: the rig expressed no view
+  # tolerance_band_pct is unset: the rig expressed no view
   # on either, and both have defined defaults (3, and none) that are not
   # improved by a number invented here.
 

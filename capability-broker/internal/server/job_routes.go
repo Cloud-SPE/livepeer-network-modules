@@ -76,13 +76,13 @@ func (s *Server) registerJobRoutes() {
 		middleware.Metrics,
 		middleware.Headers,
 	)(s.jobIdempotency(
-		middleware.Chain(middleware.Payment(s.payment, s.lookupSpec, s.opts.InterimDebit, s.receiptSink,
+		middleware.Chain(middleware.Payment(s.payment, s.lookupSpec, s.receiptSink,
 			func(rec *pb.SettlementRecord) (string, error) {
 				// Both protocols emit the same signed envelope, so a
 				// clearinghouse verifies settlement with one code path.
 				return settlement.Encode(rec, s.settlementSigner)
 			},
-			s.allocDebitSeq, s.cfg.ExternalBaseURL))(
+			s.cfg.ExternalBaseURL))(
 			http.HandlerFunc(s.handleJob))))
 	s.mux.Handle("POST /v1/job", h)
 }
@@ -155,10 +155,6 @@ func toStorePending(pd *middleware.PendingDebit) *sessionstore.PendingDebit {
 	if pd == nil {
 		return nil
 	}
-	funded := "0"
-	if pd.FundedValueWei != nil {
-		funded = pd.FundedValueWei.String()
-	}
 	reserved := "0"
 	if pd.ReservedValueWei != nil {
 		reserved = pd.ReservedValueWei.String()
@@ -168,25 +164,18 @@ func toStorePending(pd *middleware.PendingDebit) *sessionstore.PendingDebit {
 		accountFunding = pd.AccountFundingWei.String()
 	}
 	return &sessionstore.PendingDebit{
-		AccountAuthorization: pd.AccountAuthorization,
-		AuthorizationBytes:   append([]byte(nil), pd.AuthorizationBytes...),
-		Sender:               append([]byte(nil), pd.Sender...),
-		WorkID:               pd.WorkID,
-		DebitSeq:             pd.DebitSeq,
-		Units:                pd.Units,
-		DebitedUnits:         pd.DebitedUnits,
-		PaymentBytes:         append([]byte(nil), pd.PaymentBytes...),
-		FundedValueWei:       funded,
-		ReservedValueWei:     reserved,
-		AccountFundingWei:    accountFunding,
-		AccountVersion:       pd.AccountVersion,
-		ActualUnits:          pd.ActualUnits,
-		MeasuredUnits:        pd.MeasuredUnits,
-		WorkUnitName:         pd.WorkUnitName,
-		TerminationReason:    pd.TerminationReason,
-		JobID:                pd.JobID,
-		RequestID:            pd.RequestID,
-		IssuedAt:             pd.IssuedAt,
+		AuthorizationBytes: append([]byte(nil), pd.AuthorizationBytes...),
+		Sender:             append([]byte(nil), pd.Sender...),
+		WorkID:             pd.WorkID,
+		DebitSeq:           pd.DebitSeq,
+		ReservedValueWei:   reserved,
+		AccountFundingWei:  accountFunding,
+		AccountVersion:     pd.AccountVersion,
+		ActualUnits:        pd.ActualUnits,
+		MeasuredUnits:      pd.MeasuredUnits,
+		WorkUnitName:       pd.WorkUnitName,
+		JobID:              pd.JobID,
+		RequestID:          pd.RequestID,
 		// Due immediately: the first retry should not wait out a backoff
 		// the exchange has not earned yet.
 		NextAttemptAt: time.Now().UTC(),
@@ -285,7 +274,7 @@ func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bo
 }
 
 // jobEnvelopeFingerprint binds a request id to what is knowable before
-// the body streams: capability, offering, and the payment envelope.
+// the body streams: capability, offering, authorization, and optional funding.
 //
 // It used to include ContentLength and call itself the content
 // fingerprint, which let a retry that reused the id and the envelope but
@@ -295,9 +284,10 @@ func (m *memJobIdem) Finish(id string, status int, units uint64, unit string, bo
 // it has been read and the record has to exist before then.
 func jobEnvelopeFingerprint(r *http.Request) []byte {
 	h := sha256.New()
-	fmt.Fprintf(h, "%s|%s|%s",
+	fmt.Fprintf(h, "%s|%s|%s|%s",
 		r.Header.Get(livepeerheader.Capability),
 		r.Header.Get(livepeerheader.Offering),
+		r.Header.Get(livepeerheader.Authorization),
 		r.Header.Get(livepeerheader.Payment))
 	return h.Sum(nil)
 }
@@ -350,10 +340,6 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		if c == nil {
 			livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
 				"no paid-job offering "+capID+"/"+offID)
-			return
-		}
-		if r.Header.Get(livepeerheader.Authorization) != "" && !supportsWholesaleAccounts(c) {
-			livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "offering does not advertise wholesale account authorization support")
 			return
 		}
 		// Transport refusal happens before any payment side effects.

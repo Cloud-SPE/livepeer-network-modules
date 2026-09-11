@@ -12,9 +12,9 @@ const (
 	Capability = "Livepeer-Capability"
 	Offering   = "Livepeer-Offering"
 	Payment    = "Livepeer-Payment"
-	// Authorization is a payer-signed, single-purpose reservation for
-	// exactly this job or logical session. When present Payment is an
-	// optional account top-up rather than a per-invocation requirement.
+	// Authorization is the required payer-signed, single-purpose reservation
+	// for exactly this job or logical session. Payment is optional account
+	// funding and never substitutes for authorization.
 	Authorization = "Livepeer-Authorization"
 	// CallerProof proves possession of the optional caller_public_key in a
 	// spend authorization; it never substitutes for the payer signature.
@@ -25,11 +25,6 @@ const (
 	// RequestID is required on every paid request: it is the
 	// idempotency key (paid-job §4, paid-session §3.1).
 	RequestID = "Livepeer-Request-Id"
-	// RebindFrom declares a recipient rotation on a session top-up: its
-	// value is the work_id the session is moving OFF. Present only on
-	// the retry after a rotation; a rebind is declared, never inferred
-	// from a mismatched payment identity.
-	RebindFrom = "Livepeer-Rebind-From"
 )
 
 // Response headers (broker → gateway).
@@ -54,6 +49,7 @@ const (
 	ErrOfferingNotServed       = "offering_not_served"
 	ErrPaymentEnvelopeMismatch = "payment_envelope_mismatch"
 	ErrPaymentInvalid          = "payment_invalid"
+	ErrAuthorizationRequired   = "authorization_required"
 	ErrProtocolUnsupported     = "protocol_unsupported"
 	ErrTransportUnsupported    = "protocol_transport_unsupported"
 	ErrJobInFlight             = "job_in_flight"
@@ -85,22 +81,10 @@ const (
 	// session, so the query fails and names a key that resolves.
 	ErrAmbiguousIdentifier = "ambiguous_identifier"
 	ErrRefillRefused       = "refill_refused"
-	// ErrRecipientRotated tells a gateway its payment identity is stale:
-	// the payee rotated its recipient rand, so every ticket in the batch
-	// was rejected. The remedy is mechanical — re-fetch ticket params,
-	// re-mint, and retry declaring Livepeer-Rebind-From. A distinct code
-	// exists so a gateway acts on a code instead of matching a message.
-	ErrRecipientRotated = "recipient_rotated"
-	// ErrRebindRefused reports a declared rotation rebind the broker
-	// would not perform: the declared predecessor is not this session's
-	// identity, the successor did not credit, or the sender differs.
-	ErrRebindRefused      = "rebind_refused"
-	ErrBackendUnavailable = "backend_unavailable"
-	ErrCapacityExhausted  = "capacity_exhausted"
-	ErrInternalError      = "internal_error"
-	// ErrInsufficientBalance signals the broker terminated work because
-	// PayeeDaemon.SufficientBalance reported the payer's balance no
-	// longer covers the configured runway. Emitted as a Livepeer-Error
-	// response, or as a trailer where the response is already in flight.
+	ErrBackendUnavailable  = "backend_unavailable"
+	ErrCapacityExhausted   = "capacity_exhausted"
+	ErrInternalError       = "internal_error"
+	// ErrInsufficientBalance means the stable account cannot reserve the
+	// authorization-backed workload runway.
 	ErrInsufficientBalance = "insufficient_balance"
 )

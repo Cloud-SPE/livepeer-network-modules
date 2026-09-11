@@ -89,7 +89,6 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 			Terminate: c.Session.Runner.TerminatePath,
 		},
 		MinRunwayUnits: c.Session.MinRunwayUnits,
-		MaxRotations:   c.Session.MaxRotations,
 	}
 }
 
@@ -185,8 +184,10 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 			"no paid-session offering "+capID+"/"+offID)
 		return
 	}
-	if r.Header.Get(livepeerheader.Authorization) != "" && !supportsWholesaleAccounts(c) {
-		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "offering does not advertise wholesale account authorization support")
+	if r.Header.Get(livepeerheader.Authorization) == "" {
+		livepeerheader.WriteError(w, http.StatusUnauthorized,
+			livepeerheader.ErrAuthorizationRequired,
+			"missing required header: "+livepeerheader.Authorization)
 		return
 	}
 	var body sessionOpenBody
@@ -223,34 +224,22 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	var authorizationBytes []byte
 	var reservationWei *big.Int
 	var acceptedQuoteRef *paymentsv1.QuoteRef
-	if h := r.Header.Get(livepeerheader.Authorization); h != "" {
-		authorizationBytes, err = base64.StdEncoding.DecodeString(h)
-		if err != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Authorization is not valid base64")
-			return
-		}
-		reservationWei, err = validateSessionAuthorization(authorizationBytes, r.Header.Get(livepeerheader.CallerProof), raw, body, r.Header.Get(livepeerheader.RequestID), capID, offID, s.cfg.ExternalBaseURL, specFromCapability(c))
-		if err != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, err.Error())
-			return
-		}
-		var authorization paymentsv1.SpendAuthorization
-		if err := proto.Unmarshal(authorizationBytes, &authorization); err != nil || authorization.GetPayload().GetAcceptedPrice().GetQuoteRef() == nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization has no accepted quote reference")
-			return
-		}
-		acceptedQuoteRef = proto.Clone(authorization.GetPayload().GetAcceptedPrice().GetQuoteRef()).(*paymentsv1.QuoteRef)
-	} else if spec, ok := s.lookupSpec(capID, offID); ok {
-		if err := middleware.ValidateExpectedPriceForRequest(paymentBytes, capID, offID, spec); err != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "expected price mismatch: "+err.Error())
-			return
-		}
-		// A production payment validated above always yields a quote. The
-		// in-process payment stub intentionally accepts opaque fixture bytes;
-		// keep that development-only path usable while leaving its settlement
-		// without an invented quote (and therefore unsuitable for clearing).
-		acceptedQuoteRef, _ = middleware.AcceptedQuoteRef(paymentBytes)
+	authorizationBytes, err = base64.StdEncoding.DecodeString(r.Header.Get(livepeerheader.Authorization))
+	if err != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Authorization is not valid base64")
+		return
 	}
+	reservationWei, err = validateSessionAuthorization(authorizationBytes, r.Header.Get(livepeerheader.CallerProof), raw, body, r.Header.Get(livepeerheader.RequestID), capID, offID, s.cfg.ExternalBaseURL, specFromCapability(c))
+	if err != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, err.Error())
+		return
+	}
+	var authorization paymentsv1.SpendAuthorization
+	if err := proto.Unmarshal(authorizationBytes, &authorization); err != nil || authorization.GetPayload().GetAcceptedPrice().GetQuoteRef() == nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization has no accepted quote reference")
+		return
+	}
+	acceptedQuoteRef = proto.Clone(authorization.GetPayload().GetAcceptedPrice().GetQuoteRef()).(*paymentsv1.QuoteRef)
 
 	res, err := s.sessionEngine.Open(r.Context(), sessionengine.OpenRequest{
 		RequestID:             r.Header.Get(livepeerheader.RequestID),
@@ -305,18 +294,6 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		resp["balance"] = s.balanceObject(r, rec, specFromCapability(c))
 	}
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func supportsWholesaleAccounts(c *config.Capability) bool {
-	if c == nil || c.Extra == nil {
-		return false
-	}
-	features, ok := c.Extra["features"].(map[string]any)
-	if !ok {
-		return false
-	}
-	enabled, _ := features["wholesale_accounts"].(bool)
-	return enabled
 }
 
 func validateSessionAuthorization(wire []byte, callerProof string, raw []byte, body sessionOpenBody, requestID, capability, offering, brokerURI string, spec *sessionengine.OfferingSpec) (*big.Int, error) {
@@ -407,6 +384,7 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		"session_id":         rec.SessionID,
 		"gateway_session_id": rec.GatewaySessionID,
 		"work_id":            rec.WorkID,
+		"authorization_id":   rec.AccountAuthorizationID,
 		"state":              rec.State,
 		"runtime": map[string]any{
 			"schema": rec.DescriptorSchema,
@@ -418,14 +396,6 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		},
 		"lease":      map[string]any{"expires_at": rec.LeaseExpiresAt.Format(time.RFC3339)},
 		"started_at": rec.CreatedAt.Format(time.RFC3339),
-	}
-	if rec.RotationGeneration > 0 {
-		// Recorded, not announced: a completed rotation is settlement-only
-		// from the customer's side (paid-session §3.3 rotation rules).
-		resp["rotation"] = map[string]any{
-			"generation":          rec.RotationGeneration,
-			"predecessor_work_id": rec.PredecessorWorkID,
-		}
 	}
 	if spec != nil {
 		resp["balance"] = s.balanceObject(r, rec, spec)
@@ -453,63 +423,63 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	authHeader := r.Header.Get(livepeerheader.Authorization)
+	if authHeader == "" {
+		livepeerheader.WriteError(w, http.StatusUnauthorized,
+			livepeerheader.ErrAuthorizationRequired,
+			"missing required header: "+livepeerheader.Authorization)
+		return
+	}
 	var paymentBytes []byte
 	var err error
 	if h := r.Header.Get(livepeerheader.Payment); h != "" {
 		paymentBytes, err = base64.StdEncoding.DecodeString(h)
 	}
-	if err != nil || (len(paymentBytes) == 0 && rec.AccountAuthorizationID == "" && r.Header.Get(livepeerheader.Authorization) == "") {
+	if err != nil {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-			"missing or invalid Livepeer-Payment header")
+			"invalid Livepeer-Payment header")
 		return
 	}
-	var res *sessionengine.TopUpResult
-	if authHeader := r.Header.Get(livepeerheader.Authorization); authHeader != "" {
-		wire, decErr := base64.StdEncoding.DecodeString(authHeader)
-		if decErr != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "invalid Livepeer-Authorization header")
-			return
-		}
-		raw, readErr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
-		if readErr != nil {
-			livepeerheader.WriteBadRequest(w, "cannot read revision body")
-			return
-		}
-		var auth paymentsv1.SpendAuthorization
-		if proto.Unmarshal(wire, &auth) != nil || auth.GetPayload() == nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "authorization revision is malformed")
-			return
-		}
-		p := auth.GetPayload()
-		spec := s.specForRecord(rec)
-		if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session")
-			return
-		}
-		digest := sha256.Sum256(raw)
-		if !bytes.Equal(p.GetRequestDigest(), digest[:]) {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision body digest mismatch")
-			return
-		}
-		if err := middleware.ValidateCallerProof(wire, p.GetCallerPublicKey(), r.Header.Get(livepeerheader.CallerProof)); err != nil {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, err.Error())
-			return
-		}
-		price := p.GetAcceptedPrice()
-		wantPer := spec.PerUnits
-		if wantPer == 0 {
-			wantPer = 1
-		}
-		if price == nil || price.GetCapability() != rec.Capability || price.GetOffering() != rec.Offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
-			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision price mismatch")
-			return
-		}
-		res, err = s.sessionEngine.ReviseAuthorization(r.Context(), rec.SessionID, r.Header.Get(livepeerheader.RequestID), wire, paymentBytes, sessionRunwayReservation(p, spec))
-	} else {
-		res, err = s.sessionEngine.TopUpRebind(r.Context(), rec.SessionID,
-			r.Header.Get(livepeerheader.RequestID),
-			r.Header.Get(livepeerheader.RebindFrom), paymentBytes)
+	wire, decErr := base64.StdEncoding.DecodeString(authHeader)
+	if decErr != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "invalid Livepeer-Authorization header")
+		return
 	}
+	raw, readErr := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if readErr != nil {
+		livepeerheader.WriteBadRequest(w, "cannot read revision body")
+		return
+	}
+	var auth paymentsv1.SpendAuthorization
+	if proto.Unmarshal(wire, &auth) != nil || auth.GetPayload() == nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "authorization revision is malformed")
+		return
+	}
+	p := auth.GetPayload()
+	spec := s.specForRecord(rec)
+	if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session")
+		return
+	}
+	digest := sha256.Sum256(raw)
+	if !bytes.Equal(p.GetRequestDigest(), digest[:]) {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision body digest mismatch")
+		return
+	}
+	if err := middleware.ValidateCallerProof(wire, p.GetCallerPublicKey(), r.Header.Get(livepeerheader.CallerProof)); err != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, err.Error())
+		return
+	}
+	price := p.GetAcceptedPrice()
+	wantPer := spec.PerUnits
+	if wantPer == 0 {
+		wantPer = 1
+	}
+	if price == nil || price.GetCapability() != rec.Capability || price.GetOffering() != rec.Offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision price mismatch")
+		return
+	}
+	res, err := s.sessionEngine.ReviseAuthorization(r.Context(), rec.SessionID, r.Header.Get(livepeerheader.RequestID), wire, paymentBytes, sessionRunwayReservation(p, spec))
 	if err != nil {
 		s.writeSessionError(w, err)
 		return
@@ -621,20 +591,24 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set(livepeerheader.Settlement, encoded)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"session_id":          set.GetSessionId(),
-		"gateway_session_id":  set.GetGatewaySessionId(),
-		"work_id":             set.GetWorkId(),
-		"predecessor_work_id": set.GetPredecessorWorkId(),
-		"rotation_generation": set.GetRotationGeneration(),
-		"state":               set.GetState(),
-		"unit":                set.GetWorkUnitName(),
-		"claimed_units":       set.GetClaimedUnits(),
-		"debited_units":       set.GetDebitedUnits(),
-		"billed_value_wei":    new(big.Int).SetBytes(set.GetBilledValueWei().GetValue()).String(),
-		"amount_wei":          new(big.Int).SetBytes(set.GetAmountWei().GetValue()).String(),
-		"per_units":           set.GetPerUnits(),
-		"settlement_seq":      set.GetSettlementSeq(),
-		"issued_at":           set.GetIssuedAt(),
+		"session_id":         set.GetSessionId(),
+		"gateway_session_id": set.GetGatewaySessionId(),
+		"work_id":            set.GetWorkId(),
+		"authorization_id":   set.GetAuthorizationId(),
+		"state":              set.GetState(),
+		"unit":               set.GetWorkUnitName(),
+		"claimed_units":      set.GetClaimedUnits(),
+		"debited_units":      set.GetDebitedUnits(),
+		"billed_value_wei":   new(big.Int).SetBytes(set.GetBilledValueWei().GetValue()).String(),
+		"amount_wei":         new(big.Int).SetBytes(set.GetAmountWei().GetValue()).String(),
+		"per_units":          set.GetPerUnits(),
+		"settlement_seq":     set.GetSettlementSeq(),
+		"issued_at":          set.GetIssuedAt(),
+		"accepted_quote_ref": map[string]any{
+			"quote_id": set.GetAcceptedQuoteRef().GetQuoteId(), "quote_version": set.GetAcceptedQuoteRef().GetQuoteVersion(),
+			"constraint_fingerprint": base64.StdEncoding.EncodeToString(set.GetAcceptedQuoteRef().GetConstraintFingerprint()),
+			"route_fingerprint":      base64.StdEncoding.EncodeToString(set.GetAcceptedQuoteRef().GetRouteFingerprint()),
+		},
 	})
 }
 
@@ -839,10 +813,24 @@ func (s *Server) specForRecord(rec *sessionstore.Record) *sessionengine.Offering
 
 // balanceObject builds the normative balance object (paid-session §6).
 func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *sessionengine.OfferingSpec) map[string]any {
+	reserved := new(big.Int)
+	if rec.AuthorizationReservedWei != "" {
+		reserved.SetString(rec.AuthorizationReservedWei, 10)
+	}
+	billed := payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, rec.DebitedTotal)
+	capRemaining := uint64(0)
+	if rec.AuthorizationMaxUnits > rec.DebitedTotal {
+		capRemaining = rec.AuthorizationMaxUnits - rec.DebitedTotal
+	}
 	obj := map[string]any{
-		"claimed_units": rec.ClaimedTotal,
-		"debited_units": rec.DebitedTotal,
-		"unit":          rec.Unit,
+		"claimed_units":                     rec.ClaimedTotal,
+		"debited_units":                     rec.DebitedTotal,
+		"unit":                              rec.Unit,
+		"authorization_id":                  rec.AccountAuthorizationID,
+		"authorization_max_units":           rec.AuthorizationMaxUnits,
+		"authorization_cap_remaining_units": capRemaining,
+		"authorization_reserved_value_wei":  reserved.String(),
+		"cumulative_billed_value_wei":       billed.String(),
 		// True whenever the next top-up would be refused — including
 		// from open on a bounded offering, so the advertisement always
 		// precedes the refusal.
@@ -851,9 +839,17 @@ func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *
 			spec.Refill == "bounded",
 	}
 	status := "ok"
-	if bal, err := s.payment.GetBalance(r.Context(), rec.Sender, rec.WorkID); err == nil && bal != nil &&
-		spec.PricePerWorkUnitWei != nil && spec.PricePerWorkUnitWei.Sign() > 0 {
-		runway := payment.RunwayUnits(bal, spec.PricePerWorkUnitWei, spec.PerUnits)
+	if ac, ok := s.payment.(payment.AccountClient); ok {
+		if account, err := ac.GetWholesaleAccount(r.Context(), rec.Sender); err == nil && account != nil {
+			obj["account_available_value_wei"] = account.Available.String()
+			obj["account_version"] = account.Version
+		}
+	}
+	if spec.PricePerWorkUnitWei != nil && spec.PricePerWorkUnitWei.Sign() > 0 {
+		runway := payment.RunwayUnits(reserved, spec.PricePerWorkUnitWei, spec.PerUnits)
+		if uint64(runway) > capRemaining {
+			runway = int64(capRemaining)
+		}
 		obj["runway_units"] = runway
 		burn := spec.BurnRatePerSecond
 		if burn <= 0 {
@@ -893,6 +889,8 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 		status := http.StatusBadRequest
 		code := pe.Code
 		switch pe.Code {
+		case "authorization_required":
+			status, code = http.StatusUnauthorized, livepeerheader.ErrAuthorizationRequired
 		case "payment_invalid":
 			status, code = http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid
 		case "refill_refused":
@@ -904,10 +902,6 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 			status, code = http.StatusBadRequest, livepeerheader.ErrRequestIDReuse
 		case "request_id_required":
 			status = http.StatusBadRequest
-		case "rebind_refused":
-			status, code = http.StatusConflict, livepeerheader.ErrRebindRefused
-		case "recipient_rotated":
-			status, code = http.StatusConflict, livepeerheader.ErrRecipientRotated
 		case "gateway_session_id_reuse":
 			// 409, not 400: the request is well formed and the id is
 			// merely taken — the same shape as refill_refused, and a

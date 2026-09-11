@@ -24,6 +24,16 @@ func All() []harness.Scenario {
 
 func jobScenarios() []harness.Scenario {
 	return []harness.Scenario{
+		{Name: "paid-job/payment-only-refused", Spec: "paid-job §3", Run: func(c *harness.Ctx) error {
+			r, err := c.DoJob(harness.JobRequest{Offering: c.JobOfferingAll, RequestID: c.RequestID("payment-only"), Payment: harness.PaymentEnvelope("payment-only"), Body: []byte(`{"prompt":"must not run"}`), OmitAuthorization: true})
+			if err != nil {
+				return err
+			}
+			if r.Status != 401 || r.Header.Get(harness.HdrError) != harness.ErrAuthorizationRequired {
+				return fmt.Errorf("payment-only job status %d error %q; want 401 %s", r.Status, r.Header.Get(harness.HdrError), harness.ErrAuthorizationRequired)
+			}
+			return nil
+		}},
 		{Name: "paid-job/unary-exchange", Spec: "paid-job §7", Run: func(c *harness.Ctx) error {
 			r, err := c.DoJob(harness.JobRequest{
 				Offering: c.JobOfferingAll, RequestID: c.RequestID("unary"),
@@ -590,6 +600,17 @@ func openHappySession(c *harness.Ctx, tag string) (*harness.HTTPResult, fakes.Cr
 
 func sessionScenarios() []harness.Scenario {
 	return []harness.Scenario{
+		{Name: "paid-session/payment-only-open-refused", Spec: "paid-session §3.1", Run: func(c *harness.Ctx) error {
+			body := `{"gateway_session_id":"` + c.GatewaySessionID("payment-only") + `","session_params":{}}`
+			r, err := c.OpenPaymentOnlySession(c.RequestID("payment-only"), harness.PaymentEnvelope("payment-only"), body)
+			if err != nil {
+				return err
+			}
+			if r.Status != 401 || r.Header.Get(harness.HdrError) != harness.ErrAuthorizationRequired {
+				return fmt.Errorf("payment-only session open status %d error %q; want 401 %s", r.Status, r.Header.Get(harness.HdrError), harness.ErrAuthorizationRequired)
+			}
+			return nil
+		}},
 		{Name: "paid-session/happy-path", Spec: "paid-session §10", Run: func(c *harness.Ctx) error {
 			open, cb, err := openHappySession(c, "happy")
 			if err != nil {
@@ -1071,7 +1092,8 @@ func sessionScenarios() []harness.Scenario {
 			}
 
 			// Gateway-initiated frames are acknowledged.
-			if err := conn.SendTopUp(c.RequestID("ws-topup"), harness.PaymentEnvelope("ws-topup")); err != nil {
+			wsTopUpID := c.RequestID("ws-topup")
+			if err := conn.SendTopUp(wsTopUpID, c.SessionRevisionAuthorization(sessionID, wsTopUpID), harness.PaymentEnvelope("ws-topup")); err != nil {
 				return err
 			}
 			ack, err := conn.ReadUntil("ack", 10*time.Second)
@@ -1136,7 +1158,7 @@ func sessionScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
-		{Name: "paid-session/restart-rebind", Spec: "paid-session §9.2", Run: func(c *harness.Ctx) error {
+		{Name: "paid-session/restart-resume", Spec: "paid-session §9", Run: func(c *harness.Ctx) error {
 			if c.RestartBroker == nil {
 				return fmt.Errorf("%w: suite does not own the broker process (URL mode); run in auto mode or demonstrate restart with your own harness", harness.ErrSkip)
 			}
@@ -1161,8 +1183,8 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("restart: %w", err)
 			}
 
-			// This scenario runs against a payment layer that survives
-			// the restart, so the REBIND branch is the required outcome:
+			// This scenario runs against authorization state that survives
+			// the restart, so RESUME is the required outcome:
 			// a broker that terminates here is failing recovery, not
 			// exercising the other branch (which
 			// paid-session/restart-terminal covers deterministically).
@@ -1171,10 +1193,10 @@ func sessionScenarios() []harness.Scenario {
 				return err
 			}
 			if st.Status != 200 {
-				return fmt.Errorf("status after restart: %d %s (session unreachable — neither rebound nor terminal)", st.Status, st.Body)
+				return fmt.Errorf("status after restart: %d %s (session unreachable — neither resumed nor terminal)", st.Status, st.Body)
 			}
 			sm := st.JSON()
-			// Forbidden in BOTH branches: a second work id.
+			// Forbidden in BOTH branches: a second authorization id.
 			if got := harness.FieldString(sm, "work_id"); got != workID {
 				return fmt.Errorf("work_id changed across restart: %q -> %q", workID, got)
 			}
@@ -1184,11 +1206,11 @@ func sessionScenarios() []harness.Scenario {
 			}
 
 			if state := harness.FieldString(sm, "state"); state == "ended" || state == "failed" {
-				return fmt.Errorf("session went terminal (%s/%s) despite a surviving payment layer; rebind was required",
+				return fmt.Errorf("session went terminal (%s/%s) despite surviving authorization state; resume was required",
 					state, harness.FieldString(sm, "close_reason"))
 			}
 
-			// Rebound. Usage continues from the surviving
+			// Resumed. Usage continues from the surviving
 			// watermark — the pre-restart event is still a duplicate,
 			// and the next sequence is accepted.
 			if s2, _, err := c.Runner.PostEvent(cb, fmt.Sprintf(
@@ -1215,7 +1237,7 @@ func sessionScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
-		{Name: "paid-session/restart-terminal-when-unbillable", Spec: "paid-session §9.2", Run: func(c *harness.Ctx) error {
+		{Name: "paid-session/restart-terminal-when-unbillable", Spec: "paid-session §9", Run: func(c *harness.Ctx) error {
 			if c.RestartBrokerLosingPayment == nil {
 				return fmt.Errorf("%w: suite cannot discard the payment layer's state (URL mode)", harness.ErrSkip)
 			}

@@ -2,7 +2,8 @@
 // payment-daemon (`PayeeDaemon`) and provides Mock + GRPC
 // implementations.
 //
-// The middleware uses Client without caring which is wired:
+// The broker uses Client for ticket-funding operations without caring which
+// implementation is wired:
 //   - GRPC: real client, talks to the daemon over a unix socket.
 //   - Mock: in-process stub, used only for unit tests.
 package payment
@@ -23,17 +24,10 @@ const (
 	PaymentRejectionReasonOther                PaymentRejectionReason = 5
 )
 
-// Client is the broker's PayeeDaemon adapter. The middleware drives a
-// session lifecycle:
-//
-//	OpenSession → ProcessPayment → handler → DebitBalance → CloseSession
-//
-// Plan 0015 grows the in-handler middle: long-running sessions
-// periodically call DebitBalance with per-tick deltas plus
-// SufficientBalance to confirm runway, terminating the handler when the
-// runway disappears.
-//
-// Implementations may persist state (GRPC) or hold it in memory (Mock).
+// Client is the broker's ticket-funding adapter. These operations establish
+// recipient-random generations used to credit the wholesale account; they do
+// not authorize or settle workload execution. Paid workloads require
+// AccountClient.
 type Client interface {
 	// GetTicketParams proxies the payee-side quote-free ticket-params
 	// issuance surface. The broker exposes this over HTTP so sender-mode
@@ -44,45 +38,11 @@ type Client interface {
 	// given work_id with the supplied pricing metadata. Returns the
 	// daemon's outcome (opened vs already-open).
 	OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error)
-
-	// ProcessPayment hands the daemon the raw `Payment` wire bytes
-	// from the inbound `Livepeer-Payment` header (already
-	// base64-decoded). The daemon validates and seals the session's
-	// sender on the first call. Returns the sender (extracted from
-	// the validated payment) plus the resulting balance.
-	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResult, error)
-
-	// DebitBalance is idempotent by (sender, work_id, debit_seq).
-	// Retries with the same seq return the prior balance instead of
-	// double-debiting.
-	//
-	// The result reports what the ledger actually CHARGED. Do not
-	// recompute it: billing is cumulative, so a charge depends on the
-	// running total and a recomputation from units alone disagrees
-	// whenever a remainder carries — which is how a signed settlement
-	// came to attest 5 wei for a debit that cost 4.
-	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error)
-
-	// SufficientBalance checks whether the (sender, work_id) balance
-	// covers at least min_work_units of additional priced work, without
-	// debiting. Plan 0015's interim-debit ticker calls this per tick;
-	// false return triggers handler termination.
-	SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error)
-
-	// GetBalance returns the current balance for a (sender, work_id)
-	// pair. Used for observability and conformance assertions.
-	GetBalance(ctx context.Context, sender []byte, workID string) (*big.Int, error)
-
-	// CloseSession finalizes a session. After this call no further
-	// ProcessPayment or DebitBalance against (sender, work_id) is
-	// accepted.
-	CloseSession(ctx context.Context, sender []byte, workID string) error
 }
 
-// AccountClient is the wholesale-account extension. It is deliberately a
-// separate interface so legacy/test clients remain source compatible while a
-// request carrying Livepeer-Authorization can fail closed when the connected
-// daemon has not negotiated the extension.
+// AccountClient is the mandatory paid-workload interface. Keeping it separate
+// lets the broker detect an old daemon and fail closed rather than treating a
+// funding ticket as workload authority.
 type AccountClient interface {
 	FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error)
 	AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error)

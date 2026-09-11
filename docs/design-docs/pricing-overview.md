@@ -378,18 +378,28 @@ message SelectedRoute {
 
 [`livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payee_daemon.proto):
 
-- `OpenSession(work_id, capability, offering, price_per_work_unit_wei, work_unit)` — RPC at line 47, request at line 156-171. Freezes the price for the session.
-- `ProcessPayment(...)` — RPC at line 52. Credits EV.
-- `DebitBalance(sender, work_id, work_units, debit_seq)` — RPC at line 58, request at line 210-220. Applies `price × units`. **No price field — uses the frozen one.**
-- `SufficientBalance(sender, work_id, min_work_units)` — RPC at line 62. Pre-flight affordability check.
+- `AdmitAuthorization(...)` verifies the signed, route-bound authorization,
+  optionally credits a ticket-funded account shortfall, and atomically
+  reserves the permitted debit before work.
+- `AdvanceAuthorization(...)` applies cumulative session usage and restores a
+  bounded runway reservation idempotently.
+- `SettleAuthorization(...)` debits actual delivered units and releases unused
+  reservation value.
+- `GetWholesaleAccount(...)` and `GetSpendAuthorization(...)` expose the
+  aggregate account and single-purpose authorization state for operations and
+  reconciliation.
 - `GetTicketParams(sender, capability, offering, face_value, recipient)` — RPC at line 38. Canonical sender-bootstrap call; receiver implementation at `receiver.go:397-448`.
-- `CloseSession`, `GetBalance`, `ListPendingRedemptions`, `GetRedemptionStatus`, `GetRoundRevenue` — operational.
+- `FundWholesaleAccount`, `ListPendingRedemptions`, `GetRedemptionStatus`, and
+  `GetRoundRevenue` are funding and redemption operations. The older
+  work-id balance RPCs are not workload admission surfaces.
 
 ### Payer RPC — what the gateway calls
 
 [`livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto`](../../livepeer-network-protocol/proto/livepeer/payments/v1/payer_daemon.proto):
 
-- `CreatePayment(recipient, ticket_params_base_url, accepted_price, funding)` — implemented at `sender.go:73-158`.
+- `CreateSpendAuthorization(...)` signs the single-purpose workload authority.
+- `CreatePayment(..., account_funding)` mints only the declared aggregate
+  account shortfall and enforces its funding ceiling.
 
 ### Wire-compat payment types
 

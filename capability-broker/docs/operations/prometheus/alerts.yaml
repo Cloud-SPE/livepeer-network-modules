@@ -37,8 +37,9 @@ groups:
           summary: "Broker→payment-daemon RPC error rate >5% for 10m"
           description: |
             The broker's calls to the payment-daemon are failing. Paid
-            requests depend on ProcessPayment / DebitBalance, so sustained
-            errors mean revenue loss and rejected traffic. Break down:
+            requests depend on AdmitAuthorization, AdvanceAuthorization, and
+            SettleAuthorization, so sustained errors mean rejected traffic or
+            durable accounting backlog. Break down:
               topk(5, sum by (method,result) (rate(livepeer_payment_client_requests_total{result!="ok"}[1h])))
             A result of "Unavailable" usually means the daemon is down or
             the unix socket is gone — check the payment-daemon itself.
@@ -60,8 +61,8 @@ groups:
           description: |
             Payment-daemon RPCs are slow at the tail, adding latency to the
             paid request path. The daemon is unix-socket-local, so p99>500ms
-            points at daemon-side contention (BoltDB, chain calls during
-            ProcessPayment) rather than the network.
+            points at daemon-side contention in durable account or
+            authorization operations rather than the network.
 
   - name: livepeer-broker-registry-warning
     interval: 1m
@@ -169,19 +170,17 @@ groups:
           severity: ticket
           service: livepeer-capability-broker
         annotations:
-          summary: "A paid session could not be rebound after broker restart"
+          summary: "A paid session could not be recovered after broker restart"
           description: |
-            recovery_failed is rare by design: on restart the broker either
-            rebinds a session against the same work_id or takes this
-            explicit terminal outcome. It fires when the runner no longer
-            holds the session, or when the payee-side payment session could
-            not be re-asserted — the broker refuses to serve work it cannot
-            bill.
+            recovery_failed is rare by design: on restart the broker resumes
+            only when both the runner and the durable spend authorization
+            still exist. Missing either produces this explicit terminal
+            outcome; the broker refuses to serve work it cannot settle.
 
             A single event after a restart is expected if that session's
             runner was also restarted. A BURST right after a broker restart
-            usually means the payment layer did not survive: check that the
-            payment-daemon kept its store, and that the broker's own
+            usually means authorization state did not survive: check that the
+            payment-daemon kept its account store, and that the broker's own
             session_store is on a persistent volume (runbook §2). Losing
             either orphans every active session.
 

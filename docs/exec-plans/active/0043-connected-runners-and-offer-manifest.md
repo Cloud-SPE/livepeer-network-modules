@@ -106,7 +106,7 @@ offers:
 `capabilities[]`, `backend{}`, `job{}`, `session{}`, `work_unit{}`,
 `health.probe{}` and `pool_snapshot` render targets are **removed** from the
 grammar. Session commercial axes (`lease_*`, `refill`, `min_runway_units`,
-`tolerance_band_pct`, `runway_increment_units`, `max_rotations`) remain
+`tolerance_band_pct`, `runway_increment_units`) remain
 operator-owned and live under `offers[].session_policy`.
 
 The pool emits the same `offers[]` — pushed to the broker by

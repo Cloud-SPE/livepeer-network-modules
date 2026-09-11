@@ -523,11 +523,11 @@ never serve the sender. The receiver therefore rejects the payment
 before validating any ticket, credits nothing, and queues no winners.
 
 The refusal is returned as a successful `ProcessPayment` carrying
-`tickets_rejected` and a dominant `INVALID_RECIPIENT_RAND`, which the
-broker surfaces to the gateway as `recipient_rotated`. That code is the
-gateway's cue to re-fetch ticket params and rebind with
-`Livepeer-Rebind-From`; a transport error in its place would read as a
-generic failure and strand the sender on the dead identity.
+`tickets_rejected` and a dominant `INVALID_RECIPIENT_RAND`. Account funding
+credits nothing. The payer reports the result, refreshes ticket parameters,
+and retries the funding intent with a new id. No workload is rebound:
+authorizations and stable account value are independent of this funding
+generation.
 
 Note what reset does **not** do: it rotates the stable-tuple index and
 closes the session record, but the session's rand survives, so tickets
@@ -562,112 +562,68 @@ Default is 2 rounds.
 
 ---
 
-## 6.5. Long-running session billing (broker interim-debit cadence)
+## 6.5. Authorization-backed workload accounting
 
-The receiver daemon owns per-(sender, work_id) balances. The
-**capability-broker** is the component that performs work and tells the
-daemon "I just did N units; debit accordingly". For **`paid-job/v1`**
-exchanges the broker calls `PayeeDaemon.DebitBalance` once at the
-terminal accounting point (response completion or stream termination).
-For **`paid-session/v1`** the broker converts the runner's cumulative
-usage claims into a sequence of `DebitBalance` calls, with
-`SufficientBalance` runway checks on cadence.
+The receiver maintains a stable wholesale account per
+`(chain, payer, payee, denomination)`. Recipient-random `work_id` ledgers
+validate probabilistic tickets and transfer their expected value into that
+account; they never authorize jobs or sessions.
 
-The session path's accounting invariant is worth knowing here because it
-constrains what the daemon sees: event deduplication is committed only
-together with durable debit progress, so a transient `DebitBalance`
-failure leaves the event unprocessed and the runner's retry produces
-exactly one debit — never zero, never two.
+Every paid workload reaches one of the account RPCs:
 
-This section is what the gateway operator and the orchestrator operator
-need to know to reason about long-running session economics together.
+- `AdmitAuthorization` verifies a single-purpose authorization and atomically
+  reserves its bounded maximum, optionally crediting a shortfall payment first.
+- `AdvanceAuthorization` commits cumulative session usage and replaces the
+  remaining runway reservation.
+- `SettleAuthorization` commits terminal actual usage and releases unused
+  reservation.
+- `FundWholesaleAccount` credits aggregate float without admitting work.
 
-### 6.5.1. Broker flags
+The broker has no interim-debit CLI flags and never invokes
+`DebitBalance`, `SufficientBalance`, or `CloseSession` for workload
+accounting. Those ticket-generation RPCs remain wire-compatible funding
+internals only.
 
-| Flag | Default | Meaning |
-|---|---|---|
-| `--interim-debit-interval` | `30s` | Tick cadence. Each tick computes the bytes/seconds/etc. consumed since the last tick and issues a `DebitBalance(seq=N+1, work_units=delta)`. Setting to `0` disables the ticker entirely; the broker reverts to single-debit-at-handler-close (the v0.2 behavior). Lower = tighter billing, higher RPC load on the receiver daemon; higher = more credit float on each session. |
-| `--interim-debit-min-runway-units` | `60` | Minimum required runway passed to `PayeeDaemon.SufficientBalance` per tick. With the default `30s` tick on a `seconds-elapsed` workload (1 unit per second), the broker requires the session to have ≥60 seconds of credit at every tick. When `SufficientBalance` returns false, the broker terminates the session (see §6.5.3). Set to `0` to disable the runway check (debits still happen; broker keeps relaying until the handler ends). |
-| `--interim-debit-grace-on-insufficient` | `0` | Grace period between observing `sufficient=false` and terminating. Reserved for the future mid-session top-up flow; the gateway-side middleware would have this much wall-clock to mint a fresh `Payment` and re-credit the daemon. v0.1 default zero (hard terminate immediately). |
+### 6.5.1. Session runway
 
-### 6.5.2. Cadence + revenue-recognition latency
+The broker derives an initial reservation from the offer's heartbeat window,
+burn-rate estimate, `min_runway_units`, and the signed authorization cap.
+Each cumulative runner event advances billing and atomically reserves the next
+bounded runway. Account replenishment may restore availability, but only a
+valid predecessor-bound authorization revision can extend a session's signed
+cumulative cap.
 
-The interim-debit cadence sits at the front of the same end-to-end
-latency the receiver operator already cares about for redemption. The
-relevant chain (broker → receiver daemon → on-chain) is:
+When funded authorized runway cannot be reserved, the broker does not extend
+involuntary payer credit. It refuses admission or winds the session down with
+`insufficient_balance`.
 
+### 6.5.2. Idempotency and recovery
+
+Authorization identity plus monotonic admission/advance/settlement sequence is
+the economic idempotency key. A retry returns the recorded result and cannot
+reserve, debit, release, or credit twice.
+
+If an account operation is uncertain, the broker persists
+`accounting_pending` and retries the same operation. It does not manufacture a
+terminal write-off. Broker restart recovery requires the receiver's stable
+account and authorization store to survive. An active broker record without a
+matching durable authorization terminates fail closed; a pre-cutover
+nonterminal record without authorization state refuses startup until the
+operator drains or resolves it.
+
+### 6.5.3. Funding and revenue recognition
+
+Ticket validation, winning-ticket redemption, and chain confirmation remain
+the funding rail. Their latency affects when probabilistic credit becomes
+on-chain revenue, but it does not set workload accounting cadence. Providers
+maintain a bounded aggregate target float and mint only the shortfall:
+
+```text
+shortfall = max(0, target_available - observed_available)
 ```
-work performed → DebitBalance (per tick)
-              → ProcessPayment credits EV (already done at session open)
-              → ticket queued at receiver
-              → win-prob roll on a winner
-              → redemption queue → on-chain submit
-              → receipt + --redemption-confirmations blocks
-```
 
-Worst-case latency from "work performed" to "revenue recognised
-on-chain" is bounded by:
-
-```
-worst_case ≈ interim-debit-interval
-           + redemption-interval
-           + redemption-confirmations × block-time
-```
-
-On Arbitrum One with the recommended defaults (interval=30s,
-redemption-interval=30s, confirmations=4 × ~250ms block time), that's
-about 61s. Lowering `--interim-debit-interval` does not lower the
-critical path — the redemption-interval still dominates — but it does
-tighten the broker's exposure window when a payer's session balance
-runs out.
-
-### 6.5.3. Termination semantics
-
-When `SufficientBalance` returns `sufficient=false`:
-
-1. The broker logs at WARN: `terminating session work_id=… reason=insufficient_balance`.
-2. The broker cancels the request context. Under `paid-job/v1` the
-   exchange handler sees the cancellation, closes both halves of its
-   relay, and returns; under `paid-session/v1` the session engine winds
-   the session down with reason `insufficient_balance`.
-3. The middleware performs a final `DebitBalance` for any units
-   accumulated between the last tick and the cancellation point (so the
-   daemon's ledger matches the bytes/seconds actually shipped).
-4. `CloseSession` runs.
-5. The connection closes gateway-side. The gateway sees the body or the
-   websocket terminate; where the protocol allows it, the broker emits
-   `Livepeer-Error: insufficient_balance`.
-
-The receiver operator does not see anything they wouldn't see from a
-normal session close: a `CloseSession` on the daemon plus the final
-`DebitBalance` call. The signal that this was a *forced* close lives in
-the broker's logs and metrics, not the daemon's.
-
-### 6.5.4. Idempotency contract
-
-Every `DebitBalance` call is idempotent by `(sender, work_id, debit_seq)`
-per `payee_daemon.proto`. The broker's ticker maintains a monotonic
-counter starting at 1: tick #1 → seq=1, tick #2 → seq=2, …, final
-flush → seq=N+1. **Retries reuse the same seq** until the daemon
-returns success; the daemon's idempotency guard then ensures the same
-delta is never applied twice. This is plan 0015 §5.3 — the broker
-trades retry simplicity for keeping the daemon's `DebitBalance`
-semantics unchanged from v0.2.
-
-If you see `DebitBalance call rate exceeds expected cadence` in
-operator dashboards, that's a sustained-retry signal. See §7.
-
-**Session work-units.** Under `paid-session/v1` the runner is the source
-of usage: it reports cumulative totals on the session's event channel and
-the broker derives debits from them. The broker no longer hosts media
-pipelines or counts units itself, so there is no encoder-progress or
-in-broker counter path to reason about here. Terminal reasons
-(`heartbeat_lost`, `lease_expired`, `insufficient_balance`,
-`gateway_close`, …) are surfaced on the session's status and control
-surfaces; see `capability-broker/docs/operator-runbook.md` §3.
-
----
-
+A large request or session maximum is an authorization ceiling, not a request
+to prepay that full amount.
 ## 7. Common failure modes
 
 | Symptom | Likely cause | What to check |
@@ -680,9 +636,9 @@ surfaces; see `capability-broker/docs/operator-runbook.md` §3.
 | Receiver "params expired" rejections from senders | Daemon's L1 clock is trailing the on-chain round. | `--clock-refresh-interval` (default 30s) may be set too high; also check `eth_blockNumber` latency on the RPC endpoint. |
 | Daemon prints `DEV MODE — --chain-rpc-urls is empty` in production logs | Operator forgot to supply `--chain-rpc-urls`. | Set it. Production must not run in dev mode. |
 | Sender returns `face_value capped by maxFloat` | Pending redemptions are eating into deposit faster than 3× heuristic allows. | Speed up redemption (lower `--redemption-interval`), or have payer top up deposit. |
-| Broker terminated long-running session with `Livepeer-Error: insufficient_balance` | Payer's session balance hit zero before the session ended (plan 0015). Either the gateway sized the initial payment too small for the session length, or no mid-session top-up flow exists yet. | Have the gateway raise the initial `face_value` it asks the sender daemon for; or confirm the planned top-up flow is wired (currently a deferred follow-up plan). On Arbitrum One, look for the broker log line `terminating session work_id=… reason=insufficient_balance`. |
-| `livepeer_payment_debits_total{result="error"}` rate > 0 sustained | Broker's interim-debit tick is failing on the daemon. Could be a daemon RPC error, a network partition, or BoltDB contention. | Check broker logs for the per-tick `interim DebitBalance work_id=… failed: …` warning. The broker reuses the same `debit_seq` across retries (plan 0015 §5.3) so the daemon's idempotency key prevents double-debit; sustained retries still indicate a real problem on the daemon side. |
-| DebitBalance call rate exceeds expected cadence | Broker is retrying tick deltas and the daemon is observing duplicate debit_seq values without successful prior commits. | Check broker logs for `interim DebitBalance work_id=… failed` patterns; if the same work_id repeats with the same `debit_seq`, the daemon is rejecting the ticket (signature, sender mismatch, or session-already-closed). Race with `CloseSession` is the most common — increase the broker's tick-stop wait timeout. |
+| Broker refused or terminated work with `insufficient_balance` | Stable wholesale-account availability could not cover the bounded authorization reservation. | Reconcile the account view, target float, pending funding intents, and authorization cap. Fund only the aggregate shortfall; do not mint the request maximum automatically. |
+| `AdmitAuthorization` errors are sustained | Authorization scope/signature is invalid, or account reservation cannot be committed. | Compare payer/payee, broker URI, quote, request digest, expiry, chain, denomination, and available account value. Payment-only requests are intentionally rejected. |
+| `AdvanceAuthorization` or `SettleAuthorization` is retrying | The broker has durable accounting pending against the account store. | Preserve both stores, restore daemon availability, and let the same authorization sequence replay. Never clear the reservation or issue a replacement authorization while the outcome is uncertain. |
 
 ---
 

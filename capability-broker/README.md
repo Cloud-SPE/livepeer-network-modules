@@ -208,7 +208,7 @@ standardized in the spec.
 **Shipped.** Two protocol engines (`paid-job/v1` on `POST /v1/job`,
 `paid-session/v1` on `/v1/session/*`), 8 extractors, a durable bbolt state
 store backing session authority and job idempotency, and the broker-side
-interim-debit ticker are all in. The v0 seven-mode interaction taxonomy —
+authorization admission/advance/settlement path are all in. The v0 seven-mode interaction taxonomy —
 its drivers, the RTMP/HLS media pipeline, and the WebRTC/session-control
 pass-through — was removed in 2026-08. See PLANS.md "Code shipping today"
 §`capability-broker/` for the canonical summary.

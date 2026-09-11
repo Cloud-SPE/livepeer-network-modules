@@ -2,7 +2,8 @@
 
 Package layout, request lifecycle, and dispatch flow for the broker.
 
-> Status: current as of the v1 protocol rewrite (2026-08). The v0
+> Status: current as of the authorization-only wholesale-account cutover
+> (2026-09-11). The v0
 > seven-mode interaction taxonomy — `internal/modes/`, `internal/media/`,
 > `internal/controlws/`, and the `POST /v1/cap` dispatch surface — was
 > removed and replaced by two protocol engines.
@@ -38,13 +39,13 @@ capability-broker/
     │   ├── certification_usage.go        # session usage callback (§3.3)
     │   ├── capability_group.go           # published tuple → candidate runners
     │   ├── backend_capacity.go           # max_in_flight reservation
-    │   ├── debitretry.go                 # durable retry for a debit that did not land
+    │   ├── debitretry.go                 # durable retry for authorization settlement
     │   ├── nonadmission.go               # signed evidence of a refused exchange
     │   ├── exchange_lookup.go            # GET /v1/exchange/{request_id}
     │   ├── runtime_admin.go              # GET/POST /admin/v1/runtime[/reload]
     │   ├── middleware/
     │   │   ├── headers.go                # Livepeer-* header parsing + validation
-    │   │   ├── payment.go                # OpenSession / Debit / Reconcile / CloseSession
+    │   │   ├── payment.go                # authorize / reserve / settle wholesale account
     │   │   ├── settlement.go             # settlement header emission
     │   │   ├── pendingdebit.go           # the outstanding-debit context slot
     │   │   ├── workid.go                 # work-id derivation
@@ -143,9 +144,9 @@ so scrapes never traverse the payment middleware chain.
 ## Required request headers
 
 Every paid request carries `Livepeer-Capability`, `Livepeer-Offering`,
-`Livepeer-Protocol` (e.g. `paid-job/v1`), `Livepeer-Request-Id`, and either
-legacy `Livepeer-Payment` or `Livepeer-Authorization` (plus an optional
-shortfall payment). `Livepeer-Protocol` replaced the pre-v1
+`Livepeer-Protocol` (e.g. `paid-job/v1`), `Livepeer-Request-Id`, and
+`Livepeer-Authorization`. `Livepeer-Payment` is optional shortfall funding and
+never workload authority. `Livepeer-Protocol` replaced the pre-v1
 `Livepeer-Mode` + `Livepeer-Spec-Version` pair. `Livepeer-Request-Id` is
 the idempotency key and is never synthesized server-side — a request
 without one is a 400.
@@ -168,10 +169,10 @@ without one is a 400.
    (404 `capability_not_served`), and a transport the offering does not
    declare (400 `protocol_transport_unsupported`) — all before any payment
    side effect.
-6. **Middleware: payment** — legacy requests call `OpenSession` and
-   `ProcessPayment`; account requests validate the exact signed authorization
-   and atomically call `AdmitAuthorization`, optionally carrying a shortfall
-   payment. Rejects before backend work on failure.
+6. **Middleware: authorization** — validates the exact signed authorization
+   and atomically calls `AdmitAuthorization`, optionally carrying an aggregate
+   account shortfall payment. Payment-only requests fail before ticket or
+   backend side effects.
 7. **Runner selection** — `(capability_id, offering_id)` → the offer's
    eligible attached runners → `selection.DecisionFor` over that eligibility
    and (when configured) the Pool snapshot → one runner, with a
@@ -183,9 +184,9 @@ without one is a 400.
    `actualUnits`;
    the broker sets `Livepeer-Work-Units` (header for `unary`/`multipart`,
    HTTP trailer for `stream`) and `Livepeer-Work-Unit`.
-10. **Middleware: payment (post-serve)** — legacy `DebitBalance(actualUnits)`
-    or account `SettleAuthorization(actualUnits)`; the idempotency record is
-    finalized after accounting resolves.
+10. **Middleware: settlement (post-serve)** —
+    `SettleAuthorization(actualUnits)` debits actual usage and releases unused
+    reservation; the idempotency record is finalized after accounting resolves.
 11. **Response sent.**
 
 ## Request lifecycle (`paid-session/v1`)
@@ -195,9 +196,10 @@ without one is a 400.
 `session_store` sealing key), and returns control coordinates derived from
 `external_base_url` — never from inbound request headers. Usage then flows
 the other way: the runner posts cumulative claims to
-`POST /v1/session/{id}/events`, which the engine converts into interim
-debits. A session winds down through one idempotent path (terminate runner
-→ close payment → release capacity → record `close_reason`), whether the
+`POST /v1/session/{id}/events`, which the engine converts into cumulative
+authorization advances. A session winds down through one idempotent path
+(terminate runner → settle authorization → release capacity → record
+`close_reason`), whether the
 trigger is a gateway `end`, lease expiry, heartbeat loss, insufficient
 balance, runner failure, or a continuously stalled output-health report.
 Runner liveness and output progress have separate durable timestamps: a

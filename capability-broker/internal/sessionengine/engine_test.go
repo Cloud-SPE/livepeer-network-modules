@@ -3,7 +3,6 @@ package sessionengine
 import (
 	"bytes"
 	"context"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,6 +58,12 @@ func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.Fu
 }
 
 func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
+	f.mu.Lock()
+	delay := f.openDelay
+	f.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
 	var auth pb.SpendAuthorization
 	if err := proto.Unmarshal(req.AuthorizationBytes, &auth); err != nil || auth.GetPayload() == nil {
 		return nil, errors.New("bad authorization")
@@ -68,25 +73,43 @@ func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAut
 	if req.Reservation != nil {
 		reserved.Set(req.Reservation)
 	}
+	f.mu.Lock()
+	f.openCalls++
+	f.mu.Unlock()
 	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
 }
 func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failDebits > 0 {
+		f.failDebits--
+		return nil, errors.New("transient daemon failure")
+	}
 	f.accountAdvances = append(f.accountAdvances, req)
-	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: big.NewInt(30), CumulativeBilled: big.NewInt(30), Reserved: new(big.Int).Set(req.TargetReserved)}, nil
+	price, per := f.pricing()
+	before := payment.BillFor(price, per, f.debitedUnits)
+	after := payment.BillFor(price, per, req.CumulativeUnits)
+	charged := new(big.Int).Sub(after, before)
+	if req.CumulativeUnits > f.debitedUnits {
+		f.debits = append(f.debits, debitCall{units: int64(req.CumulativeUnits - f.debitedUnits), seq: req.AdvanceSeq})
+		f.debitedUnits = req.CumulativeUnits
+	}
+	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
 }
 func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.accountSettles = append(f.accountSettles, req)
-	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(970)}, Billed: big.NewInt(30), Released: big.NewInt(20)}, nil
+	f.closed++
+	price, per := f.pricing()
+	billed := payment.BillFor(price, per, req.ActualUnits)
+	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
 }
 func (f *fakePayment) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
 	return &payment.WholesaleAccount{Available: big.NewInt(1000)}, nil
 }
 func (f *fakePayment) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
-	return nil, nil
+	return &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Reserved: big.NewInt(50)}, nil
 }
 
 func newFakePayment() *fakePayment {
@@ -270,6 +293,25 @@ type harness struct {
 	winddowns []string // OnWinddown reasons, in order
 }
 
+func TestNewRefusesUndrainedLegacyNonterminalSession(t *testing.T) {
+	key := make([]byte, sessionstore.KeySize)
+	st, err := sessionstore.Open(filepath.Join(t.TempDir(), "legacy.db"), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.CreateIndexed(&sessionstore.Record{SessionID: "legacy-active", GatewaySessionID: "gateway-legacy", State: sessionstore.StateActive}, "legacy-request"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(Config{
+		Store: st, Payment: newFakePayment(), Runner: func(string) RunnerClient { return &fakeRunner{} },
+		Specs: func(string) *OfferingSpec { return &OfferingSpec{} },
+	})
+	if err == nil || !strings.Contains(err.Error(), "authorization-only cutover refused") {
+		t.Fatalf("New error = %v; want explicit cutover refusal", err)
+	}
+}
+
 func (h *harness) now() time.Time {
 	h.nowMu.Lock()
 	defer h.nowMu.Unlock()
@@ -330,15 +372,32 @@ func newHarness(t *testing.T) *harness {
 	return h
 }
 
+func (h *harness) authorization(t *testing.T, authorizationID, requestID, sessionID string, maxUnits uint64) []byte {
+	t.Helper()
+	payload := &pb.SpendAuthorizationPayload{
+		Domain: "livepeer-spend-authorization/v1", AuthorizationId: authorizationID, RequestId: requestID, SessionId: sessionID,
+		Payer: bytes.Repeat([]byte{0x11}, 20), Payee: bytes.Repeat([]byte{0x22}, 20), Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
+		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: h.spec.WorkUnit},
+		MaxDebitWei:   &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: maxUnits,
+	}
+	wire, err := proto.Marshal(&pb.SpendAuthorization{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
+}
+
 func (h *harness) open(t *testing.T) *OpenResult {
 	t.Helper()
 	res, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID:        "req-1",
-		GatewaySessionID: "gws-1",
-		SessionParams:    json.RawMessage(`{"room_hint":"standup"}`),
-		PaymentBytes:     []byte{1, 2, 3},
-		Spec:             h.spec,
-		CapacityRef:      "cap-slot-1",
+		RequestID:             "req-1",
+		GatewaySessionID:      "gws-1",
+		SessionParams:         json.RawMessage(`{"room_hint":"standup"}`),
+		PaymentBytes:          []byte{1, 2, 3},
+		AuthorizationBytes:    h.authorization(t, "auth-req-1", "req-1", "gws-1", 100),
+		InitialReservationWei: big.NewInt(50),
+		Spec:                  h.spec,
+		CapacityRef:           "cap-slot-1",
 	})
 	if err != nil {
 		t.Fatalf("open: %v", err)
@@ -401,8 +460,8 @@ func TestAccountBackedSessionUsesBoundedRunwayAndSettles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.AccountAuthorizationID != "auth-session-1" || rec.AuthorizationReservedWei != "50" || h.pay.openCalls != 0 {
-		t.Fatalf("account session binding=%+v legacy_open_calls=%d", rec, h.pay.openCalls)
+	if rec.AccountAuthorizationID != "auth-session-1" || rec.AuthorizationReservedWei != "50" || h.pay.openCalls != 1 {
+		t.Fatalf("account session binding=%+v authorization_admissions=%d", rec, h.pay.openCalls)
 	}
 	if _, err := h.engine.ProcessEvent(context.Background(), opened.SessionID, usageEvent("account-tick-1", 1, 3)); err != nil {
 		t.Fatal(err)
@@ -457,10 +516,9 @@ func TestOpenRefusesReusedRequestIDWithDifferentContent(t *testing.T) {
 	h := newHarness(t)
 	h.open(t)
 	_, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID:     "req-1",
-		SessionParams: json.RawMessage(`{"room_hint":"something-else"}`),
-		PaymentBytes:  []byte{9, 9, 9},
-		Spec:          h.spec,
+		RequestID: "req-1", GatewaySessionID: "gws-1",
+		SessionParams: json.RawMessage(`{"room_hint":"something-else"}`), PaymentBytes: []byte{9, 9, 9},
+		AuthorizationBytes: h.authorization(t, "auth-req-1", "req-1", "gws-1", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec,
 	})
 	var pe *ProtocolError
 	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
@@ -490,7 +548,8 @@ func TestOpenFailsClosedOnBadDescriptor(t *testing.T) {
 	h := newHarness(t)
 	h.runner.runtime = json.RawMessage(`{"schema":"sfu-room/v1","public":{},"surprise":{}}`)
 	_, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-x", PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "slot",
+		RequestID: "req-x", GatewaySessionID: "gws-x", PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "slot",
+		AuthorizationBytes: h.authorization(t, "auth-x", "req-x", "gws-x", 100), InitialReservationWei: big.NewInt(50),
 	})
 	if err == nil {
 		t.Fatal("expected descriptor rejection")
@@ -498,8 +557,8 @@ func TestOpenFailsClosedOnBadDescriptor(t *testing.T) {
 	if len(h.runner.terminated) != 1 {
 		t.Fatal("runner session not terminated on fail-closed open")
 	}
-	if h.pay.closed != 1 {
-		t.Fatal("payment session not closed on fail-closed open")
+	if len(h.pay.accountSettles) != 1 {
+		t.Fatal("authorization reservation not released on fail-closed open")
 	}
 	if len(h.release) != 1 || h.release[0] != "slot" {
 		t.Fatal("capacity not released on fail-closed open")
@@ -606,23 +665,6 @@ func TestRunnerEndedRunsTerminalPath(t *testing.T) {
 	}
 	if len(h.runner.terminated) == 0 {
 		t.Fatal("runner not terminated")
-	}
-}
-
-func TestInsufficientBalanceForcesWinddown(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	h.pay.sufficient = false
-	out, err := h.engine.ProcessEvent(context.Background(), res.SessionID, usageEvent("evt_1", 1, 5))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !out.Insufficient || !out.Terminal {
-		t.Fatalf("expected insufficient winddown: %+v", out)
-	}
-	rec, _ := h.store.Get(res.SessionID)
-	if rec.CloseReason != ReasonInsufficient {
-		t.Fatalf("close reason %q", rec.CloseReason)
 	}
 }
 
@@ -795,99 +837,6 @@ func TestEndIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestTopUpExtendsLeaseAndRefusesTerminal(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-	h.pay.balance = big.NewInt(5000) // more funding arrived
-	out, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
-	if err != nil {
-		t.Fatalf("topup: %v", err)
-	}
-	if !out.Lease.After(before.LeaseExpiresAt) {
-		t.Fatalf("top-up did not extend lease: %v -> %v", before.LeaseExpiresAt, out.Lease)
-	}
-	rec, _ := h.store.Get(res.SessionID)
-	if !rec.LeaseExpiresAt.Equal(out.Lease) {
-		t.Fatal("lease not persisted")
-	}
-	// Terminal sessions refuse refill with a stable code. A fresh
-	// request id, because a replay of the one above is answered from the
-	// record and never reaches the terminal check.
-	if _, err := h.engine.End(context.Background(), res.SessionID, ""); err != nil {
-		t.Fatal(err)
-	}
-	_, err = h.engine.TopUp(context.Background(), res.SessionID, "topup-2", []byte{9})
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
-		t.Fatalf("expected refill_refused, got %v", err)
-	}
-}
-
-// TestRecoverRebindReassertsPaymentSession covers the healthy branch:
-// the payment layer still holds the session (AlreadyOpen), so rebind
-// re-asserts it as a no-op and usage keeps flowing on the same work_id.
-func TestRecoverRebindReassertsPaymentSession(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	ctx := context.Background()
-
-	h.pay.mu.Lock()
-	h.pay.openCalls = 0
-	h.pay.mu.Unlock()
-
-	h.engine.Recover(ctx)
-
-	h.pay.mu.Lock()
-	opens := h.pay.openCalls
-	h.pay.mu.Unlock()
-	if opens == 0 {
-		t.Fatal("rebind did not re-assert the payment session")
-	}
-	rec, _ := h.store.Get(res.SessionID)
-	if rec.Terminal() {
-		t.Fatalf("healthy rebind wound the session down: %s", rec.CloseReason)
-	}
-	if _, err := h.engine.ProcessEvent(ctx, res.SessionID, usageEvent("evt_after", 1, 4)); err != nil {
-		t.Fatalf("post-rebind event: %v", err)
-	}
-	if h.pay.totalDebited() != 4 {
-		t.Fatalf("debited %d, want 4", h.pay.totalDebited())
-	}
-}
-
-// TestRecoverFailsClosedWhenPaymentSessionLost covers the branch the
-// conformance suite exposed: the runner still holds the session but the
-// payment layer lost it (OpenSession reports it was NOT already open).
-// The session cannot be billed, so the broker must take the explicit
-// terminal outcome rather than serve unmetered work.
-func TestRecoverFailsClosedWhenPaymentSessionLost(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	ctx := context.Background()
-
-	h.pay.mu.Lock()
-	h.pay.sessionGone = true // payment daemon restarted and lost its ledger
-	h.pay.mu.Unlock()
-
-	h.engine.Recover(ctx)
-
-	rec, _ := h.store.Get(res.SessionID)
-	if !rec.Terminal() || rec.CloseReason != ReasonRecoveryFailed {
-		t.Fatalf("want recovery_failed terminal, got state=%s reason=%q", rec.State, rec.CloseReason)
-	}
-	if !rec.PaymentClosed {
-		t.Fatal("payment left open after fail-closed recovery")
-	}
-	if len(h.runner.terminated) == 0 {
-		t.Fatal("runner left serving after fail-closed recovery")
-	}
-}
-
-// TestSweepHeartbeatWinsOverLease pins the precedence decision: when a
-// session is past both its lease and its heartbeat threshold, the stable
-// reason is heartbeat_lost — a dead runner is the more specific fact and
-// sends the operator to the runner rather than to funding.
 func TestSweepHeartbeatWinsOverLease(t *testing.T) {
 	h := newHarness(t)
 	res := h.open(t)
@@ -906,464 +855,6 @@ func TestSweepHeartbeatWinsOverLease(t *testing.T) {
 // TestTopUpRefusedOnBoundedOffering pins offering-axes §3: a bounded
 // offering rejects top-up after open, with the stable refill_refused
 // code.
-func TestTopUpRefusedOnBoundedOffering(t *testing.T) {
-	h := newHarness(t)
-	h.spec.Refill = "bounded"
-	res := h.open(t)
-	_, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "refill_refused" {
-		t.Fatalf("expected refill_refused on a bounded offering, got %v", err)
-	}
-	// The session is untouched — a refused top-up is not a winddown.
-	rec, _ := h.store.Get(res.SessionID)
-	if rec.Terminal() {
-		t.Fatal("refused top-up wound the session down")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// payee identity and ticket rejection
-
-// TestOpenDerivesWorkIDFromPayment pins the identity rule: the payee
-// daemon binds its session — and the recipient rand every ticket was
-// minted against — to the payment's recipient_rand_hash. A work_id of
-// our own invention would bind the session to a rand the sender never
-// saw, and nothing it paid with could validate against it.
-func TestOpenDerivesWorkIDFromPayment(t *testing.T) {
-	h := newHarness(t)
-	hash := []byte("0123456789abcdef0123456789abcdef")
-	raw, err := proto.Marshal(&pb.Payment{
-		TicketParams: &pb.TicketParams{RecipientRandHash: hash},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-1", PaymentBytes: raw, Spec: h.spec,
-	})
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	want := hex.EncodeToString(hash)
-	if res.WorkID != want {
-		t.Fatalf("work id = %q; want the payment's recipient_rand_hash %q", res.WorkID, want)
-	}
-	// Every daemon call for this session must carry that same id, or
-	// the lifecycle spans two payee sessions.
-	h.pay.mu.Lock()
-	defer h.pay.mu.Unlock()
-	if len(h.pay.workIDs) == 0 {
-		t.Fatal("daemon was never called")
-	}
-	for _, got := range h.pay.workIDs {
-		if got != want {
-			t.Fatalf("daemon call used work id %q; want %q", got, want)
-		}
-	}
-}
-
-// TestOpenFallsBackToRequestIDForStubPayment keeps in-process stubs and
-// fixtures working: bytes that carry no ticket params have no payee
-// session to collide with, so the request id stands in — the same
-// fallback the job path takes.
-func TestOpenFallsBackToRequestIDForStubPayment(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	if res.WorkID != "req-1" {
-		t.Fatalf("work id = %q; want the request id", res.WorkID)
-	}
-}
-
-// TestOpenFailsClosedWhenEveryTicketRejected pins the other half: the
-// daemon reports an all-rejected batch in its result, not as an error.
-// Opening anyway yields a session with no funded runway that dies at the
-// first lease check, which reads as a broker fault rather than the
-// payment fault it is.
-func TestOpenFailsClosedWhenEveryTicketRejected(t *testing.T) {
-	h := newHarness(t)
-	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
-	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidRecipientRand
-
-	_, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-1", PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
-		CapacityRef: "cap-slot-1",
-	})
-	// recipient_rotated rather than a generic payment failure: the
-	// gateway's remedy is mechanical, and it should act on a code.
-	var perr *ProtocolError
-	if !errors.As(err, &perr) || perr.Code != "recipient_rotated" {
-		t.Fatalf("err = %v; want a recipient_rotated ProtocolError", err)
-	}
-	if !strings.Contains(perr.Detail, "rotated") {
-		t.Fatalf("detail = %q; want the rotation named", perr.Detail)
-	}
-	if h.runner.created != 0 {
-		t.Fatal("runner was bound against a payment that funded nothing")
-	}
-	if h.pay.closed == 0 {
-		t.Fatal("payee session left open after a failed open")
-	}
-	if len(h.release) != 1 {
-		t.Fatalf("capacity releases = %d; want the reserved slot given back", len(h.release))
-	}
-}
-
-// TestOpenAcceptsPartiallyRejectedBatch: a partial rejection still
-// credits something. The balance it produced is the honest one, and the
-// session's own runway checks enforce the consequences.
-func TestOpenAcceptsPartiallyRejectedBatch(t *testing.T) {
-	h := newHarness(t)
-	h.pay.ticketCount, h.pay.ticketsBad = 3, 1
-	h.pay.rejectReason = payment.PaymentRejectionReasonNonceReplay
-
-	if _, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-1", PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
-	}); err != nil {
-		t.Fatalf("open: %v", err)
-	}
-}
-
-// TestTopUpRefusesAllRejectedBatch: an all-rejected top-up must not
-// extend the lease, or the session runs on runway nobody funded.
-func TestTopUpRefusesAllRejectedBatch(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, err := h.store.Get(res.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
-	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidSignature
-	if _, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9}); err == nil {
-		t.Fatal("top-up accepted a batch the payee rejected in full")
-	}
-
-	after, err := h.store.Get(res.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
-		t.Fatalf("lease moved from %s to %s on a refused top-up",
-			before.LeaseExpiresAt, after.LeaseExpiresAt)
-	}
-}
-
-// TestOpenCarriesPriceDenominatorToDaemon: the daemon multiplies price by
-// units and divides by this. Omitting it bills per_units times the
-// intended rate, which is invisible in every test that prices at 1.
-func TestOpenCarriesPriceDenominatorToDaemon(t *testing.T) {
-	h := newHarness(t)
-	h.spec.PerUnits = 1000
-
-	h.open(t)
-
-	h.pay.mu.Lock()
-	defer h.pay.mu.Unlock()
-	if len(h.pay.openPerUnits) == 0 {
-		t.Fatal("daemon session was never opened")
-	}
-	if got := h.pay.openPerUnits[0]; got != 1000 {
-		t.Fatalf("daemon was told per_units = %d; want the offering's 1000", got)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// top-up idempotency
-
-// TestTopUpReplayReturnsRecordedOutcome: a retry after a lost response
-// must not fund the session again. With identical bytes the daemon's
-// nonce dedup would absorb it, but an SDK retry mints a fresh envelope —
-// so the broker has to answer from its own record.
-func TestTopUpReplayReturnsRecordedOutcome(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-
-	first, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
-	if err != nil {
-		t.Fatalf("topup: %v", err)
-	}
-	processCalls := len(h.pay.workIDs)
-
-	replay, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
-	if err != nil {
-		t.Fatalf("replay: %v", err)
-	}
-	if !replay.Lease.Equal(first.Lease) || replay.Balance.Cmp(first.Balance) != 0 {
-		t.Fatalf("replay = (%v, %s); want the recorded (%v, %s)",
-			replay.Lease, replay.Balance, first.Lease, first.Balance)
-	}
-	if len(h.pay.workIDs) != processCalls {
-		t.Fatal("replay reached the payment daemon; it must answer from the record")
-	}
-}
-
-// TestTopUpRejectsReusedRequestIDWithDifferentEnvelope: the id is a
-// promise about content. A different envelope under the same id is a
-// caller bug, and answering it with the first top-up's outcome would
-// silently swallow funding.
-func TestTopUpRejectsReusedRequestIDWithDifferentEnvelope(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	if _, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9}); err != nil {
-		t.Fatal(err)
-	}
-	_, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{7, 7})
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
-		t.Fatalf("err = %v; want request_id_reuse", err)
-	}
-}
-
-// TestTopUpRequiresRequestID: without the key there is no safe retry,
-// which is the whole defect this closes.
-func TestTopUpRequiresRequestID(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	_, err := h.engine.TopUp(context.Background(), res.SessionID, "", []byte{9})
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "request_id_required" {
-		t.Fatalf("err = %v; want request_id_required", err)
-	}
-}
-
-// TestTopUpNonceReplayReadsAsAlreadyCredited covers the crash window
-// between the daemon's credit and the broker's idempotency record: the
-// retry re-presents nonces the daemon has seen, and every ticket bounces.
-// That is not a payment failure — the money landed the first time — so
-// the caller gets the current lease back, unextended.
-func TestTopUpNonceReplayReadsAsAlreadyCredited(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
-	h.pay.rejectReason = payment.PaymentRejectionReasonNonceReplay
-
-	out, err := h.engine.TopUp(context.Background(), res.SessionID, "topup-1", []byte{9})
-	if err != nil {
-		t.Fatalf("nonce replay must not read as a payment failure: %v", err)
-	}
-	if !out.Lease.Equal(before.LeaseExpiresAt) {
-		t.Fatalf("lease moved to %v; an already-credited envelope buys no new runway", out.Lease)
-	}
-	after, _ := h.store.Get(res.SessionID)
-	if !after.LeaseExpiresAt.Equal(before.LeaseExpiresAt) {
-		t.Fatal("persisted lease moved on an already-credited envelope")
-	}
-}
-
-// ---------------------------------------------------------------------------
-// recipient rotation
-
-// rotatedPayment builds a payment whose derived identity differs from
-// the session's — what a gateway mints after its payee rotated.
-func rotatedPayment(t *testing.T, randHash string) []byte {
-	t.Helper()
-	raw, err := proto.Marshal(&pb.Payment{
-		TicketParams: &pb.TicketParams{RecipientRandHash: []byte(randHash)},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return raw
-}
-
-// TestRebindMovesSessionToRotatedIdentity: the gap this closes. A live
-// session whose payee rotated has no other way forward — the broker
-// binds one work_id for life and every later payment is rejected.
-func TestRebindMovesSessionToRotatedIdentity(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	successor := rotatedPayment(t, "successor-rand-000000000000000000")
-	out, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, successor)
-	if err != nil {
-		t.Fatalf("rebind: %v", err)
-	}
-	if !out.Lease.After(before.LeaseExpiresAt) && !out.Lease.Equal(before.LeaseExpiresAt) {
-		t.Fatalf("rebind shortened the lease: %v -> %v", before.LeaseExpiresAt, out.Lease)
-	}
-
-	after, _ := h.store.Get(res.SessionID)
-	wantWorkID := hex.EncodeToString([]byte("successor-rand-000000000000000000"))
-	if after.WorkID != wantWorkID {
-		t.Fatalf("work_id = %q; want the successor identity %q", after.WorkID, wantWorkID)
-	}
-	if after.PredecessorWorkID != before.WorkID {
-		t.Fatalf("predecessor = %q; want %q", after.PredecessorWorkID, before.WorkID)
-	}
-	if after.RotationGeneration != 1 {
-		t.Fatalf("generation = %d; want 1", after.RotationGeneration)
-	}
-	// Continuity is the whole point: the session, its credential and its
-	// cumulative accounting do not move.
-	if after.SessionID != before.SessionID || after.RunnerSessionID != before.RunnerSessionID {
-		t.Fatal("rebind disturbed session or runner identity")
-	}
-	if !bytes.Equal(after.CredentialHash, before.CredentialHash) {
-		t.Fatal("rebind re-issued the session credential")
-	}
-	if after.DebitedTotal != before.DebitedTotal || after.ClaimedTotal != before.ClaimedTotal {
-		t.Fatal("cumulative accounting reset across the rotation")
-	}
-	if after.DebitSeq != 0 {
-		t.Fatalf("debit_seq = %d; the successor's sequence space starts fresh", after.DebitSeq)
-	}
-}
-
-// TestRebindRefusesWrongPredecessor: the declaration is checked against
-// the session, so a gateway that retries the wrong session's top-up gets
-// a refusal rather than a silent identity change.
-func TestRebindRefusesWrongPredecessor(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-
-	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", "some-other-sessions-work-id", rotatedPayment(t, "successor-rand-000000000000000000"))
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
-		t.Fatalf("err = %v; want rebind_refused", err)
-	}
-}
-
-// TestRebindRefusesSuccessorThatDoesNotCredit is guard 2, the one that
-// does the real work: tickets minted against a fake or stale identity
-// cannot validate, so a batch the payee rejects in full proves nothing
-// and the session stays where it is.
-func TestRebindRefusesSuccessorThatDoesNotCredit(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	h.pay.ticketCount, h.pay.ticketsBad = 2, 2
-	h.pay.rejectReason = payment.PaymentRejectionReasonInvalidRecipientRand
-
-	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000"))
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
-		t.Fatalf("err = %v; want rebind_refused", err)
-	}
-	after, _ := h.store.Get(res.SessionID)
-	if after.WorkID != before.WorkID || after.RotationGeneration != 0 {
-		t.Fatal("session moved onto an identity that never credited")
-	}
-}
-
-// TestRebindSettlesPredecessorBeforeClosing: carrying unsettled work
-// across an identity change would make the ledger unauditable, so the
-// outstanding units are debited against the OLD work_id first.
-func TestRebindSettlesPredecessorBeforeClosing(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	// Claim without debiting, the shape a crash mid-commit leaves.
-	if err := h.store.Update(res.SessionID, func(r *sessionstore.Record) error {
-		r.ClaimedTotal = 40
-		r.DebitedTotal = 25
-		r.DebitSeq = 3
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatalf("rebind: %v", err)
-	}
-
-	var settled bool
-	h.pay.mu.Lock()
-	for _, d := range h.pay.debits {
-		if d.units == 15 && d.seq == 4 {
-			settled = true
-		}
-	}
-	h.pay.mu.Unlock()
-	if !settled {
-		t.Fatalf("predecessor was not settled for its 15 outstanding units: %+v", h.pay.debits)
-	}
-	after, _ := h.store.Get(res.SessionID)
-	if after.DebitedTotal != 40 {
-		t.Fatalf("debited total = %d; want the claim settled at 40", after.DebitedTotal)
-	}
-	if after.GenerationStartUnits != 40 {
-		t.Fatalf("generation start = %d; want 40, so the new generation's subtotal starts at zero",
-			after.GenerationStartUnits)
-	}
-}
-
-// TestRebindStopsAtTheRotationBound: an unbounded rotate-and-rebind loop
-// would burn the payer's deposit without ever delivering work, so the
-// session ends instead — naming the consequence, not the mechanism.
-func TestRebindStopsAtTheRotationBound(t *testing.T) {
-	h := newHarness(t)
-	h.spec.MaxRotations = 1
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatalf("first rebind: %v", err)
-	}
-	mid, _ := h.store.Get(res.SessionID)
-
-	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-2", mid.WorkID, rotatedPayment(t, "third-rand-00000000000000000000"))
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
-		t.Fatalf("err = %v; want rebind_refused at the bound", err)
-	}
-	final, _ := h.store.Get(res.SessionID)
-	if !final.Terminal() {
-		t.Fatal("session survived its rotation bound with no way to fund itself")
-	}
-	if final.CloseReason != ReasonPaymentUnrecoverable {
-		t.Fatalf("close reason = %q; want %q — the consequence, not the mechanism",
-			final.CloseReason, ReasonPaymentUnrecoverable)
-	}
-}
-
-// TestRebindRefusesWhenTheLastGenerationDeliveredNothing: the bound that
-// catches a loop early. A generation that debited no units bought
-// nothing, so funding another rebind is throwing good money after bad.
-func TestRebindRefusesWhenTheLastGenerationDeliveredNothing(t *testing.T) {
-	h := newHarness(t)
-	h.spec.MaxRotations = 5
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatalf("first rebind: %v", err)
-	}
-	mid, _ := h.store.Get(res.SessionID)
-	// No usage debited on the new generation, so the rebind bought
-	// nothing.
-	_, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-2", mid.WorkID, rotatedPayment(t, "third-rand-00000000000000000000"))
-	var pe *ProtocolError
-	if !errors.As(err, &pe) || pe.Code != "rebind_refused" {
-		t.Fatalf("err = %v; want rebind_refused on a rotation that delivered nothing", err)
-	}
-	final, _ := h.store.Get(res.SessionID)
-	if final.CloseReason != ReasonPaymentUnrecoverable {
-		t.Fatalf("close reason = %q; want %q", final.CloseReason, ReasonPaymentUnrecoverable)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// settlement
-
-// TestSettlementReportsCumulativeAccounting: LOC bills off this record,
-// and the authoritative quantity is what the ledger moved, not what a
-// runner claimed. billed_value must be one ceiling over the cumulative
-// total so a reader recomputing it agrees.
 func TestSettlementReportsCumulativeAccounting(t *testing.T) {
 	h := newHarness(t)
 	h.spec.PricePerWorkUnitWei = big.NewInt(100)
@@ -1402,185 +893,6 @@ func TestSettlementReportsCumulativeAccounting(t *testing.T) {
 // TestSettlementCarriesTheRotationChain: after a rebind the record has to
 // explain which identity paid for which stretch, because that is all LOC
 // gets — a completed rotation is settlement-only.
-func TestSettlementCarriesTheRotationChain(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
-		usageEvent("ev-1", 1, 10)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatalf("rebind: %v", err)
-	}
-	if _, err := h.engine.ProcessEvent(context.Background(), res.SessionID,
-		usageEvent("ev-2", 2, 25)); err != nil {
-		t.Fatal(err)
-	}
-
-	rec, _ := h.store.Get(res.SessionID)
-	set := h.engine.SettlementFor(rec, h.spec)
-	if set.GetRotationGeneration() != 1 {
-		t.Fatalf("generation = %d; want 1", set.GetRotationGeneration())
-	}
-	if set.GetPredecessorWorkId() != before.WorkID {
-		t.Fatalf("predecessor = %q; want %q", set.GetPredecessorWorkId(), before.WorkID)
-	}
-	if set.GetDebitedUnits() != 25 {
-		t.Fatalf("cumulative debited = %d; want 25 spanning both generations", set.GetDebitedUnits())
-	}
-	// The second generation delivered 15 of those 25.
-	if set.GetGenerationDebitedUnits() != 15 {
-		t.Fatalf("generation subtotal = %d; want 15", set.GetGenerationDebitedUnits())
-	}
-}
-
-// TestSettlementSeqIsPerSession: rotation mints a new work_id, so a
-// per-identity counter would restart mid-session and leave a reader
-// unable to order two records from one session.
-func TestSettlementSeqIsPerSession(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	first, err := h.engine.RecordSettlement(context.Background(), res.SessionID)
-	if err != nil || first == nil {
-		t.Fatalf("record: %v", err)
-	}
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatal(err)
-	}
-	second, err := h.engine.RecordSettlement(context.Background(), res.SessionID)
-	if err != nil || second == nil {
-		t.Fatalf("record: %v", err)
-	}
-	if second.GetSettlementSeq() <= first.GetSettlementSeq() {
-		t.Fatalf("seq did not advance across a rotation: %d -> %d",
-			first.GetSettlementSeq(), second.GetSettlementSeq())
-	}
-	if second.GetWorkId() == first.GetWorkId() {
-		t.Fatal("test did not actually rotate")
-	}
-}
-
-// TestTwoSessionsOnOneIdentityBothBill: a gateway minting twice from one
-// ticket session gives two sessions the same work_id. The first to end
-// used to close the shared payee session, and the second then failed
-// every debit with "session is closed" — crediting fine and billing
-// nothing. Found on mainnet by opening a second session after the first
-// had ended.
-func TestTwoSessionsOnOneIdentityBothBill(t *testing.T) {
-	h := newHarness(t)
-	shared := rotatedPayment(t, "shared-ticket-session-rand-000000")
-
-	openOne := func(reqID, gwID string) *OpenResult {
-		t.Helper()
-		res, err := h.engine.Open(context.Background(), OpenRequest{
-			RequestID: reqID, GatewaySessionID: gwID,
-			SessionParams: json.RawMessage(`{}`),
-			PaymentBytes:  shared, Spec: h.spec,
-		})
-		if err != nil {
-			t.Fatalf("open %s: %v", reqID, err)
-		}
-		return res
-	}
-
-	first := openOne("req-a", "gws-a")
-	if _, err := h.engine.End(context.Background(), first.SessionID, ""); err != nil {
-		t.Fatal(err)
-	}
-	if h.pay.closed != 0 {
-		t.Fatal("ending a session closed a payment identity other sessions may hold")
-	}
-
-	// A second session on the same identity must still bill.
-	second := openOne("req-b", "gws-b")
-	if second.WorkID != first.WorkID {
-		t.Fatalf("test premise wrong: %q vs %q", second.WorkID, first.WorkID)
-	}
-	before := h.pay.totalDebited()
-	if _, err := h.engine.ProcessEvent(context.Background(), second.SessionID,
-		usageEvent("ev-1", 1, 25)); err != nil {
-		t.Fatalf("usage on the second session: %v", err)
-	}
-	if got := h.pay.totalDebited(); got == before {
-		t.Fatal("the second session on a shared identity billed nothing")
-	}
-}
-
-// TestSettlementBindsToTheGatewaysOwnID: a clearinghouse cannot bind a
-// record to its session using session_id (broker-local, and it arrives
-// through the customer's SDK — the channel the signature distrusts) or
-// work_id (shareable across sessions). The gateway's own id is the only
-// one it issued itself.
-func TestSettlementBindsToTheGatewaysOwnID(t *testing.T) {
-	h := newHarness(t)
-	res, err := h.engine.Open(context.Background(), OpenRequest{
-		RequestID: "req-1", GatewaySessionID: "loc-session-9f2c",
-		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1, 2, 3}, Spec: h.spec,
-		AcceptedQuoteRef: &pb.QuoteRef{
-			QuoteId: "resolver:v1:test", QuoteVersion: 7,
-			ConstraintFingerprint: []byte{0x01, 0x02},
-			RouteFingerprint:      []byte{0x03, 0x04},
-		},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	rec, err := h.store.Get(res.SessionID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	set := h.engine.SettlementFor(rec, h.spec)
-	if set.GetGatewaySessionId() != "loc-session-9f2c" {
-		t.Fatalf("gateway_session_id = %q; a record that cannot be bound to the caller's own "+
-			"session is not evidence the caller can use", set.GetGatewaySessionId())
-	}
-	quote := set.GetAcceptedQuoteRef()
-	if quote.GetQuoteId() != "resolver:v1:test" || quote.GetQuoteVersion() != 7 ||
-		!bytes.Equal(quote.GetConstraintFingerprint(), []byte{0x01, 0x02}) ||
-		!bytes.Equal(quote.GetRouteFingerprint(), []byte{0x03, 0x04}) {
-		t.Fatalf("accepted quote is not bound into settlement: %+v", quote)
-	}
-}
-
-// TestTopUpRebindReturnsTheSuccessorIdentity: after a rebind the caller
-// must be told which identity it is now on. Returning the predecessor
-// sends it back to mint against the one it just rotated away from.
-func TestTopUpRebindReturnsTheSuccessorIdentity(t *testing.T) {
-	h := newHarness(t)
-	res := h.open(t)
-	before, _ := h.store.Get(res.SessionID)
-
-	if _, err := h.engine.TopUpRebind(context.Background(), res.SessionID,
-		"rebind-1", before.WorkID, rotatedPayment(t, "successor-rand-000000000000000000")); err != nil {
-		t.Fatalf("rebind: %v", err)
-	}
-	after, _ := h.store.Get(res.SessionID)
-	if after.WorkID == before.WorkID {
-		t.Fatal("test premise wrong: nothing rotated")
-	}
-	// The handler reads the reloaded record; assert the record it reads
-	// carries the successor.
-	if after.PredecessorWorkID != before.WorkID {
-		t.Fatalf("predecessor = %q; want %q", after.PredecessorWorkID, before.WorkID)
-	}
-}
-
-// The signed record's state has to be one of the three the proto
-// defines: "open", "winding_down" or "closed".
-//
-// It carried this broker's INTERNAL state instead. The internal set is
-// active / winding_down / ended / failed, so a terminal record said
-// "ended" — not a value the spec defines — and a clearinghouse
-// validating against the spec refused it as session_not_terminal.
-// Correctly: a consumer that accepts an undefined state is not
-// validating. An interim record said "active" for the same reason; that
-// half went unreported only because nobody had validated one yet.
 func TestSettlementStateUsesTheNormativeVocabulary(t *testing.T) {
 	// Every state the proto allows, and nothing else.
 	normative := map[string]bool{"open": true, "winding_down": true, "closed": true}
@@ -1691,6 +1003,7 @@ func TestConcurrentOpensWithOneRequestIDFundOnce(t *testing.T) {
 		return h.engine.Open(context.Background(), OpenRequest{
 			RequestID: "req-race", GatewaySessionID: "gws-race",
 			SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1, 2, 3},
+			AuthorizationBytes: h.authorization(t, "auth-race", "req-race", "gws-race", 100), InitialReservationWei: big.NewInt(50),
 			Spec: h.spec, CapacityRef: "slot-race",
 		})
 	}
@@ -1749,11 +1062,12 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 	_ = h.store.UpdateReservation("req-crash", func(r *sessionstore.OpenReservation) error {
 		r.Stage, r.WorkID, r.Sender, r.CapacityRef, r.BackendRef = sessionstore.ReservationRunnerCreated, "w-crash", []byte{9}, "slot-crash", "b1"
 		r.RunnerSessionID = "rs-crash"
+		r.AccountAuthorization = true
 		return nil
 	})
 	h.engine.Recover(context.Background())
-	if h.pay.closed != 1 {
-		t.Fatalf("payee session closed %d times, want 1", h.pay.closed)
+	if len(h.pay.accountSettles) != 1 {
+		t.Fatalf("authorization settled %d times, want 1", len(h.pay.accountSettles))
 	}
 	if len(h.runner.terminated) != 1 || h.runner.terminated[0] != ReasonOpenFailed {
 		t.Fatalf("runner terminated: %v", h.runner.terminated)
@@ -1768,7 +1082,7 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 	}
 	// The id is free again: a retry of the open proceeds fresh.
 	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2",
-		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "slot-2"}); err != nil {
+		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1}, AuthorizationBytes: h.authorization(t, "auth-crash-2", "req-crash", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "slot-2"}); err != nil {
 		t.Fatalf("retry after recovery: %v", err)
 	}
 }
@@ -1828,11 +1142,11 @@ func TestInFlightOpenWithDifferentContentIsReuse(t *testing.T) {
 	go func() {
 		defer close(done)
 		_, _ = h.engine.Open(context.Background(), OpenRequest{RequestID: "req-dup", GatewaySessionID: "g1",
-			SessionParams: json.RawMessage(`{"a":1}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "s1"})
+			SessionParams: json.RawMessage(`{"a":1}`), PaymentBytes: []byte{1}, AuthorizationBytes: h.authorization(t, "auth-dup", "req-dup", "g1", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "s1"})
 	}()
 	time.Sleep(50 * time.Millisecond)
 	_, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-dup", GatewaySessionID: "g2",
-		SessionParams: json.RawMessage(`{"a":2}`), PaymentBytes: []byte{1}, Spec: h.spec, CapacityRef: "s2"})
+		SessionParams: json.RawMessage(`{"a":2}`), PaymentBytes: []byte{1}, AuthorizationBytes: h.authorization(t, "auth-dup-2", "req-dup", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "s2"})
 	var pe *ProtocolError
 	if !errors.As(err, &pe) || pe.Code != "request_id_reuse" {
 		t.Fatalf("different content under an in-flight id: %v, want request_id_reuse", err)

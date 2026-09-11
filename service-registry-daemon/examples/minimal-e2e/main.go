@@ -53,7 +53,7 @@ func run() error {
 	// doing so was a second signing path beside the cold key.
 	env := types.CoordinatorSignedManifest{
 		Manifest: types.CoordinatorManifestPayload{
-			SpecVersion:    "2.4.1",
+			SpecVersion:    "3.0.0",
 			PublicationSeq: 1,
 			IssuedAt:       clk.Now().UTC(),
 			ExpiresAt:      clk.Now().UTC().Add(24 * time.Hour),

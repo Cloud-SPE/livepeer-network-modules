@@ -163,16 +163,9 @@ const (
 	SettlementRecord_OVERFUNDED                     SettlementRecord_SettlementOutcome = 3
 	SettlementRecord_STOPPED_AT_BUDGET              SettlementRecord_SettlementOutcome = 4
 	SettlementRecord_TOPPED_UP                      SettlementRecord_SettlementOutcome = 5
-	// The exchange was delivered but its debit did NOT complete, so no
-	// value moved for the units in actual_units. debited_units is what
-	// the ledger actually took, which is less than actual_units and is
-	// usually zero.
-	//
-	// A consumer MUST NOT treat this as settled. It exists because the
-	// alternative — emitting a record indistinguishable from a settled
-	// one — makes a broker whose ledger call failed look identical to a
-	// broker that was paid, and the failure is invisible precisely when
-	// it matters.
+	// Reserved for decoding pre-authorization records. Authorization-only
+	// brokers MUST NOT emit a terminal DEBIT_FAILED record: uncertain account
+	// settlement remains accounting_pending and retries the same authorization.
 	SettlementRecord_DEBIT_FAILED SettlementRecord_SettlementOutcome = 6
 )
 
@@ -1616,27 +1609,26 @@ type SettlementRecord struct {
 	Outcome          SettlementRecord_SettlementOutcome `protobuf:"varint,8,opt,name=outcome,proto3,enum=livepeer.payments.v1.SettlementRecord_SettlementOutcome" json:"outcome,omitempty"`
 	// Optional workload-specific metadata. Not part of canonical arithmetic.
 	Breakdown map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	// Stable broker-local session id. Constant across rotations, which is
-	// what makes it the anchor for ordering and replay binding.
+	// Stable broker-local session id.
 	SessionId string `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	// The payment identity in force for this record, and the one it
-	// replaced. predecessor_work_id is empty at generation 0.
-	WorkId            string `protobuf:"bytes,11,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
-	PredecessorWorkId string `protobuf:"bytes,12,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
-	// 0 at open, incremented on each rotation.
+	// In authorization-only records work_id mirrors authorization_id. The
+	// predecessor/rotation fields are retained only to decode historical
+	// ticket-session records and MUST be empty/zero on new records.
+	WorkId             string `protobuf:"bytes,11,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	PredecessorWorkId  string `protobuf:"bytes,12,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
 	RotationGeneration uint32 `protobuf:"varint,13,opt,name=rotation_generation,json=rotationGeneration,proto3" json:"rotation_generation,omitempty"`
-	// Cumulative over the whole logical session, spanning every
-	// generation. debited_units is the AUTHORITATIVE billing quantity:
+	// Cumulative over the whole logical session. debited_units is the
+	// authoritative billing quantity:
 	// claimed_units is what a runner asserted, debited_units is what the
 	// ledger moved. billed_value_wei above is
 	// ceil(debited_units * amount_wei / per_units) over these cumulative
-	// units — one ceiling over the total, never a sum of per-generation
+	// units — one ceiling over the total, never a sum of per-event
 	// ceilings (offering-axes.md §6.1).
 	ClaimedUnits uint64 `protobuf:"varint,14,opt,name=claimed_units,json=claimedUnits,proto3" json:"claimed_units,omitempty"`
 	DebitedUnits uint64 `protobuf:"varint,15,opt,name=debited_units,json=debitedUnits,proto3" json:"debited_units,omitempty"`
-	// Scoped to work_id above, so each funding envelope reconciles against
-	// what it actually paid for. The generation subtotals sum to the
-	// cumulative totals.
+	// Historical ticket-session generation fields. Authorization-only brokers
+	// MUST leave them zero/empty; aggregate ticket funding is reported through
+	// account_funding_value_wei and account observations instead.
 	GenerationDebitedUnits   uint64   `protobuf:"varint,16,opt,name=generation_debited_units,json=generationDebitedUnits,proto3" json:"generation_debited_units,omitempty"`
 	GenerationBilledValueWei *BigUInt `protobuf:"bytes,17,opt,name=generation_billed_value_wei,json=generationBilledValueWei,proto3" json:"generation_billed_value_wei,omitempty"`
 	GenerationFundedValueWei *BigUInt `protobuf:"bytes,18,opt,name=generation_funded_value_wei,json=generationFundedValueWei,proto3" json:"generation_funded_value_wei,omitempty"`
@@ -1644,8 +1636,7 @@ type SettlementRecord struct {
 	// can recompute billed_value_wei without trusting it.
 	AmountWei *BigUInt `protobuf:"bytes,19,opt,name=amount_wei,json=amountWei,proto3" json:"amount_wei,omitempty"`
 	PerUnits  uint64   `protobuf:"varint,20,opt,name=per_units,json=perUnits,proto3" json:"per_units,omitempty"`
-	// Monotonic per session_id — NOT per work_id, because rotation mints a
-	// new work_id and a per-identity counter would restart mid-session.
+	// Monotonic per session_id and unchanged by authorization revision.
 	// (session_id, settlement_seq) is the replay binding: a record is
 	// meaningful for exactly one session at exactly one point in its life.
 	SettlementSeq uint64 `protobuf:"varint,21,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
@@ -1659,59 +1650,26 @@ type SettlementRecord struct {
 	// Broker-assigned id for a single job exchange, matching
 	// `Livepeer-Job-Id`. REQUIRED on a paid-job settlement.
 	//
-	// work_id above is NOT sufficient to identify a job: on paid-job it is
-	// the hex recipient_rand_hash of the ticket session, which every job
-	// minted against that session shares. Without job_id inside the
-	// signature, a valid settlement for one exchange verifies as evidence
-	// for another on the same session.
+	// job_id is broker-assigned; request_id and authorization_id provide the
+	// caller-owned and payer-owned bindings.
 	JobId string `protobuf:"bytes,24,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
-	// Cumulative work units debited on this work_id — the PAYMENT
-	// identity — after this record's exchange.
-	//
-	// Distinct from debited_units above, which is scoped to the logical
-	// session (or, for a job, to the exchange). A gateway reuses one
-	// ticket session across many jobs and sessions, and billing is
-	// cumulative over that identity, so this is what places a charge on
-	// the curve: the second exchange on an identity costs
-	// bill(cumulative) - bill(cumulative - units), which is less than an
-	// independent ceiling whenever a remainder carried.
-	//
-	// For a paid-job exchange the charge IS verifiable from this field
-	// plus actual_units. For a paid-session settlement it is not, when the
-	// identity is shared: a session's charge is the sum of its own debits,
-	// and two sessions interleaving on one identity do not occupy
-	// contiguous stretches of the curve. The signature is what makes a
-	// session's charge trustworthy; this field lets a reader verify the
-	// AGGREGATE across every record on an identity, and detect a missing
-	// one.
+	// Historical ticket-session curve position. Authorization-only brokers
+	// MUST leave this zero; billed_value_wei is computed on the authorization's
+	// cumulative units.
 	PaymentCumulativeUnits uint64 `protobuf:"varint,25,opt,name=payment_cumulative_units,json=paymentCumulativeUnits,proto3" json:"payment_cumulative_units,omitempty"`
 	// The GATEWAY's own id for this session, echoed from session open.
 	// REQUIRED on a paid-session settlement.
 	//
-	// It is the only identifier in this record that its consumer issued
-	// itself. session_id is broker-local and reaches a clearinghouse only
-	// through the customer-controlled SDK — the exact channel the
-	// signature exists to distrust — and work_id can be shared by several
-	// sessions, so neither binds a record to one party's session record.
-	// This does.
+	// This is the identifier the session consumer issued itself.
 	GatewaySessionId string `protobuf:"bytes,26,opt,name=gateway_session_id,json=gatewaySessionId,proto3" json:"gateway_session_id,omitempty"`
 	// The gateway's own id for this EXCHANGE, echoed from
 	// `Livepeer-Request-Id`. REQUIRED on a paid-job settlement.
 	//
-	// job_id above makes the record about one exchange, but the broker
-	// mints it, so it binds the settlement to the broker's view and
-	// reaches a clearinghouse only through the customer-controlled SDK.
-	// work_id is shared across every job on a ticket session. Neither ties
-	// the record to the durable job record its consumer already holds —
-	// this is the counterpart to gateway_session_id on the session path.
-	//
-	// A broker generates a request id when the caller sends none, and
-	// echoes it in the response either way, so the field is always
-	// populated; it binds to the caller's own record only when the caller
-	// chose it.
+	// This is the counterpart to gateway_session_id on the job path and MUST
+	// match the required Livepeer-Request-Id.
 	RequestId string `protobuf:"bytes,27,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	// ---- wholesale-account path ----
-	// Empty on the legacy ticket-session path. These fields keep account
+	// ---- authorization-backed account settlement ----
+	// Required for paid-workload settlements. These fields keep account
 	// funding, temporary reservation, and actual debit visibly distinct.
 	AuthorizationId        string   `protobuf:"bytes,28,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
 	AuthorizedValueWei     *BigUInt `protobuf:"bytes,29,opt,name=authorized_value_wei,json=authorizedValueWei,proto3" json:"authorized_value_wei,omitempty"`

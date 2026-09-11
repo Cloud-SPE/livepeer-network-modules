@@ -168,6 +168,7 @@ func TestJobOutcomeIsNotReportedForBrokerRefusals(t *testing.T) {
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, "refused-cap")
 	req.Header.Set(livepeerheader.Payment, "c3R1Yg==")
+	setJobTestAuthorization(t, req, ts.URL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

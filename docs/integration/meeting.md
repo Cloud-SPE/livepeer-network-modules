@@ -24,28 +24,27 @@ a second open claiming a live one gets `gateway_session_id_reuse` (409).
 Generate it per session; do not derive it from anything stable per room
 or per tenant.
 
-## 3. Rotation: you need nothing from the socket
+## 3. Refill is an authorization revision
 
-On `409 recipient_rotated`, declare the last `work_id` you held as
-`Livepeer-Rebind-From` on an ordinary top-up. That is by definition the
-predecessor: the rotation happened payee-side and the broker learns of it
-from the same refusal you did.
+Every refill carries a successor `Livepeer-Authorization` naming the current
+`authorization_id` as its predecessor and increasing the revision. An optional
+`Livepeer-Payment` only replenishes aggregate account float. Ticket recipient
+rotation is invisible to this session and never causes a workload rebind.
 
-Lost your state? `GET /v1/session/{id}` returns the session's current
-`work_id`. The `session.rebound` control message is an optimisation, not
-a precondition — a polling gateway has everything the rebind needs.
+Lost local state? `GET /v1/session/{id}` returns the current authorization id
+and cumulative usage. Do not mint a successor until the predecessor outcome is
+known.
 
 ## 4. Settlement lookup
 
 `GET /v1/settlement/{id}` resolves your `gateway_session_id`, the broker
-`session_id`, or any `work_id` the session has held. Prefer your own id:
-a `work_id` can cover several sessions, and an ambiguous one answers
-`ambiguous_identifier` (409) rather than guessing.
+`session_id`, or its single-purpose authorization id. Prefer your own
+`gateway_session_id`; it remains stable across authorization revisions.
 
 ## 5. Lease and metering
 
-- A successful top-up extends the lease; funding and lifetime move
-  together.
+- A successful authorization revision can extend the signed cumulative cap;
+  the broker still reserves only bounded runway.
 - `Livepeer-Request-Id` is required on top-ups and is the idempotency
   key. A replayed top-up returns the recorded outcome rather than
   funding twice.

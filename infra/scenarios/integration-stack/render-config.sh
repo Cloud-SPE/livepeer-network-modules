@@ -37,8 +37,6 @@ offers:
     protocol: paid-job/v1
     match: { identity.variant: all }
     price: { amount_wei: "${PRICE_WEI}", per_units: ${PER_UNITS:-1000} }
-    extra:
-      features: { wholesale_accounts: true }
   - offering_id: default
     capability: conformance:session
     protocol: paid-session/v1
@@ -48,6 +46,4 @@ offers:
       refill: extensible
       lease_policy: fixed
       lease_max_seconds: 600
-    extra:
-      features: { wholesale_accounts: true }
 YAML

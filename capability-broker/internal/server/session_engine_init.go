@@ -39,9 +39,8 @@ func (s *Server) initSessionEngine() error {
 			}
 			return s.specForRecord(rec)
 		},
-		Callback:      sessionengine.CallbackConfig{BaseURL: s.cfg.CallbackBaseURL()},
-		AllocDebitSeq: s.allocDebitSeq,
-		OnWinddown:    s.onSessionWinddown,
+		Callback:   sessionengine.CallbackConfig{BaseURL: s.cfg.CallbackBaseURL()},
+		OnWinddown: s.onSessionWinddown,
 	})
 	if err != nil {
 		_ = store.Close()

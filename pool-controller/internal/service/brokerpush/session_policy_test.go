@@ -19,8 +19,7 @@ func TestSessionPolicyReachesTheBroker(t *testing.T) {
 		SessionPolicy: &templates.SessionPolicy{
 			Attachment: "external", Refill: "bounded",
 			LeasePolicy: "fixed", LeaseMaxSeconds: 3600,
-			MaxRotations: 2,
-			Heartbeat:    templates.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 3},
+			Heartbeat: templates.SessionHeartbeat{IntervalSeconds: 5, MissedThreshold: 3},
 		},
 	}
 	out := BuildOffersFromCatalog([]templates.Template{tmpl},
@@ -38,9 +37,6 @@ func TestSessionPolicyReachesTheBroker(t *testing.T) {
 	}
 	if policy.LeasePolicy != "fixed" || policy.LeaseMaxSeconds != 3600 {
 		t.Fatalf("lease = %q/%d", policy.LeasePolicy, policy.LeaseMaxSeconds)
-	}
-	if policy.MaxRotations != 2 {
-		t.Fatalf("max_rotations = %d", policy.MaxRotations)
 	}
 	if policy.Heartbeat == nil || policy.Heartbeat.IntervalSeconds != 5 || policy.Heartbeat.MissedThreshold != 3 {
 		t.Fatalf("heartbeat = %+v, want the pool's cadence, not the broker's default", policy.Heartbeat)

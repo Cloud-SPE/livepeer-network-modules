@@ -1,8 +1,8 @@
 ---
 spec_name: wholesale-account
-version: 1.0.0-draft
+version: 1.1.0-draft
 status: draft
-last_updated: 2026-09-09
+last_updated: 2026-09-11
 ---
 
 # Wholesale account and spend authorization
@@ -161,12 +161,16 @@ records above. A caller MUST NOT accept an observation from a different route.
 
 ## 7. Compatibility
 
-Offerings advertise account-authorization support as
-`extra.features.wholesale_accounts: true` before a payer uses it. During
-migration, a request without `Livepeer-Authorization` follows the legacy
-request/session-funded v1 path. A request with the header follows this spec and
-MUST fail closed if any peer lacks support. Implementations MUST NOT silently
-fall back after issuing an account authorization.
+Account-backed authorization is intrinsic to `paid-job/v1` and
+`paid-session/v1`; it is not an offering feature and MUST NOT be negotiated
+through `extra.features.wholesale_accounts` or any equivalent flag. Every paid
+workload invocation requires `Livepeer-Authorization`. A payment-only workload
+request MUST fail closed without crediting its tickets or running work.
+
+`Livepeer-Payment` remains valid only at `POST /v1/payment/account/fund` or as
+optional shortfall funding alongside a valid authorization. Mixed-version
+peers fail closed. Implementations MUST NOT silently fall back to a
+ticket-session workload path.
 
 ## 8. Conformance
 
@@ -177,18 +181,16 @@ revision, recipient-random rotation, and restart durability.
 
 ## 9. Migration and drain
 
-A receiver upgrades first, then the broker advertises
-`extra.features.wholesale_accounts: true`, then payer applications opt in.
-Legacy generation balances move into the stable account at the first
-account-authorized admission in the same transaction as its reservation. The
-generation balance is set to zero, so restart or retry cannot double-credit it.
+This change is a coordinated hard cut, not a per-offer or per-payer opt-in.
+Before upgrading, operators MUST stop new payment-only admissions and drain all
+legacy in-flight jobs, session debits, and accounting retries to durable
+outcomes. Existing sessions are not upgraded by inventing authorization state.
 
-Opt-in is fenced per payer-payee route. Before its first account-backed call,
-a payer MUST stop minting legacy envelopes on that route and wait for its
-legacy in-flight work to settle. It MUST NOT concurrently use legacy and
-account-backed debits on one ticket generation: migration could otherwise
-move credit still expected by a legacy debit. Different payers MAY cross the
-fence independently.
+After the drain, verified residual generation balances move into the stable
+account exactly once. Each source generation is atomically marked migrated so
+restart or retry cannot double-credit it. All brokers, payment daemons, payer
+services, and conformance clients on a route then upgrade together; older peers
+receive an explicit authorization-required refusal.
 
 Removing a route does not erase service credit. Payers SHOULD stop new funding,
 stop assigning new work, allow admitted work to settle, and consume the
@@ -197,3 +199,10 @@ is a service-credit accounting quantity rather than refundable escrow, v1 does
 not promise cash withdrawal or cross-payee transfer; any bilateral refund is an
 explicit adjustment outside this protocol. Target float bounds the maximum
 route-exit residue rather than allowing it to grow with every request maximum.
+
+## Changelog
+
+| Version | Date | Change |
+|---|---|---|
+| 1.1.0-draft | 2026-09-11 | Makes stable wholesale accounts and single-purpose spend authorization mandatory for every paid workload. Removes offer feature negotiation and payment-only fallback, defines the coordinated drain, and confines tickets to account funding and authorized shortfall funding. |
+| 1.0.0-draft | 2026-09-09 | Introduces stable payer-payee accounts, single-purpose spend authorization, aggregate shortfall funding, and migration-fenced compatibility with ticket-session accounting. |

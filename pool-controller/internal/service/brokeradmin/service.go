@@ -112,7 +112,6 @@ type OfferPushSessionPolicy struct {
 	LeaseMaxSeconds      int                 `json:"lease_max_seconds,omitempty"`
 	BurnRatePerSec       float64             `json:"burn_rate_per_second,omitempty"`
 	MinRunwayUnits       int64               `json:"min_runway_units,omitempty"`
-	MaxRotations         int                 `json:"max_rotations,omitempty"`
 	ToleranceBandPct     float64             `json:"tolerance_band_pct,omitempty"`
 	RunwayIncrementUnits int64               `json:"runway_increment_units,omitempty"`
 	Heartbeat            *OfferPushHeartbeat `json:"heartbeat,omitempty"`

@@ -1,246 +1,21 @@
 package middleware
 
 import (
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"math/big"
 	"net/url"
 	"strconv"
 	"strings"
 
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 )
 
-// SettlementIdentity binds a settlement record to the exchange it
-// describes, and to when it was made. All three ride inside the signed
-// payload — evidence that does not say what it is evidence of can be
-// replayed against something else.
-type SettlementIdentity struct {
-	// JobID is the broker-assigned Livepeer-Job-Id.
-	JobID string
-	// WorkID is the payee-side payment identity.
-	WorkID string
-	// IssuedAt is RFC3339 (nanosecond precision).
-	IssuedAt string
-	// ChargedWei is what the ledger reported charging for this
-	// exchange. Nil means no debit happened (zero units, or the debit
-	// failed) and the record falls back to the computed value.
-	ChargedWei *big.Int
-	// CumulativeUnits is the running unit total on the payment session
-	// after this exchange, so a reader can verify the charge as
-	// bill(cumulative) - bill(cumulative - actual_units) without needing
-	// the session's whole history.
-	CumulativeUnits uint64
-	// DebitFailed reports that the final debit did not complete. The
-	// record then attests what the ledger TOOK (debited_units, usually
-	// zero) rather than what the extractor measured, and carries
-	// DEBIT_FAILED so a clearinghouse refuses it instead of booking
-	// revenue that never moved.
-	DebitFailed bool
-	// DebitedUnits is what the ledger actually accepted. Equal to the
-	// measured units on the normal path; less, usually zero, when the
-	// debit failed.
-	DebitedUnits uint64
-	// RequestID is the exchange's Livepeer-Request-Id. job_id is
-	// broker-minted and reaches a clearinghouse only through the
-	// customer's SDK, so it binds the record to the broker's view of the
-	// exchange; this binds it to the caller's own, when the caller chose
-	// the id. It is the job path's counterpart to gateway_session_id.
-	RequestID string
-}
-
-// SettlementInputs captures everything needed to build a
-// SettlementRecord at a later point in time. Long-lived session
-// drivers (RTMP, session-control) snapshot this struct onto their
-// per-session records during Serve so they can emit settlement at
-// session-close, after the original per-request payment middleware
-// has long since returned.
-type SettlementInputs struct {
-	// PaymentBytes is the raw wire-format Payment the gateway
-	// supplied at session-open. The accepted-quote/price metadata is
-	// parsed back out of its expected_price.constraint field.
-	PaymentBytes []byte
-	// FundedValueWei is the broker-credited expected value for the
-	// session, returned by payment.Client.OpenSession at session-open.
-	FundedValueWei *big.Int
-	// WorkUnit is the canonical work-unit name for the offering. Used
-	// only when the payment's expected_price.constraint omits its own
-	// `wu=` hint (legacy/stub payments).
-	WorkUnit string
-}
-
-// AcceptedQuoteRef returns the quote identity carried by a payment after the
-// normal expected-price validation has accepted it. Session admission uses
-// this to retain the exact quote for a settlement emitted long after the open
-// request has gone away.
-func AcceptedQuoteRef(paymentBytes []byte) (*pb.QuoteRef, error) {
-	var pay pb.Payment
-	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
-		return nil, fmt.Errorf("decode payment: %w", err)
-	}
-	price := pay.GetExpectedPrice()
-	if price == nil {
-		return nil, errors.New("payment has no expected price")
-	}
-	meta, ok := parseExpectedPriceConstraint(price.GetConstraint())
-	if !ok || meta.quoteID == "" {
-		return nil, errors.New("payment expected price has no valid quote reference")
-	}
-	return &pb.QuoteRef{
-		QuoteId:               meta.quoteID,
-		QuoteVersion:          meta.quoteVersion,
-		ConstraintFingerprint: append([]byte(nil), meta.constraintFingerprint...),
-		RouteFingerprint:      append([]byte(nil), meta.routeFingerprint...),
-	}, nil
-}
-
-// BuildSettlementRecord constructs a SettlementRecord from a session's
-// inputs, the final measured units, and an optional termination reason
-// (one of the livepeerheader.Err* strings; empty for normal close).
-// Returns nil when the payment cannot be parsed or has no
-// expected_price — both indicate a stub/legacy payment that doesn't
-// support settlement.
-func BuildSettlementRecord(in SettlementInputs, actualUnits uint64, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
-	return buildSettlementRecord(in.PaymentBytes, in.FundedValueWei, actualUnits, in.WorkUnit, terminationReason, ident)
-}
-
-// Deprecated: use internal/settlement.Encode, which emits the signed
-// envelope both protocols now carry. Kept only until the last caller
-// moves.
-//
-// EncodeSettlementRecord base64-encodes a marshalled SettlementRecord
-// for transport in a single HTTP header or WebSocket terminal-event
-// field.
-func EncodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
-	return encodeSettlementRecord(record)
-}
-
-func encodeSettlementRecord(record *pb.SettlementRecord) (string, error) {
-	if record == nil {
-		return "", fmt.Errorf("settlement record is nil")
-	}
-	raw, err := proto.Marshal(record)
-	if err != nil {
-		return "", err
-	}
-	return base64.StdEncoding.EncodeToString(raw), nil
-}
-
-func buildSettlementRecord(paymentBytes []byte, fundedValueWei *big.Int, actualUnits uint64, currentWorkUnit string, terminationReason string, ident SettlementIdentity) *pb.SettlementRecord {
-	var pay pb.Payment
-	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
-		return nil
-	}
-	price := pay.GetExpectedPrice()
-	if price == nil {
-		return nil
-	}
-	meta, ok := parseExpectedPriceConstraint(price.GetConstraint())
-	if !ok {
-		return nil
-	}
-	unitsPerPrice := price.GetPixelsPerUnit()
-	if unitsPerPrice <= 0 {
-		unitsPerPrice = 1
-	}
-	// Ceiling, per offering-axes.md §6.1 — the same function the payee's
-	// ledger and the session path compute. Integer division floors, so
-	// with per_units > 1 this used to attest less than was actually
-	// billed, and a clearinghouse recomputing the rule disagreed with
-	// the record it was verifying.
-	// Prefer what the ledger says it charged. Recomputing here produces
-	// an INDEPENDENT ceiling, which is right only for the first exchange
-	// on a payment session: billing is cumulative, so later exchanges
-	// cost the difference of two ceilings and an independent one attests
-	// money that never moved.
-	billedValueWei := ident.ChargedWei
-	if billedValueWei == nil {
-		billedValueWei = payment.BillFor(big.NewInt(price.GetPricePerUnit()), uint64(unitsPerPrice), actualUnits)
-	}
-	if fundedValueWei == nil {
-		fundedValueWei = new(big.Int)
-	}
-
-	// A failed debit overrides every funded/billed comparison below: the
-	// question "was this over- or under-funded" presumes value moved,
-	// and none did. Attest what the ledger took, not what was measured.
-	if ident.DebitFailed {
-		billedValueWei = big.NewInt(0)
-		if ident.ChargedWei != nil {
-			billedValueWei = ident.ChargedWei
-		}
-	}
-
-	outcome := pb.SettlementRecord_EXACT
-	switch fundedValueWei.Cmp(billedValueWei) {
-	case -1:
-		outcome = pb.SettlementRecord_UNDERFUNDED
-	case 1:
-		outcome = pb.SettlementRecord_OVERFUNDED
-	}
-	// A budget-driven termination takes precedence over the funded/billed
-	// comparison: the session stopped because runway was exhausted, not
-	// because the gateway happened to over- or under-fund the request.
-	if terminationReason == livepeerheader.ErrInsufficientBalance {
-		outcome = pb.SettlementRecord_STOPPED_AT_BUDGET
-	}
-	// And a failed debit outranks that in turn — a budget stop is an
-	// orderly end to a settled exchange; this one did not settle.
-	if ident.DebitFailed {
-		outcome = pb.SettlementRecord_DEBIT_FAILED
-	}
-
-	workUnit := meta.workUnitName
-	if workUnit == "" {
-		workUnit = currentWorkUnit
-	}
-
-	return &pb.SettlementRecord{
-		// Identity inside the signature. Without it a valid settlement
-		// verifies as evidence for a different exchange: work_id on
-		// paid-job is the ticket session's rand hash, shared by every
-		// job minted against it, so job_id is what makes the record
-		// about ONE exchange.
-		JobId:     ident.JobID,
-		WorkId:    ident.WorkID,
-		RequestId: ident.RequestID,
-		IssuedAt:  ident.IssuedAt,
-		// This exchange's own units. The identity's running total goes
-		// in payment_cumulative_units — putting it here made one field
-		// mean the exchange on the job path and the whole session on the
-		// session path, which is worse than the gap it was filling.
-		// What the LEDGER took, which is the measured units on the
-		// normal path and less — usually zero — when the debit failed.
-		// Reporting the measurement here claimed value that never moved.
-		DebitedUnits:           ident.DebitedUnits,
-		PaymentCumulativeUnits: ident.CumulativeUnits,
-
-		AcceptedQuoteRef: &pb.QuoteRef{
-			QuoteId:               meta.quoteID,
-			QuoteVersion:          meta.quoteVersion,
-			ConstraintFingerprint: meta.constraintFingerprint,
-			RouteFingerprint:      meta.routeFingerprint,
-		},
-		WorkUnitName:   workUnit,
-		EstimatedUnits: meta.estimatedUnits,
-		ActualUnits:    actualUnits,
-		BilledUnits:    actualUnits,
-		FundedValueWei: &pb.BigUInt{Value: fundedValueWei.Bytes()},
-		BilledValueWei: &pb.BigUInt{Value: billedValueWei.Bytes()},
-		Outcome:        outcome,
-	}
-}
-
 func validateExpectedPriceForRequest(paymentBytes []byte, capability, offering string, spec CapabilitySpec) error {
 	var pay pb.Payment
 	if err := proto.Unmarshal(paymentBytes, &pay); err != nil {
-		// Legacy/mock bytes are tolerated so existing unit tests and stubs continue to work.
-		return nil
+		return fmt.Errorf("payment is malformed: %w", err)
 	}
 	price := pay.GetExpectedPrice()
 	if price == nil {
@@ -287,9 +62,8 @@ func validateExpectedPriceForRequest(paymentBytes []byte, capability, offering s
 	return nil
 }
 
-// ValidateExpectedPriceForRequest exposes the payment/header cross-check used
-// by the paid middleware so non-middleware session routes can enforce the
-// same expected-price contract.
+// ValidateExpectedPriceForRequest validates a ticket envelope used solely to
+// fund a wholesale account. It does not authorize a workload.
 func ValidateExpectedPriceForRequest(paymentBytes []byte, capability, offering string, spec CapabilitySpec) error {
 	return validateExpectedPriceForRequest(paymentBytes, capability, offering, spec)
 }

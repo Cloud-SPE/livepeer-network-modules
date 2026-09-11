@@ -199,7 +199,7 @@ func (t Template) Validate() error {
 		default:
 			return fmt.Errorf("template %s: session_policy.lease_policy must be funding-tracking or fixed (got %q)", t.ID, p.LeasePolicy)
 		}
-		if p.LeaseMaxSeconds < 0 || p.MinRunwayUnits < 0 || p.MaxRotations < 0 || p.RunwayIncrementUnits < 0 {
+		if p.LeaseMaxSeconds < 0 || p.MinRunwayUnits < 0 || p.RunwayIncrementUnits < 0 {
 			return fmt.Errorf("template %s: session_policy values must be >= 0", t.ID)
 		}
 		if p.Heartbeat.IntervalSeconds < 0 || p.Heartbeat.MissedThreshold < 0 {

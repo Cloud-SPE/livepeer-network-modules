@@ -32,7 +32,7 @@ check: validate-examples verify version-check
 # checked-in *_grpc.pb.go files declare.
 
 PROTO_MODULE := github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol
-PROTO_FILES  := $(wildcard proto/livepeer/payments/v1/*.proto)
+PROTO_FILES  := $(wildcard proto/livepeer/payments/v1/*.proto) $(wildcard proto/livepeer/sessionrunner/v1/*.proto)
 PROTO_BIN    := $(CURDIR)/.protoc-bin
 GRPC_PLUGIN_VERSION := v1.6.2
 

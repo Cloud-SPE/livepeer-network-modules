@@ -78,48 +78,29 @@ type JobRecord struct {
 	Pending *PendingDebit `json:"pending,omitempty"`
 }
 
-// PendingDebit is a debit that was attempted and did not land, plus the
-// inputs needed to build the settlement once it does.
-//
-// Retrying is safe because a debit is idempotent by
-// (sender, work_id, debit_seq): a retry of an attempt that actually
-// succeeded but lost its response returns the original debit rather than
-// charging twice. That property is what makes durable retry the right
-// answer here instead of a compensating write.
+// PendingDebit is an authorization settlement whose daemon response was
+// uncertain. Retrying the same authorization id and settlement sequence is
+// idempotent, so the reservation remains encumbered until reconciliation.
 type PendingDebit struct {
-	AccountAuthorization bool   `json:"account_authorization,omitempty"`
-	AuthorizationBytes   []byte `json:"authorization_bytes,omitempty"`
-	Sender               []byte `json:"sender"`
-	WorkID               string `json:"work_id"`
-	DebitSeq             uint64 `json:"debit_seq"`
-	// Units is the amount THIS debit is for — the final flush, which on
-	// a long exchange is less than the exchange's total.
-	Units uint64 `json:"units"`
-	// DebitedUnits is what already landed before this attempt: interim
-	// ticks that succeeded. They took real value and the settlement must
-	// not disown them if the retry never lands.
-	DebitedUnits uint64 `json:"debited_units"`
+	AuthorizationBytes []byte `json:"authorization_bytes,omitempty"`
+	Sender             []byte `json:"sender"`
+	WorkID             string `json:"work_id"`
+	DebitSeq           uint64 `json:"debit_seq"`
 
 	Attempts      int       `json:"attempts"`
 	FirstFailedAt time.Time `json:"first_failed_at"`
 	NextAttemptAt time.Time `json:"next_attempt_at"`
 	LastError     string    `json:"last_error,omitempty"`
 
-	// Settlement rebuild inputs. Held because the record can only be
-	// built once the charge is known, and the charge is exactly what is
-	// still outstanding.
-	PaymentBytes      []byte `json:"payment_bytes,omitempty"`
-	FundedValueWei    string `json:"funded_value_wei,omitempty"`
+	// Settlement rebuild inputs.
 	ReservedValueWei  string `json:"reserved_value_wei,omitempty"`
 	AccountFundingWei string `json:"account_funding_wei,omitempty"`
 	AccountVersion    uint64 `json:"account_version,omitempty"`
 	ActualUnits       uint64 `json:"actual_units"`
 	MeasuredUnits     uint64 `json:"measured_units,omitempty"`
 	WorkUnitName      string `json:"work_unit_name,omitempty"`
-	TerminationReason string `json:"termination_reason,omitempty"`
 	JobID             string `json:"job_id,omitempty"`
 	RequestID         string `json:"request_id,omitempty"`
-	IssuedAt          string `json:"issued_at,omitempty"`
 }
 
 // JobBegin records an in-flight exchange, or returns the existing

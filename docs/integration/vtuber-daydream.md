@@ -128,20 +128,18 @@ Both of you: the payer-side call moves off the legacy
 `faceValue + recipient + capability + offering` shape. vtuber already did
 that migration — plan `0003-daemon-contract-alignment` is the reference.
 
-## 6. Rotation needs nothing from the socket
+## 6. Authorization revision needs no SDK callback
 
-If the payee rotates its recipient rand, a stale payment is refused with
-`recipient_rotated`. Declare the last `work_id` you held and rebind —
-read it back from `GET /v1/session/{id}` if you lost it. You do not need
-to have been listening on the events socket.
+Refill with a successor `Livepeer-Authorization` bound to the current
+authorization predecessor. Read the current authorization and usage from
+`GET /v1/session/{id}` if callback delivery was lost. Ticket recipient
+rotation affects aggregate funding only and never rebinds this workload.
 
 ## 7. Settlement lookup
 
 `GET /v1/settlement/{id}` resolves your `gateway_session_id`, the broker
-`session_id`, or any `work_id` the session has held. Prefer your own id:
-it is the only one you issue yourself. An ambiguous key answers
-`ambiguous_identifier` (409) and names one that resolves, rather than
-guessing.
+`session_id`, or the current single-purpose authorization id. Prefer your own
+`gateway_session_id`: it is the stable identifier you issue yourself.
 
 ## 8. The pilot stack: what it gives you, and what it does not
 

@@ -1,6 +1,8 @@
 package server
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -80,6 +82,7 @@ func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile st
 	})
 
 	cfg := &config.Config{
+		ExternalBaseURL: "https://broker.example",
 		Identity: config.Identity{
 			OrchEthAddress:    "0x" + strings.Repeat("cd", 20),
 			SettlementKeyFile: settlementKeyFile,
@@ -108,7 +111,6 @@ func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile st
 			Extra: map[string]any{
 				"openai":   map[string]any{"model": "test-model"},
 				"provider": "vllm",
-				"features": map[string]any{"wholesale_accounts": true},
 			},
 		}},
 	}
@@ -185,6 +187,7 @@ func jobReq(t *testing.T, srv *httptest.Server, requestID, accept string) *http.
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setJobTestAuthorization(t, req, srv.URL)
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
@@ -205,11 +208,43 @@ func jobReqBody(t *testing.T, srv *httptest.Server, requestID, body string) *htt
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setJobTestAuthorization(t, req, srv.URL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
 	return resp
+}
+
+func setJobTestAuthorization(t *testing.T, req *http.Request, brokerURL string) {
+	setJobTestAuthorizationPrice(t, req, brokerURL, 1, "tokens")
+}
+
+func setJobTestAuthorizationPrice(t *testing.T, req *http.Request, _ string, price int64, workUnit string) {
+	t.Helper()
+	var body []byte
+	if req.Body != nil {
+		var err error
+		body, err = io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	req.Body = io.NopCloser(strings.NewReader(string(body)))
+	digest := sha256.Sum256(body)
+	requestID := req.Header.Get(livepeerheader.RequestID)
+	payload := &pb.SpendAuthorizationPayload{
+		Domain: "livepeer-spend-authorization/v1", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID,
+		RequestId: requestID, Protocol: "paid-job/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example",
+		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(price).Bytes()}, UnitsPerPrice: 1, WorkUnitName: workUnit, Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering)},
+		MaxDebitWei:   &pb.BigUInt{Value: big.NewInt(1_000_000).Bytes()}, MaxTotalUnits: 1_000_000, RequestDigest: digest[:],
+	}
+	wire, err := proto.Marshal(&pb.SpendAuthorization{Payload: payload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(livepeerheader.Authorization, base64.StdEncoding.EncodeToString(wire))
 }
 
 func TestJobSurfaceEndToEnd(t *testing.T) {
@@ -266,6 +301,7 @@ func TestJobSurfaceEndToEnd(t *testing.T) {
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, "job-req-1")
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("other-payment")))
+	setJobTestAuthorization(t, req, srv.URL)
 	reuse, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +320,7 @@ func TestJobSurfaceEndToEnd(t *testing.T) {
 	mreq.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	mreq.Header.Set(livepeerheader.RequestID, "job-req-mp")
 	mreq.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub")))
+	setJobTestAuthorization(t, mreq, srv.URL)
 	mresp, err := http.DefaultClient.Do(mreq)
 	if err != nil {
 		t.Fatal(err)
@@ -455,6 +492,7 @@ func TestJobSettlementCarriesRequestID(t *testing.T) {
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(rawPay))
+	setJobTestAuthorization(t, req, srv.URL)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -534,9 +572,8 @@ func rawSettlementPayload(t *testing.T, header string) string {
 	return string(env.Payload)
 }
 
-// jobReqPaid sends a job with a real payment envelope, so the exchange
-// actually produces a settlement. The stub envelope other tests use
-// parses to no expected_price, and no settlement is built at all.
+// jobReqPaid sends an authorization-backed job plus an optional account
+// funding ticket, so the exchange produces an account settlement.
 func jobReqPaid(t *testing.T, srv *httptest.Server, requestID, accept string) *http.Response {
 	t.Helper()
 	pay := &pb.Payment{ExpectedPrice: &pb.PriceInfo{
@@ -555,6 +592,7 @@ func jobReqPaid(t *testing.T, srv *httptest.Server, requestID, accept string) *h
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, requestID)
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(raw))
+	setJobTestAuthorization(t, req, srv.URL)
 	if accept != "" {
 		req.Header.Set("Accept", accept)
 	}
@@ -709,48 +747,6 @@ func TestDebitRetryReachesSignedSettlement(t *testing.T) {
 	}
 }
 
-// Retry is bounded. An unbounded one leaves a job that can never reach a
-// terminal state, which is worse for a clearinghouse than a clear loss:
-// an encumbrance it can neither release nor write off.
-func TestDebitRetryExhaustionSettlesDebitFailed(t *testing.T) {
-	var calls atomic.Int64
-	mock := payment.NewMock()
-	mock.FailNextDebits(1000) // never lands
-	srv, s := newJobTestServerWith(t, &calls, mock)
-
-	resp := jobReqPaid(t, srv, "retry-exhaust", "")
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-	jobID := resp.Header.Get(livepeerheader.JobID)
-
-	// Burn the attempt budget. Each sweep is one attempt.
-	for i := 0; i < debitRetryMaxAttempts+1; i++ {
-		s.sweepPendingDebits(t.Context())
-		forcePendingDue(t, s)
-	}
-
-	q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := decodeBody(t, q)
-	if q.StatusCode != http.StatusOK {
-		t.Fatalf("query after exhaustion = %d; want a terminal 200 (body %v)", q.StatusCode, body)
-	}
-	encoded, _ := body["settlement"].(string)
-	if encoded == "" {
-		t.Fatal("exhausted retry produced no settlement; the job can never be reconciled")
-	}
-	rec := decodeSettlementHeader(t, encoded)
-	if rec.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
-		t.Fatalf("outcome = %v; want DEBIT_FAILED after bounded retry exhaustion",
-			rec.GetOutcome())
-	}
-	if rec.GetDebitedUnits() != 0 {
-		t.Fatalf("debited_units = %d; the ledger never took anything", rec.GetDebitedUnits())
-	}
-}
-
 // forcePendingDue pulls every pending record's next attempt into the
 // past so a test can burn the retry budget without sleeping.
 func forcePendingDue(t *testing.T, s *Server) {
@@ -797,17 +793,12 @@ func TestDebitRetryCannotDoubleCharge(t *testing.T) {
 		s.sweepPendingDebits(t.Context())
 	}
 
-	var total int64
-	var seqs []uint64
-	for _, sess := range mock.Sessions() {
-		for _, d := range mock.Debits(sess.WorkID) {
-			total += d.Units
-			seqs = append(seqs, d.Seq)
-		}
+	account, err := mock.GetWholesaleAccount(t.Context(), bytes.Repeat([]byte{1}, 20))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if total != 42 {
-		t.Fatalf("ledger recorded %d units across seqs %v; the exchange was 42 — a retry charged twice",
-			total, seqs)
+	if account.Debited.Cmp(big.NewInt(42)) != 0 {
+		t.Fatalf("account debited %s; want exactly 42 after repeated reconciliation", account.Debited)
 	}
 }
 
@@ -838,51 +829,6 @@ func TestPendingDebitKeepsPayeeSessionOpen(t *testing.T) {
 	}
 	if len(recs) != 0 {
 		t.Fatalf("still pending after a sweep: %+v", recs[0].Pending)
-	}
-}
-
-// A payment whose every ticket was rejected must not buy work.
-//
-// The job path used to special-case only the rotated recipient rand and
-// let every other full rejection through, so a replayed nonce stream, a
-// bad signature or an exhausted nonce space credited NOTHING and the
-// exchange ran anyway — funded out of balance credited earlier, with the
-// caller seeing 200 the whole time. Found on the pilot stack, where a
-// payer restart replayed its nonces and served three exchanges free.
-func TestFullyRejectedPaymentBuysNoWork(t *testing.T) {
-	var calls atomic.Int64
-	mock := payment.NewMock()
-	mock.RejectNextPayments(1, payment.PaymentRejectionReasonNonceReplay)
-	srv, _ := newJobTestServerWith(t, &calls, mock)
-
-	before := calls.Load()
-	resp := jobReqPaid(t, srv, "rejected-batch", "")
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("status %d for a payment that credited nothing; want 401 — otherwise the "+
-			"exchange is funded by somebody else's earlier credit", resp.StatusCode)
-	}
-	if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
-		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
-	}
-	if calls.Load() != before {
-		t.Fatal("the backend ran for a payment that credited nothing")
-	}
-}
-
-// A PARTIALLY rejected batch is left alone: it credited something, that
-// balance is the honest one, and the runway check decides whether it
-// buys anything.
-func TestPartiallyRejectedPaymentStillRuns(t *testing.T) {
-	var calls atomic.Int64
-	mock := payment.NewMock()
-	srv, _ := newJobTestServerWith(t, &calls, mock)
-
-	resp := jobReqPaid(t, srv, "partial-batch", "")
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status %d; an unrejected payment must still run", resp.StatusCode)
 	}
 }
 
@@ -1006,164 +952,4 @@ func TestPendingDebitShipsNoTerminalSettlement(t *testing.T) {
 		}
 	})
 
-	t.Run("exhaustion: exactly one DEBIT_FAILED settlement", func(t *testing.T) {
-		var calls atomic.Int64
-		mock := payment.NewMock()
-		mock.FailNextDebits(1000)
-		srv, s := newJobTestServerWith(t, &calls, mock)
-
-		resp := jobReqPaid(t, srv, "loc-bkr-exhaust", "")
-		_, _ = io.Copy(io.Discard, resp.Body)
-		_ = resp.Body.Close()
-		jobID := resp.Header.Get(livepeerheader.JobID)
-
-		// While retries remain, still nothing terminal on the wire.
-		if got := resp.Header.Get(livepeerheader.Settlement); got != "" {
-			t.Fatal("shipped a terminal settlement before retries were exhausted")
-		}
-
-		for i := 0; i < debitRetryMaxAttempts+1; i++ {
-			s.sweepPendingDebits(t.Context())
-			forcePendingDue(t, s)
-		}
-
-		q, err := http.Get(srv.URL + "/v1/settlement/" + jobID)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := decodeBody(t, q)
-		if q.StatusCode != http.StatusOK {
-			t.Fatalf("after exhaustion: %d; want a terminal 200 (body %v)", q.StatusCode, body)
-		}
-		encoded, _ := body["settlement"].(string)
-		if encoded == "" {
-			t.Fatal("exhausted retry produced no settlement")
-		}
-		if rec := decodeSettlementHeader(t, encoded); rec.GetOutcome() != pb.SettlementRecord_DEBIT_FAILED {
-			t.Fatalf("outcome = %s after exhaustion; want DEBIT_FAILED", rec.GetOutcome())
-		}
-	})
-}
-
-// A refusal AFTER the payment was admitted has to say what it cost.
-//
-// The payment is credited to the ledger, then the request is refused for
-// no runway: value moved, no work done. The response carried only an
-// error code — no units claim, so a gateway had to infer "nothing was
-// billed" from a missing header — and no signed evidence, so the exchange
-// lookup answered ADMITTED_OUTCOME_UNKNOWN: "this broker admitted the
-// exchange and holds no signed settlement for it." Correct about the
-// record, useless to a gateway reconciling an admitted envelope.
-//
-// Nothing was billed. That is knowable and terminal, and this broker can
-// attest to it at the moment it refuses.
-func TestPostAdmissionRefusalStatesZeroAndSignsIt(t *testing.T) {
-	var calls atomic.Int64
-	mock := payment.NewMock()
-	// Admitted, but credits nothing — so the pre-flight check refuses
-	// before any backend work.
-	mock.SetCreditPerPayment(big.NewInt(0))
-	srv, _ := newJobTestServerWith(t, &calls, mock)
-	// Baseline after startup: the broker health-probes the backend, so
-	// the counter is not zero before the request.
-	baseline := calls.Load()
-
-	resp := jobReqPaid(t, srv, "post-admission-refusal", "")
-	_, _ = io.Copy(io.Discard, resp.Body)
-	_ = resp.Body.Close()
-
-	if resp.StatusCode != http.StatusPaymentRequired {
-		t.Fatalf("status %d; want 402 insufficient_balance", resp.StatusCode)
-	}
-	if got := resp.Header.Get(livepeerheader.Error); got != livepeerheader.ErrInsufficientBalance {
-		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrInsufficientBalance)
-	}
-	if calls.Load() != baseline {
-		t.Fatalf("backend ran for a refused request: %d -> %d", baseline, calls.Load())
-	}
-	if got := resp.Header.Get(livepeerheader.WorkUnits); got != "0" {
-		t.Fatalf("Livepeer-Work-Units = %q; want \"0\" — a reader should not have to "+
-			"infer the amount from a missing header", got)
-	}
-
-	encoded := resp.Header.Get(livepeerheader.Settlement)
-	if encoded == "" {
-		t.Fatal("no signed evidence for an admitted-then-refused exchange")
-	}
-	rec := decodeSettlementHeader(t, encoded)
-	if rec.GetOutcome() != pb.SettlementRecord_STOPPED_AT_BUDGET {
-		t.Fatalf("outcome = %s; a refusal for no runway is STOPPED_AT_BUDGET", rec.GetOutcome())
-	}
-	// All three unit counts zero: no work was measured, none was billed,
-	// none was debited. A record that left any of them unset would let a
-	// reader conclude something happened.
-	if rec.GetActualUnits() != 0 || rec.GetBilledUnits() != 0 || rec.GetDebitedUnits() != 0 {
-		t.Fatalf("units actual=%d billed=%d debited=%d; all three must be 0",
-			rec.GetActualUnits(), rec.GetBilledUnits(), rec.GetDebitedUnits())
-	}
-	if billed := new(big.Int).SetBytes(rec.GetBilledValueWei().GetValue()); billed.Sign() != 0 {
-		t.Fatalf("billed_value_wei = %s; nothing was billed", billed)
-	}
-	// Bound to the exchange it describes. Evidence that cannot name its
-	// exchange can be replayed as evidence for another.
-	if rec.GetRequestId() != "post-admission-refusal" {
-		t.Fatalf("request_id = %q", rec.GetRequestId())
-	}
-	if rec.GetJobId() == "" || rec.GetWorkId() == "" {
-		t.Fatalf("job_id=%q work_id=%q; both bind the record to this exchange",
-			rec.GetJobId(), rec.GetWorkId())
-	}
-	if rec.GetWorkUnitName() == "" {
-		t.Fatal("work_unit_name is empty; a billed figure without its unit is unreadable")
-	}
-	if rec.GetAcceptedQuoteRef().GetQuoteId() == "" {
-		t.Fatal("accepted_quote_ref is empty; the record cannot be tied to the quote it priced")
-	}
-
-	// And it must be retrievable, not merely delivered — a gateway that
-	// lost the response is exactly the case evidence exists for.
-	jobID := resp.Header.Get(livepeerheader.JobID)
-	if jobID == "" {
-		t.Fatal("refusal carries no job id, so its evidence cannot be looked up")
-	}
-	// Retrievable by BOTH identifiers, and byte-identical to what was
-	// delivered — a gateway holds one or the other depending on where it
-	// lost the response.
-	for _, u := range []string{
-		srv.URL + "/v1/exchange/post-admission-refusal",
-		srv.URL + "/v1/settlement/" + jobID,
-	} {
-		q, err := http.Get(u)
-		if err != nil {
-			t.Fatal(err)
-		}
-		body := decodeBody(t, q)
-		if got, _ := body["outcome"].(string); got == "ADMITTED_OUTCOME_UNKNOWN" {
-			t.Fatalf("%s reports %q: %v", u, got, body["detail"])
-		}
-		got, _ := body["settlement"].(string)
-		if got == "" {
-			got = q.Header.Get(livepeerheader.Settlement)
-		}
-		if got != encoded {
-			t.Fatalf("%s returned different evidence than the response carried", u)
-		}
-	}
-
-	// And a replay returns the same evidence without re-admitting the
-	// payment or running the backend.
-	beforeReplay := calls.Load()
-	replay := jobReqPaid(t, srv, "post-admission-refusal", "")
-	_, _ = io.Copy(io.Discard, replay.Body)
-	_ = replay.Body.Close()
-	if calls.Load() != beforeReplay {
-		t.Fatal("replay of a refused request ran the backend")
-	}
-	if got := replay.Header.Get(livepeerheader.Settlement); got != encoded {
-		t.Fatalf("replay evidence differs from the original:\n  first: %s\n replay: %s",
-			encoded, got)
-	}
-	if got := replay.Header.Get(livepeerheader.WorkUnits); got != "0" {
-		t.Fatalf("replay Work-Units = %q; want \"0\"", got)
-	}
 }

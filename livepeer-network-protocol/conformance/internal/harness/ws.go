@@ -72,13 +72,13 @@ func (w *WSConn) Send(f WSFrame) error {
 	return w.c.WriteJSON(f)
 }
 
-// SendTopUp sends a session.topup frame carrying a payment envelope and
-// its idempotency key. The WS mirrors the HTTP verb, and a frame has no
-// headers, so the request id rides in the body (paid-session §8).
-func (w *WSConn) SendTopUp(requestID, payment string) error {
+// SendTopUp sends a session.topup frame carrying a required successor
+// authorization, optional account funding, and its idempotency key.
+func (w *WSConn) SendTopUp(requestID, authorization, payment string) error {
 	return w.Send(WSFrame{Type: "session.topup", Body: map[string]any{
-		"request_id":     requestID,
-		"payment_header": payment,
+		"request_id":           requestID,
+		"authorization_header": authorization,
+		"payment_header":       payment,
 	}})
 }
 

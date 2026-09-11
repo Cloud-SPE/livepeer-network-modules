@@ -14,19 +14,9 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Retry policy for a debit that did not land.
-//
-// Bounded on purpose. An unbounded retry leaves a job that can never
-// reach a terminal state, which is worse for a clearinghouse than a
-// clear loss: an encumbrance it cannot release and cannot write off.
-// When the bound is reached the exchange settles as DEBIT_FAILED, which
-// is a recoverable outcome — somebody can act on it — rather than a
-// permanent maybe.
 const (
-	debitRetryInterval    = 30 * time.Second
-	debitRetryMaxAttempts = 10
-	debitRetryMaxAge      = 30 * time.Minute
-	debitRetryBatch       = 64
+	debitRetryInterval = 30 * time.Second
+	debitRetryBatch    = 64
 )
 
 // runDebitRetry drives outstanding debits to a terminal accounting
@@ -68,70 +58,29 @@ func (s *Server) retryOneDebit(ctx context.Context, rec *sessionstore.JobRecord,
 		return
 	}
 
-	// Exhaustion is checked BEFORE attempting, so a record that has run
-	// out of budget settles on this pass instead of making one more call
-	// nobody will look at.
-	exhausted := pd.Attempts >= debitRetryMaxAttempts ||
-		(!pd.FirstFailedAt.IsZero() && now.Sub(pd.FirstFailedAt) > debitRetryMaxAge)
-	if pd.AccountAuthorization {
-		// A stable-account reservation cannot be safely written off: releasing
-		// it after delivery creates unpaid work; terminating it strands reusable
-		// payer value. The receiver operation is idempotent, so reconcile until
-		// an authoritative answer arrives.
-		exhausted = false
-	}
-	if exhausted {
-		s.settlePending(rec, pd.DebitedUnits, nil, true)
-		log.Printf("ERROR: debit retry exhausted after %d attempts work_id=%s seq=%d units=%d "+
-			"last_error=%q — settling DEBIT_FAILED; the exchange was delivered and is unpaid",
-			pd.Attempts, pd.WorkID, pd.DebitSeq, pd.Units, pd.LastError)
+	// Settlement is idempotent by authorization id and sequence. Never
+	// write an uncertain authorization off: doing so either releases value
+	// after delivered work or strands reusable payer credit.
+	ac, ok := s.payment.(payment.AccountClient)
+	if !ok {
+		_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "wholesale account extension unavailable")
 		return
 	}
-
-	// The same debit_seq as the original attempt, deliberately. A debit
-	// is idempotent by (sender, work_id, debit_seq), so if the first
-	// attempt actually landed and only its response was lost, this
-	// returns that debit rather than charging a second time.
-	if pd.AccountAuthorization {
-		ac, ok := s.payment.(payment.AccountClient)
-		if !ok {
-			_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "wholesale account extension unavailable")
-			return
-		}
-		settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: pd.Sender, AuthorizationID: pd.WorkID, ActualUnits: pd.ActualUnits, SettlementSeq: pd.DebitSeq})
-		if err != nil {
-			_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), err.Error())
-			return
-		}
-		if settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil {
-			_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "payment daemon returned invalid authorization settlement state")
-			return
-		}
-		s.settlePendingAccount(rec, settled)
-		return
-	}
-	res, err := s.payment.DebitBalance(ctx, payment.DebitBalanceRequest{
-		Sender:    pd.Sender,
-		WorkID:    pd.WorkID,
-		WorkUnits: int64(pd.Units),
-		DebitSeq:  pd.DebitSeq,
-	})
+	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: pd.Sender, AuthorizationID: pd.WorkID, ActualUnits: pd.ActualUnits, SettlementSeq: pd.DebitSeq})
 	if err != nil {
-		next := now.Add(debitRetryInterval)
-		if rerr := s.sessionStore.RecordDebitRetryFailure(rec.RequestID, next, err.Error()); rerr != nil {
+		if rerr := s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), err.Error()); rerr != nil {
 			log.Printf("warning: recording debit retry failure failed request_id=%s: %v",
 				rec.RequestID, rerr)
 		}
 		return
 	}
-
-	charged := res.DebitedWei
-	if charged == nil {
-		charged = big.NewInt(0)
+	if settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil {
+		_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "payment daemon returned invalid authorization settlement state")
+		return
 	}
-	s.settlePending(rec, pd.DebitedUnits+pd.Units, res, false)
-	log.Printf("debit retry landed work_id=%s seq=%d units=%d charged=%s replayed=%v",
-		pd.WorkID, pd.DebitSeq, pd.Units, charged, res.Replayed)
+	s.settlePendingAccount(rec, settled)
+	log.Printf("authorization settlement retry landed authorization_id=%s seq=%d units=%d",
+		pd.WorkID, pd.DebitSeq, pd.ActualUnits)
 }
 
 func (s *Server) settlePendingAccount(rec *sessionstore.JobRecord, res *payment.SettleAuthorizationResult) {
@@ -165,49 +114,5 @@ func (s *Server) settlePendingAccount(rec *sessionstore.JobRecord, res *payment.
 	}
 	if err := s.sessionStore.SettleJobWithUnits(rec.RequestID, pd.ActualUnits, encoded); err != nil {
 		log.Printf("warning: persist account settlement request_id=%s: %v", rec.RequestID, err)
-	}
-}
-
-// settlePending builds the settlement the exchange should have had and
-// moves the record terminal.
-func (s *Server) settlePending(rec *sessionstore.JobRecord, debitedUnits uint64,
-	res *payment.DebitResult, failed bool) {
-
-	pd := rec.Pending
-	funded, ok := new(big.Int).SetString(pd.FundedValueWei, 10)
-	if !ok {
-		funded = big.NewInt(0)
-	}
-	ident := middleware.SettlementIdentity{
-		JobID:        pd.JobID,
-		WorkID:       pd.WorkID,
-		IssuedAt:     pd.IssuedAt,
-		RequestID:    pd.RequestID,
-		DebitFailed:  failed,
-		DebitedUnits: debitedUnits,
-	}
-	if res != nil {
-		ident.ChargedWei = res.DebitedWei
-		ident.CumulativeUnits = res.CumulativeUnits
-	}
-
-	encoded := ""
-	set := middleware.BuildSettlementRecord(middleware.SettlementInputs{
-		PaymentBytes:   pd.PaymentBytes,
-		FundedValueWei: funded,
-		WorkUnit:       pd.WorkUnitName,
-	}, pd.ActualUnits, pd.TerminationReason, ident)
-	if set != nil {
-		var err error
-		encoded, err = settlement.Encode(set, s.settlementSigner)
-		if err != nil {
-			log.Printf("warning: settlement encode failed after debit retry request_id=%s: %v",
-				pd.RequestID, err)
-			encoded = ""
-		}
-	}
-	if err := s.sessionStore.SettleJobWithUnits(rec.RequestID, debitedUnits, encoded); err != nil {
-		log.Printf("warning: settling job after debit retry failed request_id=%s: %v",
-			rec.RequestID, err)
 	}
 }

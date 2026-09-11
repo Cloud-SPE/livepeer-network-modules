@@ -228,7 +228,6 @@ type SessionPolicy struct {
 	LeaseMaxSeconds      int              `yaml:"lease_max_seconds,omitempty" json:"lease_max_seconds,omitempty"`
 	BurnRatePerSec       float64          `yaml:"burn_rate_per_second,omitempty" json:"burn_rate_per_second,omitempty"`
 	MinRunwayUnits       int64            `yaml:"min_runway_units,omitempty" json:"min_runway_units,omitempty"`
-	MaxRotations         int              `yaml:"max_rotations,omitempty" json:"max_rotations,omitempty"`
 	ToleranceBandPct     float64          `yaml:"tolerance_band_pct,omitempty" json:"tolerance_band_pct,omitempty"`
 	RunwayIncrementUnits int64            `yaml:"runway_increment_units,omitempty" json:"runway_increment_units,omitempty"`
 	Heartbeat            SessionHeartbeat `yaml:"heartbeat,omitempty" json:"heartbeat,omitempty"`

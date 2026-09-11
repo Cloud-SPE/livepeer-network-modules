@@ -63,6 +63,7 @@ func TestPaidJobDispatchesToAttachedRunner(t *testing.T) {
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, "job-attached-1")
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setJobTestAuthorizationPrice(t, req, ts.URL, 210, "tokens")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -131,6 +132,7 @@ func TestPaidJobWithNoEligibleRunnerIs503(t *testing.T) {
 	req.Header.Set(livepeerheader.Protocol, "paid-job/v1")
 	req.Header.Set(livepeerheader.RequestID, "job-none-1")
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("stub-payment")))
+	setJobTestAuthorizationPrice(t, req, ts.URL, 210, "tokens")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		t.Fatal(err)

@@ -27,7 +27,7 @@
 //	livepeer-chain-probe \
 //	  --payer-socket=/tmp/payer.sock --payee-socket=/tmp/payee.sock \
 //	  --broker-url=http://127.0.0.1:8411 \
-//	  --recipient=0x… --protocol=job|session|both
+//	  --recipient=0x… --protocol=wholesale
 //
 // The payer, payee and broker must already be running against the same
 // chain. The probe hosts its own fake session runner.
@@ -58,10 +58,7 @@ type config struct {
 	workUnit                string
 	priceWei                int64
 	perUnits                uint64
-	fundedWei               *big.Int
-	runnerBind              string
 	protocol                string
-	adminToken              string
 	chainID                 uint64
 	accountFloat            *big.Int
 	maxAuthUnits            uint64
@@ -88,9 +85,7 @@ func main() {
 		workUnit                = flag.String("work-unit", "tokens", "the offering's work unit")
 		priceWei                = flag.Int64("price-wei", 100, "the offering's amount_wei")
 		perUnits                = flag.Uint64("per-units", 1000, "the offering's per_units — keep this above 1: it is the denominator where flooring and ceiling disagree, and a run at 1 cannot see a rounding defect")
-		fundedWei               = flag.String("funded-wei", "1000000000000000", "value to authorize per payment")
-		runnerBind              = flag.String("runner-bind", "127.0.0.1:0", "address for the probe's fake session runner")
-		protocol                = flag.String("protocol", "both", "job | session | both | rotation | retry | evidence | wholesale | wholesale-recovery-prepare | wholesale-recovery-verify | wholesale-evidence")
+		protocol                = flag.String("protocol", "wholesale", "wholesale | wholesale-recovery-prepare | wholesale-recovery-verify | wholesale-evidence")
 		chainID                 = flag.Uint64("chain-id", 42161, "chain id signed into wholesale spend authorizations")
 		accountFloat            = flag.String("account-float-wei", "", "wholesale only: target available account float; defaults to the maximum authorization debit")
 		maxAuthUnits            = flag.Uint64("max-authorization-units", 131072, "wholesale only: maximum units bound into each single-purpose authorization")
@@ -103,8 +98,6 @@ func main() {
 		sessionRunnerControlURL = flag.String("session-runner-control-url", "http://runner:8092", "wholesale only: conformance session runner's internal probe-control URL")
 		checkpointFile          = flag.String("checkpoint-file", "", "wholesale recovery only: durable checkpoint path on a persistent volume")
 		checkpointDir           = flag.String("checkpoint-dir", "/var/lib/livepeer/payment-daemon", "wholesale evidence only: directory containing recovery checkpoints")
-		adminToken              = flag.String("payee-admin-token", "",
-			"rotation only: the payee's --payee-admin-token. Rotation is driven through PayeeAdmin.ResetSession, which is closed unless the operator configured a token.")
 	)
 	flag.Parse()
 
@@ -112,10 +105,10 @@ func main() {
 	if err != nil {
 		fatal("--recipient: %v", err)
 	}
-	funded, ok := new(big.Int).SetString(*fundedWei, 10)
-	if !ok || funded.Sign() <= 0 {
-		fatal("--funded-wei must be a positive decimal integer")
+	if *protocol != "wholesale" && *protocol != "wholesale-recovery-prepare" && *protocol != "wholesale-recovery-verify" && *protocol != "wholesale-evidence" {
+		fatal("--protocol must be wholesale, wholesale-recovery-prepare, wholesale-recovery-verify, or wholesale-evidence")
 	}
+	var ok bool
 	var targetFloat *big.Int
 	if *accountFloat != "" {
 		targetFloat, ok = new(big.Int).SetString(*accountFloat, 10)
@@ -128,8 +121,8 @@ func main() {
 		brokerURI: *brokerURI,
 		recipient: addr, capability: *capability, offering: *offering,
 		workUnit: *workUnit, priceWei: *priceWei, perUnits: *perUnits,
-		fundedWei: funded, runnerBind: *runnerBind, protocol: *protocol, adminToken: *adminToken,
-		chainID: *chainID, accountFloat: targetFloat, maxAuthUnits: *maxAuthUnits,
+		protocol: *protocol,
+		chainID:  *chainID, accountFloat: targetFloat, maxAuthUnits: *maxAuthUnits,
 		sessionCapability: *sessionCapability, sessionOffering: *sessionOffering,
 		sessionWorkUnit: *sessionWorkUnit, sessionPriceWei: *sessionPriceWei,
 		sessionPerUnits: *sessionPerUnits, sessionMaxAuthUnits: *sessionMaxAuthUnits,
@@ -157,47 +150,6 @@ func main() {
 		cfg.capability, cfg.offering, cfg.priceWei, cfg.perUnits, cfg.workUnit)
 
 	failed := 0
-	if cfg.protocol == "job" || cfg.protocol == "both" {
-		if err := probeJob(ctx, cfg, pb.NewPayerDaemonClient(payer), pb.NewPayeeDaemonClient(payee)); err != nil {
-			fmt.Printf("FAIL paid-job: %v\n\n", err)
-			failed++
-		} else {
-			fmt.Print("PASS paid-job\n\n")
-		}
-	}
-	if cfg.protocol == "session" || cfg.protocol == "both" {
-		if err := probeSession(ctx, cfg, pb.NewPayerDaemonClient(payer), pb.NewPayeeDaemonClient(payee)); err != nil {
-			fmt.Printf("FAIL paid-session: %v\n\n", err)
-			failed++
-		} else {
-			fmt.Print("PASS paid-session\n\n")
-		}
-	}
-	if cfg.protocol == "evidence" {
-		if err := probeEvidence(ctx, cfg, pb.NewPayerDaemonClient(payer)); err != nil {
-			fmt.Printf("FAIL evidence: %v\n\n", err)
-			failed++
-		} else {
-			fmt.Print("PASS evidence\n\n")
-		}
-	}
-	if cfg.protocol == "retry" {
-		if err := probeDebitRetry(ctx, cfg, pb.NewPayerDaemonClient(payer)); err != nil {
-			fmt.Printf("FAIL retry: %v\n\n", err)
-			failed++
-		} else {
-			fmt.Print("PASS retry\n\n")
-		}
-	}
-	if cfg.protocol == "rotation" {
-		if err := probeRotation(ctx, cfg, pb.NewPayerDaemonClient(payer),
-			pb.NewPayeeDaemonClient(payee), pb.NewPayeeAdminClient(payee)); err != nil {
-			fmt.Printf("FAIL rotation: %v\n\n", err)
-			failed++
-		} else {
-			fmt.Print("PASS rotation\n\n")
-		}
-	}
 	if cfg.protocol == "wholesale" {
 		if err := probeWholesale(ctx, cfg, pb.NewPayerDaemonClient(payer), pb.NewPayeeDaemonClient(payee)); err != nil {
 			fmt.Printf("FAIL wholesale account: %v\n\n", err)
@@ -243,34 +195,6 @@ func dial(socket string) (*grpc.ClientConn, func(), error) {
 	return conn, func() { _ = conn.Close() }, nil
 }
 
-// mint authorizes one payment against the payer's real deposit.
-func mint(ctx context.Context, cfg config, payer pb.PayerDaemonClient, tag string) (*pb.CreatePaymentResponse, error) {
-	return payer.CreatePayment(ctx, &pb.CreatePaymentRequest{
-		Recipient:           cfg.recipient,
-		TicketParamsBaseUrl: cfg.brokerURL,
-		MintRequestId:       fmt.Sprintf("chain-probe-%s-%d", tag, time.Now().UnixNano()),
-		AcceptedPrice: &pb.AcceptedPrice{
-			PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(cfg.priceWei).Bytes()},
-			UnitsPerPrice:   cfg.perUnits,
-			WorkUnitName:    cfg.workUnit,
-			Capability:      cfg.capability,
-			Offering:        cfg.offering,
-			// A real gateway carries this from the resolver's
-			// SelectedRoute; the payer requires it because an unquoted
-			// payment has no basis to settle against.
-			QuoteRef: &pb.QuoteRef{
-				QuoteId: "chain-probe:v1", QuoteVersion: 1,
-				ConstraintFingerprint: []byte("chain-probe-constraints"),
-				RouteFingerprint:      []byte("chain-probe-route"),
-			},
-		},
-		Funding: &pb.FundingIntent{
-			FundedValueWei: &pb.BigUInt{Value: cfg.fundedWei.Bytes()},
-			EstimatedUnits: 1000,
-		},
-	})
-}
-
 // billFor is the normative rule from
 // livepeer-network-protocol/protocols/offering-axes.md §6.1. The probe
 // recomputes it independently rather than importing the broker's copy —
@@ -287,14 +211,6 @@ func billFor(priceWei int64, perUnits, units uint64) *big.Int {
 		quo.Add(quo, big.NewInt(1))
 	}
 	return quo
-}
-
-func balanceOf(ctx context.Context, payee pb.PayeeDaemonClient, sender []byte, workID string) (*big.Int, error) {
-	r, err := payee.GetBalance(ctx, &pb.GetBalanceRequest{Sender: sender, WorkId: workID})
-	if err != nil {
-		return nil, err
-	}
-	return new(big.Int).SetBytes(r.GetBalance()), nil
 }
 
 func readAll(r io.Reader) string {

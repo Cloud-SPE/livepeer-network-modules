@@ -2,9 +2,10 @@
 //
 // The PayeeDaemon runs next to a payee application — a Livepeer
 // orchestrator or any consumer app accepting payment for work. It
-// validates incoming payment blobs, tracks per-(sender, work_id)
-// balances, and (post chain integration) redeems winning tickets
-// on-chain via the TicketBroker.
+// validates incoming payment blobs, funds stable payer-payee wholesale
+// accounts, enforces single-purpose spend authorizations, and redeems winning
+// tickets on-chain via the TicketBroker. Per-(sender, work_id) balances are a
+// legacy ticket-crediting implementation detail and MUST NOT authorize work.
 //
 // Mounted only when the daemon is started with `--mode=receiver`.
 // Calls to it in sender mode return UNIMPLEMENTED.
@@ -47,14 +48,12 @@ service PayeeDaemon {
   // the worker's `/capabilities` HTTP response.
   rpc ListCapabilities(ListCapabilitiesRequest) returns (ListCapabilitiesResponse);
 
-  // Open a payee-side session and bind authoritative pricing metadata
-  // to `work_id`. The worker later seals the session's sender on the
-  // first successful ProcessPayment.
+  // Legacy ticket-funding primitive used while validating and transferring a
+  // payment into the wholesale account. It is not workload admission.
   rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
 
-  // Validate an incoming payment blob, credit the sender's balance by
-  // the payment's expected value, and queue any winning tickets for
-  // redemption. Requires a previously-opened session for `work_id`.
+  // Legacy ticket-funding primitive used internally by account funding.
+  // Calling it never authorizes a workload.
   rpc ProcessPayment(ProcessPaymentRequest) returns (ProcessPaymentResponse);
 
   // Credit a validated ticket batch to the stable payer-payee account without
@@ -76,20 +75,24 @@ service PayeeDaemon {
   rpc GetWholesaleAccount(GetWholesaleAccountRequest) returns (GetWholesaleAccountResponse);
   rpc GetSpendAuthorization(GetSpendAuthorizationRequest) returns (GetSpendAuthorizationResponse);
 
+  // Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+  // authorized work through AdvanceAuthorization or SettleAuthorization.
   // Debit session-priced work units from a (sender, work_id) balance
   // after the payee has actually done the work. Retries are
   // idempotent by `(sender, work_id, debit_seq)`. Returns the new
   // balance.
   rpc DebitBalance(DebitBalanceRequest) returns (DebitBalanceResponse);
 
+  // Deprecated legacy accounting RPC. Brokers MUST NOT call it.
   // Check whether a (sender, work_id) balance covers a minimum number
   // of session-priced work units, without debiting.
   rpc SufficientBalance(SufficientBalanceRequest) returns (SufficientBalanceResponse);
 
-  // Get the current balance for a (sender, work_id) pair.
+  // Deprecated legacy accounting RPC. Use GetWholesaleAccount.
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
 
-  // Close and garbage-collect a work session. Any residual credit is
+  // Deprecated legacy accounting RPC. Workload close settles its
+  // authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
   // forfeited.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 

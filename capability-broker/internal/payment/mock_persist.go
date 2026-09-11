@@ -7,6 +7,9 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Optional persistence for the Mock client.
@@ -40,8 +43,31 @@ type persistedSession struct {
 }
 
 type persistedState struct {
-	Sessions map[string]persistedSession `json:"sessions"`
-	Debits   map[string]int64            `json:"debits"`
+	Sessions       map[string]persistedSession       `json:"sessions"`
+	Debits         map[string]int64                  `json:"debits"`
+	Accounts       map[string]persistedAccount       `json:"wholesale_accounts,omitempty"`
+	Authorizations map[string]persistedAuthorization `json:"spend_authorizations,omitempty"`
+}
+
+type persistedAccount struct {
+	Payer, Payee                           []byte
+	Credited, Reserved, Debited, Available string
+	Version, ChainID                       uint64
+	ObservedAt, Denomination               string
+}
+
+type persistedAuthorization struct {
+	Payload                    []byte
+	Reserved, Billed, Released string
+	State                      int32
+}
+
+func decimal(value string) *big.Int {
+	n, ok := new(big.Int).SetString(value, 10)
+	if !ok || n == nil {
+		return new(big.Int)
+	}
+	return n
 }
 
 // EnablePersistence points the mock at a state file, loading any
@@ -97,6 +123,16 @@ func (m *Mock) loadLocked() error {
 	for k, v := range st.Debits {
 		m.debits[k] = v
 	}
+	for k, pa := range st.Accounts {
+		m.wholesaleAccounts[k] = &WholesaleAccount{Payer: pa.Payer, Payee: pa.Payee, Credited: decimal(pa.Credited), Reserved: decimal(pa.Reserved), Debited: decimal(pa.Debited), Available: decimal(pa.Available), Version: pa.Version, ObservedAt: pa.ObservedAt, ChainID: pa.ChainID, Denomination: pa.Denomination}
+	}
+	for k, pa := range st.Authorizations {
+		var payload pb.SpendAuthorizationPayload
+		if proto.Unmarshal(pa.Payload, &payload) != nil {
+			continue
+		}
+		m.accountAuthorizations[k] = &mockAuthorization{payload: &payload, reserved: decimal(pa.Reserved), billed: decimal(pa.Billed), released: decimal(pa.Released), state: pa.State}
+	}
 	return nil
 }
 
@@ -108,8 +144,10 @@ func (m *Mock) flushLocked() {
 		return
 	}
 	st := persistedState{
-		Sessions: make(map[string]persistedSession, len(m.sessions)),
-		Debits:   make(map[string]int64, len(m.debits)),
+		Sessions:       make(map[string]persistedSession, len(m.sessions)),
+		Debits:         make(map[string]int64, len(m.debits)),
+		Accounts:       make(map[string]persistedAccount, len(m.wholesaleAccounts)),
+		Authorizations: make(map[string]persistedAuthorization, len(m.accountAuthorizations)),
 	}
 	for k, s := range m.sessions {
 		price, bal := "0", "0"
@@ -129,6 +167,16 @@ func (m *Mock) flushLocked() {
 	}
 	for k, v := range m.debits {
 		st.Debits[k] = v
+	}
+	for k, a := range m.wholesaleAccounts {
+		st.Accounts[k] = persistedAccount{Payer: a.Payer, Payee: a.Payee, Credited: a.Credited.String(), Reserved: a.Reserved.String(), Debited: a.Debited.String(), Available: a.Available.String(), Version: a.Version, ObservedAt: a.ObservedAt, ChainID: a.ChainID, Denomination: a.Denomination}
+	}
+	for k, a := range m.accountAuthorizations {
+		payload, err := proto.Marshal(a.payload)
+		if err != nil {
+			continue
+		}
+		st.Authorizations[k] = persistedAuthorization{Payload: payload, Reserved: a.reserved.String(), Billed: a.billed.String(), Released: a.released.String(), State: a.state}
 	}
 	raw, err := json.Marshal(&st)
 	if err != nil {

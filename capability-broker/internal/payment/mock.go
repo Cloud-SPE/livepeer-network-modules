@@ -17,9 +17,11 @@ import (
 // standalone smoke. Sessions live in memory; ProcessPayment seals the
 // sender on first call; DebitBalance is idempotent by debit_seq.
 type Mock struct {
-	mu       sync.Mutex
-	sessions map[string]*mockSession // keyed by work_id (sender unsealed) then composite (sender||work_id)
-	debits   map[string]int64        // (sender||work_id||seq) → recorded units
+	mu                    sync.Mutex
+	sessions              map[string]*mockSession // keyed by work_id (sender unsealed) then composite (sender||work_id)
+	debits                map[string]int64        // (sender||work_id||seq) → recorded units
+	wholesaleAccounts     map[string]*WholesaleAccount
+	accountAuthorizations map[string]*mockAuthorization
 	// statePath, when set via EnablePersistence, makes the ledger
 	// survive the process (see mock_persist.go).
 	statePath string
@@ -35,6 +37,14 @@ type Mock struct {
 	// rejectPayments counts down injected full-batch rejections.
 	rejectPayments int
 	rejectReason   PaymentRejectionReason
+}
+
+type mockAuthorization struct {
+	payload  *pb.SpendAuthorizationPayload
+	reserved *big.Int
+	billed   *big.Int
+	released *big.Int
+	state    int32
 }
 
 type mockSession struct {
@@ -57,9 +67,166 @@ type mockSession struct {
 // NewMock returns an empty Mock client.
 func NewMock() *Mock {
 	return &Mock{
-		sessions: map[string]*mockSession{},
-		debits:   map[string]int64{},
+		sessions:              map[string]*mockSession{},
+		debits:                map[string]int64{},
+		wholesaleAccounts:     map[string]*WholesaleAccount{},
+		accountAuthorizations: map[string]*mockAuthorization{},
 	}
+}
+
+func (m *Mock) mockAccountLocked(payer, payee []byte) *WholesaleAccount {
+	key := hex.EncodeToString(payer)
+	if account := m.wholesaleAccounts[key]; account != nil {
+		return account
+	}
+	// Unit and broker tests should fail on authorization shape, not on fixture
+	// treasury setup. Production funding is exercised by the receiver suite.
+	float := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
+	account := &WholesaleAccount{Payer: append([]byte(nil), payer...), Payee: append([]byte(nil), payee...), Credited: new(big.Int).Set(float), Reserved: new(big.Int), Debited: new(big.Int), Available: new(big.Int).Set(float), Version: 1, ChainID: 42161, Denomination: "wei"}
+	m.wholesaleAccounts[key] = account
+	return account
+}
+
+func cloneWholesaleAccount(in *WholesaleAccount) *WholesaleAccount {
+	if in == nil {
+		return nil
+	}
+	return &WholesaleAccount{Payer: append([]byte(nil), in.Payer...), Payee: append([]byte(nil), in.Payee...), Credited: new(big.Int).Set(in.Credited), Reserved: new(big.Int).Set(in.Reserved), Debited: new(big.Int).Set(in.Debited), Available: new(big.Int).Set(in.Available), Version: in.Version, ObservedAt: in.ObservedAt, ChainID: in.ChainID, Denomination: in.Denomination}
+}
+
+func (m *Mock) FundWholesaleAccount(_ context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+	if len(paymentBytes) == 0 {
+		return nil, errors.New("payment is required")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	payer := bytes20(0x01)
+	payee := bytes20(0x02)
+	account := m.mockAccountLocked(payer, payee)
+	account.Credited.Add(account.Credited, mockCreditPerPayment)
+	account.Available.Add(account.Available, mockCreditPerPayment)
+	account.Version++
+	return &FundWholesaleAccountResult{Account: cloneWholesaleAccount(account), Credited: new(big.Int).Set(mockCreditPerPayment)}, nil
+}
+
+func (m *Mock) AdmitAuthorization(_ context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(req.AuthorizationBytes, &auth); err != nil || auth.GetPayload() == nil {
+		return nil, errors.New("authorization is malformed")
+	}
+	p := auth.GetPayload()
+	if len(p.GetPayer()) != 20 || p.GetAuthorizationId() == "" {
+		return nil, errors.New("authorization identity is invalid")
+	}
+	reserved := new(big.Int)
+	if req.Reservation != nil {
+		reserved.Set(req.Reservation)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetAuthorizationId()
+	if prior := m.accountAuthorizations[key]; prior != nil {
+		return &AdmitAuthorizationResult{State: prior.state, Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee())), Reserved: new(big.Int).Set(prior.reserved), Credited: new(big.Int), Replayed: true}, nil
+	}
+	account := m.mockAccountLocked(p.GetPayer(), p.GetPayee())
+	credited := new(big.Int)
+	if len(req.PaymentBytes) > 0 {
+		credited.Set(mockCreditPerPayment)
+		account.Credited.Add(account.Credited, credited)
+		account.Available.Add(account.Available, credited)
+	}
+	if account.Available.Cmp(reserved) < 0 {
+		return nil, errors.New("insufficient wholesale account balance")
+	}
+	account.Available.Sub(account.Available, reserved)
+	account.Reserved.Add(account.Reserved, reserved)
+	account.Version++
+	state := int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED)
+	m.accountAuthorizations[key] = &mockAuthorization{payload: proto.Clone(p).(*pb.SpendAuthorizationPayload), reserved: new(big.Int).Set(reserved), billed: new(big.Int), released: new(big.Int), state: state}
+	return &AdmitAuthorizationResult{State: state, Account: cloneWholesaleAccount(account), Reserved: reserved, Credited: credited}, nil
+}
+
+func (m *Mock) AdvanceAuthorization(_ context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	key := hex.EncodeToString(req.Payer) + "|" + req.AuthorizationID
+	auth := m.accountAuthorizations[key]
+	if auth == nil {
+		return nil, errors.New("authorization not found")
+	}
+	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee())
+	price := new(big.Int).SetBytes(auth.payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
+	per := auth.payload.GetAcceptedPrice().GetUnitsPerPrice()
+	billed := BillFor(price, per, req.CumulativeUnits)
+	delta := new(big.Int).Sub(billed, auth.billed)
+	if delta.Sign() < 0 || account.Reserved.Cmp(delta) < 0 {
+		return nil, errors.New("authorization advance exceeds reservation")
+	}
+	account.Reserved.Sub(account.Reserved, delta)
+	account.Debited.Add(account.Debited, delta)
+	auth.reserved.Sub(auth.reserved, delta)
+	auth.billed.Set(billed)
+	account.Version++
+	return &AdvanceAuthorizationResult{State: auth.state, Account: cloneWholesaleAccount(account), BilledDelta: delta, CumulativeBilled: new(big.Int).Set(billed), Reserved: new(big.Int).Set(auth.reserved), Credited: new(big.Int)}, nil
+}
+
+func (m *Mock) SettleAuthorization(_ context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	if m.failDebits > 0 {
+		m.failDebits--
+		return nil, errors.New("injected authorization settlement failure")
+	}
+	key := hex.EncodeToString(req.Payer) + "|" + req.AuthorizationID
+	auth := m.accountAuthorizations[key]
+	if auth == nil {
+		return nil, errors.New("authorization not found")
+	}
+	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee())
+	price := new(big.Int).SetBytes(auth.payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
+	per := auth.payload.GetAcceptedPrice().GetUnitsPerPrice()
+	total := BillFor(price, per, req.ActualUnits)
+	owed := new(big.Int).Sub(total, auth.billed)
+	if owed.Sign() < 0 {
+		owed.SetInt64(0)
+	}
+	release := new(big.Int).Sub(auth.reserved, owed)
+	if release.Sign() < 0 {
+		return nil, errors.New("settlement exceeds reservation")
+	}
+	account.Reserved.Sub(account.Reserved, auth.reserved)
+	account.Debited.Add(account.Debited, owed)
+	account.Available.Add(account.Available, release)
+	auth.billed.Set(total)
+	auth.released.Set(release)
+	auth.reserved.SetInt64(0)
+	auth.state = int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)
+	account.Version++
+	return &SettleAuthorizationResult{State: auth.state, Account: cloneWholesaleAccount(account), Billed: new(big.Int).Set(total), Released: release}, nil
+}
+
+func (m *Mock) GetWholesaleAccount(_ context.Context, payer []byte) (*WholesaleAccount, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return cloneWholesaleAccount(m.mockAccountLocked(payer, bytes20(0x02))), nil
+}
+
+func (m *Mock) GetSpendAuthorization(_ context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	auth := m.accountAuthorizations[hex.EncodeToString(payer)+"|"+authorizationID]
+	if auth == nil {
+		return nil, errors.New("authorization not found")
+	}
+	return &SpendAuthorizationStatus{State: auth.state, Reserved: new(big.Int).Set(auth.reserved), Billed: new(big.Int).Set(auth.billed), Released: new(big.Int).Set(auth.released)}, nil
+}
+
+func bytes20(v byte) []byte {
+	return []byte{v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v, v}
 }
 
 // ErrPricingConflict mirrors the real ledger's refusal to re-price a

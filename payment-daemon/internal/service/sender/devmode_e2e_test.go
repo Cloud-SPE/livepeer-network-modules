@@ -118,6 +118,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 	defer cancel()
 
 	mintReq := devModeCreateRequest(recipient, "account-float-1", baseURL)
+	mintReq.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(100_000).Bytes()}
 	mintReq.AccountFunding = &pb.AccountFundingIntent{
 		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100_000).Bytes()},
 		ObservedAvailableWei: &pb.BigUInt{},
@@ -395,6 +396,7 @@ func devModeCreateRequest(recipient []byte, mintID, baseURL string) *pb.CreatePa
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
+		AccountFunding: &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	}
 }
 
@@ -545,6 +547,7 @@ func TestFundingIntentIsActuallyFunded(t *testing.T) {
 
 			req := devModeCreateRequest(recipient, fmt.Sprintf("fund-%d", funded), baseURL)
 			req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
+			req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
 			created, err := payer.CreatePayment(ctx, req)
 			if err != nil {
 				t.Fatalf("CreatePayment for %d wei: %v", funded, err)
@@ -625,6 +628,7 @@ func TestCachedSessionFundsALargerLaterRequest(t *testing.T) {
 		t.Helper()
 		req := devModeCreateRequest(recipient, mintID, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(funded).Bytes()}
 		created, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatalf("CreatePayment(%d): %v", funded, err)
@@ -706,6 +710,7 @@ func TestSessionRollsOverAtTheNonceBudget(t *testing.T) {
 		t.Helper()
 		req := devModeCreateRequest(recipient, fmt.Sprintf("roll-%d", i), baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		created, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatalf("payment %d: %v", i, err)
@@ -774,6 +779,7 @@ func TestSessionRollsOverAtTheNonceBudget(t *testing.T) {
 	// rather than credited to a session nobody can draw on.
 	stale := devModeCreateRequest(recipient, "roll-stale", baseURL)
 	stale.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	stale.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 	if created, err := payer.CreatePayment(ctx, stale); err == nil {
 		if created.GetWorkId() == firstWorkID {
 			t.Fatal("still minting against the retired identity")
@@ -799,6 +805,7 @@ func TestConcurrentBoundaryMintsProduceOneSuccessor(t *testing.T) {
 	mint := func(id string) (*pb.CreatePaymentResponse, error) {
 		req := devModeCreateRequest(recipient, id, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		return payer.CreatePayment(ctx, req)
 	}
 
@@ -909,6 +916,7 @@ func TestRolloverSurvivesAPayeeRestartAtTheBoundary(t *testing.T) {
 	mint := func(id string) (*pb.CreatePaymentResponse, error) {
 		req := devModeCreateRequest(recipient, id, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		return payer.CreatePayment(ctx, req)
 	}
 
@@ -1040,6 +1048,7 @@ func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.
 		t.Helper()
 		req := devModeCreateRequest(recipient, id, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		created, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatalf("mint %s: %v", id, err)
@@ -1099,6 +1108,7 @@ func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.
 
 	req := devModeCreateRequest(recipient, "loss-after-wipe", restartedURL)
 	req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 	created, err := restarted.CreatePayment(ctx, req)
 	if err != nil {
 		t.Fatalf("mint after payer state loss: %v", err)
@@ -1148,6 +1158,7 @@ func TestReactiveRotationWhenTheLedgerIsAlreadyAtCapacity(t *testing.T) {
 		t.Helper()
 		req := devModeCreateRequest(recipient, id, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		created, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatalf("mint %s: %v", id, err)
@@ -1233,6 +1244,7 @@ func TestPredecessorIsEmptyWhenNothingRotated(t *testing.T) {
 		t.Helper()
 		req := devModeCreateRequest(recipient, id, baseURL)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
 		created, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatalf("mint %s: %v", id, err)

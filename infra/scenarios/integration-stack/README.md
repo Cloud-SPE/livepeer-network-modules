@@ -66,8 +66,8 @@ remaining bounded float because v1 does not promise withdrawal or transfer.
 
 `up.sh` enforces migration order: receiver first, broker advertisement and
 runner attachment second, payer last. It does not run the probe or mint a
-ticket. The offer advertises `extra.features.wholesale_accounts: true` only
-after the upgraded receiver is listening.
+ticket. Wholesale-account authorization is the only paid workload path; no
+offer feature flag negotiates or disables it.
 
 ## Run the approved dust pilot
 

@@ -31,7 +31,7 @@ func signedAuthorization(t *testing.T, ks *inmemory.KeyStore, id string, payee [
 		},
 		MaxDebitWei:   &pb.BigUInt{Value: new(big.Int).Mul(big.NewInt(10), new(big.Int).SetUint64(maxUnits)).Bytes()},
 		MaxTotalUnits: maxUnits, NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano),
-		ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano),
+		ExpiresAt:     now.Add(time.Hour).Format(time.RFC3339Nano),
 		RequestDigest: requestDigest[:],
 	}
 	digest, err := spendauth.Digest(payload)

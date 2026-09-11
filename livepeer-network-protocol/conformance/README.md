@@ -164,26 +164,27 @@ Two things bite a broker that came up before the runner behind it did:
 
 Two scenarios need control over the implementation, not just its wire:
 
-- **`paid-session/restart-rebind`** restarts the broker mid-session against a
-  payment layer that survives, and **requires** the rebind branch — same
-  `work_id`, same credential, surviving usage watermark, duplicate detection
-  still correct, and top-up/end still working. A broker that goes terminal
-  here is failing recovery, not choosing the other branch.
+- **`paid-session/restart-resume`** restarts the broker mid-session against a
+  payment layer whose account and authorization state survives. It requires
+  the resume branch — same authorization id and credential, surviving usage
+  watermark, duplicate detection still correct, and revision/end still
+  working. A broker that goes terminal here is failing recovery.
 - **`paid-session/restart-terminal-when-unbillable`** restarts the broker with
   its own session store intact but the payment layer's state discarded — the
-  "runner still has it, payment layer does not" case — and requires the
-  terminal branch, with the forbidden outcomes (second `work_id`, runner left
-  serving) checked there too.
+  "runner still has it, authorization state does not" case — and requires the
+  terminal branch, with the forbidden outcomes (second authorization, runner
+  left serving) checked there too.
 
 Both restart scenarios run for real in **auto mode**, where the suite owns the
 process. In URL mode they SKIP, because the suite cannot restart a broker it
 did not start; demonstrate them with your own harness.
 
 > **Why the payment layer matters here.** Auto mode configures the reference
-> broker's in-process mock with `mock_state_path`, so its ledger survives the
+> broker's in-process mock with `mock_state_path`, so its account and
+> authorization ledger survives the
 > restart the way the real daemon's BoltDB store does. Without that, every
-> restarted session takes the terminal branch and the rebind assertions —
-> the operationally important half of §9.2 — never execute even though the
+> restarted session takes the terminal branch and the resume assertions —
+> the operationally important half of paid-session §9 — never execute even though the
 > suite passes. If you run in URL mode, make sure your payment layer outlives
 > your broker restart before claiming rebind coverage.
 - **`paid-session/heartbeat-enforcement`** opens against the
@@ -201,8 +202,8 @@ implementation, and one property is only as strong as your configuration.
 An implementer citing this suite as protocol evidence should know exactly
 where its edges are.
 
-**1. Exactly-once debit under a transient payment failure.**
-`paid-job/v1` §7 and `paid-session/v1` §10 both call for this to be
+**1. Exactly-once settlement under a transient payment failure.**
+`paid-job/v1` §6 and `paid-session/v1` §10 both call for this to be
 "verified by fault injection on a transiently failing debit." The suite
 cannot inject a failure into an implementation's payment layer — there is
 no wire surface for it, by design. What the suite *does* prove is the
@@ -210,30 +211,28 @@ observable half: duplicate and reordered events are safe, and a retried
 request id converges on the recorded outcome without a second backend
 execution.
 
-*What to demonstrate instead:* an implementation-side test that fails a
-debit transiently, retries the same event, and asserts exactly one charge —
+*What to demonstrate instead:* an implementation-side test that fails an
+authorization advance or settlement transiently, retries the same event, and asserts exactly one charge —
 never zero (acknowledged but uncharged), never two. The reference broker's
 is `TestExactlyOnceDebitUnderRetry` in `capability-broker/internal/sessionengine`.
 
-**2. "Payment state closed" on a fail-closed open.**
-`runtime-descriptor/v1` §6 requires that a rejected descriptor leaves
-payment state closed. The suite asserts the visible half — the open fails
-and the runner session is terminated — but after a failed open there is no
-session for the gateway to query, so the payment side is not observable
-black-box.
+**2. "Reservation released" on a fail-closed open.**
+The suite asserts the visible half — the open fails and the runner session is
+terminated — but after a failed open there is no session for the gateway to
+query, so reservation release is not observable black-box.
 
 *What to demonstrate instead:* an implementation-side assertion that the
-payee session was closed on every fail-closed open path.
+authorization reservation was settled or released on every fail-closed open path.
 
 **3. Restart branch coverage depends on your payment layer, not your broker.**
 See the note above: if your payment layer does not outlive a broker
-restart, `paid-session/restart-rebind` will fail and every restarted
+ restart, `paid-session/restart-resume` will fail and every restarted
 session will take the terminal branch. That is a correct result, not a
 suite defect — but it means "the suite passes" carries a different meaning
 depending on how you deploy. Run it both ways if both are realistic for
 your operators.
 
-**4. Payment validity is mocked.** Auto mode runs the reference broker
+**4. Authorization and funding validity are mocked.** Auto mode runs the reference broker
 against a mock payment client, so nothing here exercises real ticket
 validation, real balance arithmetic, or the payee daemon's own idempotency.
 The suite tests the *protocol's* handling of payment outcomes, not the
@@ -247,7 +246,7 @@ reservation exclusion, expiry, session revisions, generation rotation, replay,
 restart persistence, and settlement release. The cross-service scenario is
 `TestWholesaleCreditIsReusedAcrossAuthorizations`; broker HTTP tests add direct
 caller, omitted-callback recovery, and funding-only endpoint coverage. These
-tests complement rather than weaken the 53 broker-wire scenarios above.
+tests complement rather than weaken the 56 broker-wire scenarios above.
 
 ## Runner-attach scenarios
 

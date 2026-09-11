@@ -113,18 +113,18 @@ Operational rules:
 
 - **The path must be a persistent volume.** Losing the file orphans every
   active session: runners keep serving and posting events that 401, and
-  payee-side payment sessions are left open. The broker's restart recovery
-  (rebind-or-terminal) only works when the file survives.
+  wholesale-account reservations remain unresolved. Broker restart recovery
+  only works when both this file and the payment daemon's authorization state
+  survive.
 - **The sealing key is not rotatable in place** (v1): records sealed under
   the old key fail closed on read. Treat key loss as state loss — sessions
   become unreadable and wind down terminally. Back the key up with the same
   care as the payment daemon's keystore.
-- **The debit-sequence counters in this file are money.** The payee daemon
-  durably remembers `(sender, work_id, debit_seq)`; a broker restored from
-  an old snapshot re-uses sequence numbers and its real debits are silently
-  swallowed as replays (revenue loss, not double-billing). Snapshot the
-  state file only together with, or after, payment-daemon state — never
-  from before it.
+- **Authorization watermarks in this file are money.** The payment daemon
+  durably remembers authorization and advance sequence results. Restoring the
+  broker and daemon from inconsistent points can leave work conservatively
+  unresolved. Snapshot their stores at one coordinated point and reconcile
+  every active authorization after restore.
 - Wrong-size key files fail startup loudly; a missing `session_store` with
   paid-job capabilities runs with **in-process** idempotency and logs a
   warning — acceptable for dev, non-conformant for production.
@@ -140,21 +140,22 @@ Per-offering knobs (host-config `session:` block):
 | `heartbeat.interval_seconds` / `missed_threshold` | 10 / 3 | A runner silent past `interval × threshold` is torn down (`heartbeat_lost`): runner terminated, payment closed, capacity released. |
 | `lease_max_seconds` | 3600 | Operator cap on the funding-tracking lease. |
 | `burn_rate_per_second` | 1 | Units/second estimate used to convert runway into lease time. |
-| `min_runway_units` | 0 (off) | Post-debit `SufficientBalance` floor; breach winds the session down with `insufficient_balance`. |
+| `min_runway_units` | 0 (policy-derived) | Minimum authorization reservation requested at open and after usage advances; the signed cap still bounds it. |
 | `runner.create_path` / `status_path` / `terminate_path` | — | The runner's session API paths (`{id}` substituted). No default URL space exists. |
 
 Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
 `heartbeat_lost`, `insufficient_balance`, `recovery_failed`,
-`open_failed`, `output_failed`. Every winddown is the same idempotent path (terminate
-runner → close payment → release capacity → record reason); a repeated
+`open_failed`, `output_failed`. Every winddown is the same idempotent path
+(terminate runner → settle authorization → release capacity → record reason); a repeated
 trigger is a no-op.
 
-Restart behavior: on startup the broker queries each active session's
-runner. Runner still holds it → rebound silently (same `work_id`,
-credentials keep working, grants are never re-minted). Runner lost it →
-`recovery_failed` terminal. Runner unreachable → left active for heartbeat
-enforcement to decide.
+Restart behavior: before serving, the broker verifies that every nonterminal
+record names a durable account authorization. It then queries the payment
+daemon and runner. Both still hold it → resume with the same authorization,
+credentials, grants, and usage watermark. Missing authorization state or a
+lost runner → terminate fail closed as `recovery_failed`. An undrained legacy
+record without authorization state refuses broker startup.
 
 Output-producing runners may additionally report `output_state` as `waiting`,
 `producing`, or `stalled`, plus a sanitized `last_failure_code`. These are
@@ -194,17 +195,13 @@ its quarantine behaviour.
   without a trailer-stripping hop.
 - Buffered bodies are capped at 64 MiB per exchange.
 
-### Wholesale account mode
+### Wholesale accounts
 
 Configure `external_base_url` exactly as payer services use it; authorization
-admission rejects a different `broker_uri`. Upgrade the adjacent receiver
-daemon before enabling account-aware clients. `Livepeer-Authorization` selects
-the new path and fails closed when that daemon lacks it; payment-only requests
-continue on the legacy path during migration.
-
-Enable an upgraded offer with `extra.features.wholesale_accounts: true`. This
-bit is the payer's negotiation signal and the broker enforces it; omitting it
-keeps that offer legacy-only even when the adjacent daemon is new enough.
+admission rejects a different `broker_uri`. Wholesale accounts are mandatory
+for every paid offer and require no `extra.features.wholesale_accounts` flag.
+Every job, session open, and session refill requires
+`Livepeer-Authorization`; `Livepeer-Payment` alone never admits work.
 
 `POST /v1/payment/account` returns the receiver's read-only account or
 authorization observation. Serve it only over the configured HTTPS origin. It
@@ -220,15 +217,19 @@ protection, but retries are economically idempotent by ticket nonce.
 
 An out-of-path funding intermediary calls this endpoint itself before handing
 the workload-bound authorization and broker URL to the end caller; the caller
-does not relay the funding ticket. Before the first account-backed request for
-a payer-payee route, stop legacy mints and allow legacy in-flight work on that
-route to settle. Legacy and account-backed debits must not race on the ticket
-generation whose residual is being migrated.
+does not relay the funding ticket.
+
+This release is a hard cut. Before deployment, stop new admissions and drain
+all payment-only jobs, sessions, and debit retries. Migrate verified residual
+generation balances exactly once, then upgrade broker, receiver, and payer
+clients together. Do not synthesize authorization state for an existing
+session; mixed versions fail closed.
 
 For sessions, the broker reserves a heartbeat-sized runway rather than the
 full cumulative cap. Runner usage advances the cumulative debit and replaces
-runway atomically. Replenishment top-ups may carry only a ticket shortfall;
-extensible cap changes carry a successor authorization naming the predecessor.
+runway atomically. Session refills carry a successor authorization naming the
+predecessor and may also carry only the ticket shortfall needed by the
+aggregate account.
 A settlement RPC left uncertain remains `accounting_pending` and retries
 idempotently rather than releasing value after delivered work.
 

@@ -125,7 +125,6 @@ type offeringsJobAxes struct {
 
 type offeringsSessionAxes struct {
 	DescriptorSchema     string              `json:"descriptor_schema"`
-	MaxRotations         int                 `json:"max_rotations,omitempty"`
 	Attachment           string              `json:"attachment,omitempty"`
 	Metering             string              `json:"metering"`
 	Refill               string              `json:"refill,omitempty"`

@@ -2,9 +2,10 @@
 //
 // The PayeeDaemon runs next to a payee application — a Livepeer
 // orchestrator or any consumer app accepting payment for work. It
-// validates incoming payment blobs, tracks per-(sender, work_id)
-// balances, and (post chain integration) redeems winning tickets
-// on-chain via the TicketBroker.
+// validates incoming payment blobs, funds stable payer-payee wholesale
+// accounts, enforces single-purpose spend authorizations, and redeems winning
+// tickets on-chain via the TicketBroker. Per-(sender, work_id) balances are a
+// legacy ticket-crediting implementation detail and MUST NOT authorize work.
 //
 // Mounted only when the daemon is started with `--mode=receiver`.
 // Calls to it in sender mode return UNIMPLEMENTED.
@@ -47,30 +48,51 @@ service PayeeDaemon {
   // the worker's `/capabilities` HTTP response.
   rpc ListCapabilities(ListCapabilitiesRequest) returns (ListCapabilitiesResponse);
 
-  // Open a payee-side session and bind authoritative pricing metadata
-  // to `work_id`. The worker later seals the session's sender on the
-  // first successful ProcessPayment.
+  // Legacy ticket-funding primitive used while validating and transferring a
+  // payment into the wholesale account. It is not workload admission.
   rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
 
-  // Validate an incoming payment blob, credit the sender's balance by
-  // the payment's expected value, and queue any winning tickets for
-  // redemption. Requires a previously-opened session for `work_id`.
+  // Legacy ticket-funding primitive used internally by account funding.
+  // Calling it never authorizes a workload.
   rpc ProcessPayment(ProcessPaymentRequest) returns (ProcessPaymentResponse);
 
+  // Credit a validated ticket batch to the stable payer-payee account without
+  // admitting work. This lets an out-of-path payer replenish aggregate float
+  // independently of the caller or SDK that invokes a live session.
+  rpc FundWholesaleAccount(FundWholesaleAccountRequest) returns (FundWholesaleAccountResponse);
+
+  // Apply optional account funding and atomically reserve a single-purpose
+  // authorization before backend work starts.
+  rpc AdmitAuthorization(AdmitAuthorizationRequest) returns (AdmitAuthorizationResponse);
+
+  // Advance cumulative session usage and atomically restore a bounded runway
+  // reservation. Optional payment funds only an aggregate account shortfall.
+  rpc AdvanceAuthorization(AdvanceAuthorizationRequest) returns (AdvanceAuthorizationResponse);
+
+  // Settle actual delivered units and release the unused reservation.
+  rpc SettleAuthorization(SettleAuthorizationRequest) returns (SettleAuthorizationResponse);
+
+  rpc GetWholesaleAccount(GetWholesaleAccountRequest) returns (GetWholesaleAccountResponse);
+  rpc GetSpendAuthorization(GetSpendAuthorizationRequest) returns (GetSpendAuthorizationResponse);
+
+  // Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+  // authorized work through AdvanceAuthorization or SettleAuthorization.
   // Debit session-priced work units from a (sender, work_id) balance
   // after the payee has actually done the work. Retries are
   // idempotent by `(sender, work_id, debit_seq)`. Returns the new
   // balance.
   rpc DebitBalance(DebitBalanceRequest) returns (DebitBalanceResponse);
 
+  // Deprecated legacy accounting RPC. Brokers MUST NOT call it.
   // Check whether a (sender, work_id) balance covers a minimum number
   // of session-priced work units, without debiting.
   rpc SufficientBalance(SufficientBalanceRequest) returns (SufficientBalanceResponse);
 
-  // Get the current balance for a (sender, work_id) pair.
+  // Deprecated legacy accounting RPC. Use GetWholesaleAccount.
   rpc GetBalance(GetBalanceRequest) returns (GetBalanceResponse);
 
-  // Close and garbage-collect a work session. Any residual credit is
+  // Deprecated legacy accounting RPC. Workload close settles its
+  // authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
   // forfeited.
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
 
@@ -129,11 +151,12 @@ message GetTicketParamsRequest {
   // daemon's configured recipient when provided.
   bytes recipient = 2;
 
-  // Target spend / expected-value request in wei, big-endian bytes,
-  // for the quote-free sender/payee flow. The receiver may return a
-  // larger TicketParams.face_value when redemption economics require
-  // a redeemable winning ticket, paired with a lower win probability
-  // so expected spend stays aligned with this request.
+  // Target spend / expected-value request in wei, big-endian bytes. The
+  // historical field name is NOT an instruction to use this as face value.
+  // For the quote-free sender/payee flow, the receiver may return a larger
+  // TicketParams.face_value when redemption economics require a redeemable
+  // winning ticket, paired with the probability that makes credited EV equal
+  // this request exactly.
   bytes face_value = 3;
 
   // Optional capability / offering metadata for logging and future
@@ -144,6 +167,37 @@ message GetTicketParamsRequest {
 
 message GetTicketParamsResponse {
   TicketParams ticket_params = 1;
+
+  // Set when answering this call ROTATED the ticket session: the work_id
+  // the returned params supersede.
+  //
+  // A recipient rand tracks a bounded number of sender nonces, so a
+  // long-lived session eventually exhausts its budget and the payee
+  // mints a fresh rand. That changes work_id, and a changed work_id must
+  // never arrive silently — a consumer keying evidence on it would
+  // otherwise attribute the successor's payments to nothing, or to the
+  // predecessor.
+  //
+  // Empty on the ordinary path, which is almost every call.
+  string predecessor_work_id = 2;
+
+  // The highest sender nonce this payee has already recorded against the
+  // returned recipient rand, and whether it has recorded any.
+  //
+  // A sender allocates nonces from its own durable counter. If that
+  // counter is lost — a restored backup, a wiped volume — the sender
+  // rewinds and every nonce it produces has already been seen here, so
+  // every payment is refused as a replay, credits nothing, and it can
+  // never make progress on this rand again. It cannot detect this
+  // itself: from its side a replay rejection looks the same as a
+  // duplicate delivery.
+  //
+  // So the payee states what it has seen, and a sender resumes ABOVE it.
+  // Reported at quote time rather than in a rejection, because that is
+  // before anything is signed: the loss heals on the next mint instead
+  // of costing a refused payment first.
+  uint32 highest_seen_nonce = 3;
+  bool has_seen_nonces = 4;
 }
 
 // ─── ListCapabilities ─────────────────────────────────────────────────
@@ -169,12 +223,25 @@ message OpenSessionRequest {
   // Offering the session is opened against.
   string offering = 3;
 
-  // Authoritative price per work unit for this session (wei,
-  // big-endian bytes).
+  // Authoritative price for `per_units` work units (wei, big-endian
+  // bytes). NOT necessarily the price of one unit — read it with
+  // `per_units`, never alone.
   bytes price_per_work_unit_wei = 4;
 
   // Work-unit identifier for this session ("token", "second", ...).
   string work_unit = 5;
+
+  // Denominator of the price: `price_per_work_unit_wei` buys this many
+  // work units. 0 is read as 1. Carrying it lets an offering price
+  // below 1 wei per unit, which token-metered workloads need; dropping
+  // it makes the ledger debit `per_units` times the intended rate.
+  //
+  // The daemon bills cumulatively —
+  // `bill(U) = ceil(U * price / per_units)` over units debited since
+  // open — and charges each debit the difference between successive
+  // cumulative bills. Rounding each debit on its own would let a long
+  // session accumulate up to one wei of drift per debit.
+  uint64 per_units = 6;
 }
 
 message OpenSessionResponse {
@@ -195,6 +262,16 @@ message ProcessPaymentRequest {
   // Opaque session identifier chosen by the payee app. The daemon
   // requires a previously-opened session with this id.
   string work_id = 2;
+}
+
+message FundWholesaleAccountRequest {
+  bytes payment_bytes = 1;
+}
+
+message FundWholesaleAccountResponse {
+  WholesaleAccountView account = 1;
+  BigUInt credited_value_wei = 2;
+  bool replayed = 3;
 }
 
 message ProcessPaymentResponse {
@@ -224,6 +301,82 @@ message ProcessPaymentResponse {
   PaymentRejectionReason dominant_rejection = 7;
 }
 
+message AdmitAuthorizationRequest {
+  bytes authorization_bytes = 1;
+  // Optional wire Payment. Empty when the stable account already has enough
+  // available value for this reservation.
+  bytes payment_bytes = 2;
+  // Amount to reserve at admission. Jobs normally request max_debit_wei;
+  // sessions request only bounded runway. Empty means max_debit_wei for
+  // backwards compatibility.
+  BigUInt reservation_value_wei = 3;
+}
+
+message AdvanceAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+  uint64 cumulative_units = 3;
+  BigUInt target_reserved_value_wei = 4;
+  uint64 advance_seq = 5;
+  bytes payment_bytes = 6;
+}
+
+message AdvanceAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt billed_delta_wei = 3;
+  BigUInt cumulative_billed_value_wei = 4;
+  BigUInt reserved_value_wei = 5;
+  BigUInt credited_value_wei = 6;
+  bool replayed = 7;
+}
+
+message AdmitAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt reserved_value_wei = 3;
+  BigUInt credited_value_wei = 4;
+  bool replayed = 5;
+}
+
+message SettleAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+  uint64 actual_units = 3;
+  uint64 settlement_seq = 4;
+}
+
+message SettleAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  WholesaleAccountView account = 2;
+  BigUInt billed_value_wei = 3;
+  BigUInt released_value_wei = 4;
+  bool replayed = 5;
+}
+
+message GetWholesaleAccountRequest {
+  bytes payer = 1;
+}
+
+message GetWholesaleAccountResponse {
+  WholesaleAccountView account = 1;
+}
+
+message GetSpendAuthorizationRequest {
+  bytes payer = 1;
+  string authorization_id = 2;
+}
+
+message GetSpendAuthorizationResponse {
+  SpendAuthorizationState state = 1;
+  BigUInt reserved_value_wei = 2;
+  BigUInt billed_value_wei = 3;
+  BigUInt released_value_wei = 4;
+  uint64 actual_units = 5;
+  uint64 settlement_seq = 6;
+  string observed_at = 7;
+}
+
 message DebitBalanceRequest {
   // Sender whose balance is being debited.
   bytes sender = 1;
@@ -244,6 +397,30 @@ message DebitBalanceResponse {
   // indicate overdraft; callers should stop serving work when this
   // happens.
   bytes balance = 1;
+
+  // What this debit actually CHARGED, in wei.
+  //
+  // Returned rather than left for the caller to recompute. Billing is
+  // cumulative — a debit costs bill(total_after) - bill(total_before) —
+  // so the charge depends on the session's running total, and a caller
+  // recomputing it from the units alone gets a different number whenever
+  // a remainder is carried. That is not hypothetical: a broker attested
+  // 5 wei in a signed settlement for a debit the ledger charged 4, and
+  // the two disagreed by exactly the carried remainder.
+  //
+  // The ledger is the authority on what was charged. It says so here.
+  BigUInt debited_wei = 2;
+
+  // Cumulative work units debited on this (sender, work_id) after this
+  // debit. Carried so a settlement record can state its position in the
+  // cumulative curve, which is what makes the charge verifiable from the
+  // record alone rather than from the session's whole history.
+  uint64 cumulative_units = 3;
+
+  // Zero when the debit was deduplicated as a replay: nothing was
+  // charged and the totals did not move. Distinguishes "already applied"
+  // from "applied and cost nothing".
+  bool replayed = 4;
 }
 
 message SufficientBalanceRequest {

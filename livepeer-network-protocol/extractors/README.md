@@ -1,16 +1,29 @@
 # extractors/
 
-Declarative work-unit counting recipes. Capabilities pick an extractor in their
-host-config; the broker runs the recipe against the request/response to compute
-`actualUnits`. **No code per capability.**
+Declarative work-unit counting recipes. A `paid-job/v1` **runner** names the
+extractor it is metered by in its attach document
+([`../protocols/runner-attach.md`](../protocols/runner-attach.md) §3.2) — the
+runner knows what its own responses carry, and transcribing that into operator
+config is how `tokens` vs `participant_minutes` drift happened. The broker runs
+the named recipe against the request/response to compute `actualUnits`. **No
+code per capability**, and no extractor a runner ships itself: naming a type the
+broker does not implement rejects that capability at attach.
+
+**Extractors are a `paid-job/v1` concept only.** `paid-session/v1` usage comes
+from runner-reported cumulative claims (`paid-session` §7.2), so a session
+runner declaring `work_unit.extractor` is rejected at attach — the broker never
+runs one. Which extractor a job offering uses is deliberately
+*not* advertised: it is a seller-side implementation choice no counterparty
+gates on (see [`../protocols/offering-axes.md`](../protocols/offering-axes.md)).
 
 The initial six (per plan 0002):
 
 - [`openai-usage.md`](./openai-usage.md) — read `usage.{prompt|completion|total}_tokens` from OpenAI-shaped response JSON. **Accepted 2026-05-06.**
 - [`response-jsonpath.md`](./response-jsonpath.md) — extract a count from a JSONPath in the response body. **Accepted 2026-05-06.**
 - [`request-formula.md`](./request-formula.md) — safe arithmetic expression over request fields (e.g., `width × height × steps`). **Accepted 2026-05-06.**
+- [`multipart-audio-duration.md`](./multipart-audio-duration.md) — playing time of an uploaded audio file, for transcription offerings billed by input duration. **Draft 2026-08-21.**
 - [`bytes-counted.md`](./bytes-counted.md) — tally bytes in/out (request, response, or both). **Accepted 2026-05-06.**
-- [`seconds-elapsed.md`](./seconds-elapsed.md) — wall-clock duration with mode-aware start/end anchors. **Accepted 2026-05-06.**
+- [`seconds-elapsed.md`](./seconds-elapsed.md) — wall-clock duration of one exchange, anchored per transport. **Accepted 2026-05-06.**
 - [`ffmpeg-progress.md`](./ffmpeg-progress.md) — parse FFmpeg's `-progress` output (frame, frame-megapixel, out-time). **Accepted 2026-05-06.**
 
 **Status:** all six initial extractors accepted.

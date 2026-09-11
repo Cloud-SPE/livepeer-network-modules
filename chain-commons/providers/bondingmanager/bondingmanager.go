@@ -5,6 +5,7 @@
 //   - isActiveTranscoder(address) → bool
 //   - getFirstTranscoderInPool() → address
 //   - getNextTranscoderInPool(address) → address
+//   - getTranscoderPoolSize() → uint256
 //
 // Reward-flow-specific calldata builders (rewardWithHint) and event log
 // decoders (Reward) live in protocol-daemon's bondingmanager package,
@@ -37,6 +38,7 @@ var (
 	selectorIsActiveTranscoder = crypto.Keccak256([]byte("isActiveTranscoder(address)"))[:4]
 	selectorGetFirstInPool     = crypto.Keccak256([]byte("getFirstTranscoderInPool()"))[:4]
 	selectorGetNextInPool      = crypto.Keccak256([]byte("getNextTranscoderInPool(address)"))[:4]
+	selectorGetPoolSize        = crypto.Keccak256([]byte("getTranscoderPoolSize()"))[:4]
 )
 
 // Slot indices in getTranscoder's return tuple. The exact tuple shape
@@ -184,6 +186,24 @@ func (b *Bindings) GetNextTranscoderInPool(ctx context.Context, addr chain.Addre
 
 // callWithAddress invokes a single-address-arg method (selector || addr)
 // on the BondingManager contract.
+// GetTranscoderPoolSize calls BondingManager.getTranscoderPoolSize(): the
+// number of orchestrators in the active set. payment-daemon divides a
+// sender's reserve across it (escrow reserve allocation).
+func (b *Bindings) GetTranscoderPoolSize(ctx context.Context) (uint64, error) {
+	addr := b.addr
+	out, err := b.rpc.CallContract(ctx, ethereum.CallMsg{
+		To:   &addr,
+		Data: selectorGetPoolSize,
+	}, nil)
+	if err != nil {
+		return 0, fmt.Errorf("bondingmanager.getTranscoderPoolSize: %w", err)
+	}
+	if len(out) < 32 {
+		return 0, fmt.Errorf("bondingmanager.getTranscoderPoolSize: short return (%d bytes)", len(out))
+	}
+	return decodeUint64(out, 0), nil
+}
+
 func (b *Bindings) callWithAddress(ctx context.Context, selector []byte, arg chain.Address) ([]byte, error) {
 	calldata := make([]byte, 4+32)
 	copy(calldata[0:4], selector)

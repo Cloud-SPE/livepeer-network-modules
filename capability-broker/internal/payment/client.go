@@ -2,7 +2,8 @@
 // payment-daemon (`PayeeDaemon`) and provides Mock + GRPC
 // implementations.
 //
-// The middleware uses Client without caring which is wired:
+// The broker uses Client for ticket-funding operations without caring which
+// implementation is wired:
 //   - GRPC: real client, talks to the daemon over a unix socket.
 //   - Mock: in-process stub, used only for unit tests.
 package payment
@@ -23,17 +24,10 @@ const (
 	PaymentRejectionReasonOther                PaymentRejectionReason = 5
 )
 
-// Client is the broker's PayeeDaemon adapter. The middleware drives a
-// session lifecycle:
-//
-//	OpenSession → ProcessPayment → handler → DebitBalance → CloseSession
-//
-// Plan 0015 grows the in-handler middle: long-running sessions
-// periodically call DebitBalance with per-tick deltas plus
-// SufficientBalance to confirm runway, terminating the handler when the
-// runway disappears.
-//
-// Implementations may persist state (GRPC) or hold it in memory (Mock).
+// Client is the broker's ticket-funding adapter. These operations establish
+// recipient-random generations used to credit the wholesale account; they do
+// not authorize or settle workload execution. Paid workloads require
+// AccountClient.
 type Client interface {
 	// GetTicketParams proxies the payee-side quote-free ticket-params
 	// issuance surface. The broker exposes this over HTTP so sender-mode
@@ -44,43 +38,118 @@ type Client interface {
 	// given work_id with the supplied pricing metadata. Returns the
 	// daemon's outcome (opened vs already-open).
 	OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error)
+}
 
-	// ProcessPayment hands the daemon the raw `Payment` wire bytes
-	// from the inbound `Livepeer-Payment` header (already
-	// base64-decoded). The daemon validates and seals the session's
-	// sender on the first call. Returns the sender (extracted from
-	// the validated payment) plus the resulting balance.
-	ProcessPayment(ctx context.Context, req ProcessPaymentRequest) (*ProcessPaymentResult, error)
+// AccountClient is the mandatory paid-workload interface. Keeping it separate
+// lets the broker detect an old daemon and fail closed rather than treating a
+// funding ticket as workload authority.
+type AccountClient interface {
+	FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error)
+	AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error)
+	AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error)
+	SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error)
+	GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error)
+	GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error)
+}
 
-	// DebitBalance is idempotent by (sender, work_id, debit_seq).
-	// Retries with the same seq return the prior balance instead of
-	// double-debiting.
-	DebitBalance(ctx context.Context, req DebitBalanceRequest) (*big.Int, error)
+type FundWholesaleAccountResult struct {
+	Account  *WholesaleAccount
+	Credited *big.Int
+	Replayed bool
+}
 
-	// SufficientBalance checks whether the (sender, work_id) balance
-	// covers at least min_work_units of additional priced work, without
-	// debiting. Plan 0015's interim-debit ticker calls this per tick;
-	// false return triggers handler termination.
-	SufficientBalance(ctx context.Context, req SufficientBalanceRequest) (*SufficientBalanceResult, error)
+type SpendAuthorizationStatus struct {
+	State                      int32
+	Reserved, Billed, Released *big.Int
+	ActualUnits, SettlementSeq uint64
+	ObservedAt                 string
+}
 
-	// GetBalance returns the current balance for a (sender, work_id)
-	// pair. Used for observability and conformance assertions.
-	GetBalance(ctx context.Context, sender []byte, workID string) (*big.Int, error)
+type AdmitAuthorizationRequest struct {
+	AuthorizationBytes []byte
+	PaymentBytes       []byte
+	Reservation        *big.Int
+}
 
-	// CloseSession finalizes a session. After this call no further
-	// ProcessPayment or DebitBalance against (sender, work_id) is
-	// accepted.
-	CloseSession(ctx context.Context, sender []byte, workID string) error
+type AdvanceAuthorizationRequest struct {
+	Payer           []byte
+	AuthorizationID string
+	CumulativeUnits uint64
+	TargetReserved  *big.Int
+	AdvanceSeq      uint64
+	PaymentBytes    []byte
+}
+
+type AdvanceAuthorizationResult struct {
+	State            int32
+	Account          *WholesaleAccount
+	BilledDelta      *big.Int
+	CumulativeBilled *big.Int
+	Reserved         *big.Int
+	Credited         *big.Int
+	Replayed         bool
+}
+
+type WholesaleAccount struct {
+	Payer, Payee                           []byte
+	Credited, Reserved, Debited, Available *big.Int
+	Version                                uint64
+	ObservedAt                             string
+	ChainID                                uint64
+	Denomination                           string
+}
+
+type AdmitAuthorizationResult struct {
+	State    int32
+	Account  *WholesaleAccount
+	Reserved *big.Int
+	Credited *big.Int
+	Replayed bool
+}
+
+type SettleAuthorizationRequest struct {
+	Payer           []byte
+	AuthorizationID string
+	ActualUnits     uint64
+	SettlementSeq   uint64
+}
+
+type SettleAuthorizationResult struct {
+	State    int32
+	Account  *WholesaleAccount
+	Billed   *big.Int
+	Released *big.Int
+	Replayed bool
+}
+
+// DebitResult is what a debit did, as reported by the ledger.
+type DebitResult struct {
+	Balance *big.Int
+	// DebitedWei is the amount charged. Authoritative — this is the
+	// number a settlement record must attest.
+	DebitedWei *big.Int
+	// CumulativeUnits is the running unit total after this debit, so a
+	// settlement can state its position on the cumulative curve and stay
+	// verifiable from the record alone.
+	CumulativeUnits uint64
+	// Replayed is true when the debit was deduplicated: nothing was
+	// charged and no totals moved.
+	Replayed bool
 }
 
 // OpenSessionRequest carries the (capability, offering, price,
-// work_unit) tuple the daemon binds to the work_id.
+// per_units, work_unit) tuple the daemon binds to the work_id.
 type OpenSessionRequest struct {
 	WorkID              string
 	Capability          string
 	Offering            string
 	PricePerWorkUnitWei *big.Int
-	WorkUnit            string
+	// PerUnits is the denominator PricePerWorkUnitWei is quoted over.
+	// The daemon bills ceil(units * price / per_units) cumulatively; a
+	// zero here means 1, so an omitted denominator bills per_units times
+	// the intended rate.
+	PerUnits uint64
+	WorkUnit string
 }
 
 // GetTicketParamsRequest mirrors the payee-daemon quote-free request
@@ -102,6 +171,12 @@ type TicketParams struct {
 	Seed              []byte
 	ExpirationBlock   *big.Int
 	ExpirationParams  *TicketExpirationParams
+	// HighestSeenNonce / HasSeenNonces are relayed verbatim from the
+	// payee so a payer whose durable nonce counter was lost can resume
+	// above what the payee has already recorded. The broker has no
+	// opinion on either value; it is a pass-through.
+	HighestSeenNonce uint32
+	HasSeenNonces    bool
 }
 
 // TicketExpirationParams mirrors the payee-daemon response submessage.

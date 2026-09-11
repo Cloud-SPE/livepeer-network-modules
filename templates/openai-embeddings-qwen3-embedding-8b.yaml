@@ -1,0 +1,101 @@
+# Text embeddings — Qwen3-Embedding-8B.
+#
+# New 2026-09-02 (decision 1 of the 2026-09-02 walkthrough on lnm-of6): the
+# embeddings runner in livepeer-modules-openai-runners had no template, so a
+# member running it could attach and never be sold. No operator rig has run
+# this yet; every number here is the catalog's recommendation, not a
+# transcription of a config, and is marked as such where it matters.
+
+id: openai-embeddings-qwen3-embedding-8b
+capability: openai:embeddings
+offering_id: qwen3-embedding-8b
+protocol: paid-job/v1
+display_name: Text embeddings (Qwen3-Embedding-8B)
+description: >-
+  OpenAI-compatible text embeddings. Metered in tokens from the response usage
+  block, so a batch of long inputs costs what it weighs and a single short
+  input costs almost nothing.
+
+# docs/references/2026-06-15-openai-compatible-market-pricing.md, the
+# `qwen3-embedding` row: OpenRouter Qwen3 Embedding 8B at $0.01/M tokens, 30%
+# under is $0.007/M — 4059288813 wei per 1000 tokens at the June ETH basis.
+# The reference's recommendation, taken as written because no operator has
+# set a rate for this workload yet.
+price_default: { amount_wei: "4059288813", per_units: 1000 }
+
+# Embedding requests are short and the model is a single forward pass per
+# input, so this can run deeper than the generation workloads: four in flight
+# on a card that is not doing anything else. The queue is shallow for the
+# usual reason — a queued embedding is one the broker could have sent to a
+# free card.
+capacity: { max_in_flight: 4, queue_limit: 8 }
+
+extra:
+  provider: openai-embeddings-runner
+  backend_model: Qwen/Qwen3-Embedding-8B
+  embeddings:
+    # A stable product fact a caller needs before it indexes anything:
+    # switching dimension later means re-embedding a corpus.
+    dimensions: 4096
+
+constraints:
+  tier: standard
+
+# The served identity, as a vLLM-class upstream reports it: the model name
+# without the org prefix. The HF path is in extra.backend_model. A second
+# embedding model attaching to this pool must not be frozen into this price
+# under this name, which is what the selector is for.
+match:
+  identity.openai.model: Qwen3-Embedding-8B
+
+certification:
+  # The runner's declared probe (http-openai-model-ready against /v1/models
+  # on the runner in livepeer-modules-openai-runners); ten attempts because
+  # an 8B model is a real load.
+  - { name: ready, type: readiness, required: true, config: { attempts: 10, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: unary
+      body:
+        model: "{{identity.openai.model}}"
+        input: "a probe"
+      # A vector came back and the usage block is populated. The usage step
+      # below reads the same block through the runner's declared extractor
+      # (`openai-usage` over total_tokens); asserting on it here as well is
+      # what catches an upstream that returns vectors and an empty usage —
+      # which bills zero forever.
+      assert:
+        - "$.data[0].embedding"
+        - { path: "$.usage.total_tokens", min: 1 }
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 2000 } }
+
+# An 8B model in bf16 is ~16 GB of weights: a 24 GB card holds it with room
+# for batches, an 11 GB 2080 does not. rtx-3090 is the natural home — the
+# batch-class card the strong workloads decline — and the two newer classes
+# are here so a member with only those cards can still serve it.
+requirements:
+  gpu_classes: [rtx-3090, rtx-4090, rtx-5090]
+
+# Above batch NeMo (12): both are batch, both land on 3090s, and embeddings
+# are the higher-throughput earner on that card. Below whisper (16), which is
+# interactive more often than not. Below every generation workload.
+priority: 14
+
+# Primary only. At 16 GB of weights this is not the low-footprint rider the
+# secondary slot is for; on a 32 GB 5090 next to the 27B chat model it would
+# leave neither room to batch.
+stacking: { primary: true, secondary_on: [] }
+
+# runner_compose omitted: the openai-embeddings-runner image serves no runner
+# contract and declares `openai-text-embeddings` (hyphen form) as published.
+# The tag that ships the contract and the colon id is the tag that belongs
+# here (lnm-v12).
+
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

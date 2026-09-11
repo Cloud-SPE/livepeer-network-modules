@@ -1,0 +1,62 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Operator queue</p>
+  <h1>Exceptions</h1>
+  <p class="muted">Onboarding is zero-touch, which does not mean untouchable. What lands here is the set of things policy deliberately refuses to decide: whose participation to suspend, which member owns a GPU two addresses claim, and which settlement window a person still has to look at.</p>
+</section>
+
+<section>
+  <h2>Queue snapshot</h2>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">Suspended members</p>
+      <p class="metric-value"><span id="exMemberCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Suspended hardware</p>
+      <p class="metric-value"><span id="exHardwareCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Held windows</p>
+      <p class="metric-value"><span id="exWindowCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Duplicate GPUs</p>
+      <p class="metric-value"><span id="exDuplicateCount">—</span></p>
+    </article>
+  </div>
+  <p class="small muted">Generated <span id="exGeneratedAt">—</span>.</p>
+</section>
+
+<section class="grid-2">
+  <div>
+    <h2>Suspended members</h2>
+    <p class="muted">Suspension drains a member's placements: in-flight requests finish where they are, and no new work is routed. Reinstating puts the member back to active — placement will offer the GPUs work again on the next apply.</p>
+    <div id="exSuspendedMembers" class="stack"></div>
+  </div>
+  <div>
+    <h2>Active members</h2>
+    <p class="muted">A suspension with no reason is a decision nobody can review later, including the operator who made it — so the reason is required here, not only at the server.</p>
+    <div id="exActiveMembers" class="stack"></div>
+  </div>
+</section>
+
+<section>
+  <h2>Suspended hardware</h2>
+  <p class="muted">GPUs the pool has stopped sending work to. Hardware state is set by certification and the ladder, not from this page.</p>
+  <div id="exSuspendedHardware" class="card-list"></div>
+</section>
+
+<section class="grid-2">
+  <div>
+    <h2>Held settlement windows</h2>
+    <p class="muted">Anything anomalous, and anything sitting in <code>pending_approval</code>. The settlement scale is what the window actually collected against what it billed: below 1&nbsp;000&nbsp;000&nbsp;ppm the pool would be paying out more than it took in.</p>
+    <div id="exHeldWindows" class="stack"></div>
+  </div>
+  <div>
+    <h2>Duplicate GPUs</h2>
+    <p class="muted">The same GPU UUID claimed by more than one member address. Listed rather than resolved: the pool can tell that two addresses claim the card, not which one is entitled to it.</p>
+    <div id="exDuplicateGPUs" class="stack"></div>
+  </div>
+</section>
+{{end}}

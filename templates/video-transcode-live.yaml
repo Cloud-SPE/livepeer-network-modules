@@ -1,0 +1,251 @@
+# Live gateway ingest — as run on the operator's "us-central-broker" rig.
+#
+# The rig declared this with `interaction_mode: live-session-gateway-ingest@v0`
+# and a backend `transport: remote-live-runner` pointing at
+# http://live-runner:8080. Both are gone: the mode name is removed with the
+# rest of the taxonomy (offering-axes.md §5), and the bespoke remote-live-runner
+# transport no longer exists at all — a runner now attaches outbound and
+# declares its own paths, so there is nothing left for a broker-side transport
+# name to select.
+#
+# Why paid-session/v1 and not paid-job/v1
+# ---------------------------------------
+# offering-axes.md §1: `protocol` answers the one-shot vs long-lived question
+# and nothing else does. Three facts from the rig's own config settle it, and
+# none of them is the mode name:
+#
+#   1. The work unit is `output_seconds` counted by `seconds-elapsed`. That is
+#      wall-clock burn, not a number read out of a response — and for
+#      paid-session runner-attach.md §3.2 makes `work_unit.extractor`
+#      MUST-be-absent precisely because there is no response to extract from.
+#      A paid-job offering with this meter would have nowhere to put it.
+#   2. An ingest has no end in sight. A publisher pushes until they stop; the
+#      broker cannot know at admission how long that is, so funding has to be
+#      topped up against a lease rather than paid per exchange.
+#   3. Nobody downstream learns the runner died. A session has a heartbeat and
+#      a broker obliged to terminate an unmetered runtime (paid-session.md §5).
+#
+# The descriptor schema is the confirmation, not the argument: `rtmp-hls/v1`
+# (descriptors/rtmp-hls.md) describes itself as "the legacy remote-runner wire
+# contract, re-expressed as one descriptor schema", lists its typical axes as
+# `attachment: external`, `metering: runner-reported`, work unit
+# `output_seconds` — the rig's facts exactly — and puts stream-key issuance
+# behind a gateway-held grant, which is what "gateway-ingest" now means. It is
+# NOT declared below: descriptor schemas are runner-declared and frozen
+# (runner-attach.md §3.2, §5), and naming one here would be the operator
+# authoring the runner's half.
+
+id: video-transcode-live
+capability: video:transcode.live
+offering_id: gateway-ingest
+protocol: paid-session/v1
+display_name: Live ingest and transcode
+description: >-
+  A long-lived live-video session: a publisher ingests, the runner transcodes,
+  viewers play back, and the gateway admits publishers with a grant it holds
+  for the life of the session. Metered in seconds of output produced, topped
+  up while the broadcast runs.
+
+# The operator's real rate: 1e12 wei per output second — ~$0.103 per output
+# minute at the 2026-06-15 ETH basis in
+# docs/references/2026-06-15-openai-compatible-market-pricing.md.
+#
+# Worth seeing next to the rig's own VOD price: 4.8e12 per job, flat. A
+# ten-minute live broadcast bills ~6.2e14 wei, roughly 130 VOD jobs. Live
+# transcode holds a card for its whole duration where a VOD job releases it, so
+# a large multiple is expected — but the two prices were clearly set against
+# different mental models, and only one of them scales with the work done.
+price_default: { amount_wei: "1000000000000", per_units: 1 }
+
+# One live session per runner. The rig pinned nothing, but this is not a
+# concurrency the pool can discover safely: a second ingest on the same 2080
+# degrades both broadcasts in realtime, and unlike a queued VOD job there is no
+# waiting — the frames are either encoded now or dropped.
+capacity: { max_in_flight: 1 }
+
+extra:
+  provider: live-runner
+  video:
+    task: live-gateway-ingest
+
+# The rig's `constraints:` block. `region` matters more here than anywhere else
+# in the catalog: a publisher's RTMP path to the ingest is a live network path,
+# and a gateway that cannot see where an orchestrator is cannot route a
+# broadcast to a near one (template.go, Constraints).
+constraints:
+  tier: standard
+  gpu_vendor: NVIDIA
+  region: us-central
+
+# No `match:`. There is no model identity to select on and the rig runs one
+# live runner; any runner declaring this capability is the one this offer
+# wants.
+
+# The operator's half of the session axes. What the runner declares —
+# descriptor schemas, `metering`, its own heartbeat cadence — is frozen from
+# the attach document and deliberately absent.
+session_policy:
+  # RTMP arrives at the runner and HLS leaves it; the media never transits
+  # the broker. offering-axes.md §3 calls that `external` — "runtime
+  # coordinates come from the descriptor and data never transits the broker"
+  # — which is exactly what a descriptor carrying `rtmp_url` and `hls_url` is
+  # for. Since 2026-09-02 it is the only attachment there is (decision 13 on
+  # lnm-of6): the relayed alternative was never built. It means the member
+  # exposes the runner's ingest and playback addresses publicly, which is the
+  # pool's member-edge feature (lnm-7cj), not this file's.
+  attachment: external
+  # A broadcast outlasts its opening payment by design. `bounded` would refuse
+  # top-up after open and end the stream at whatever the first envelope funded.
+  refill: extensible
+  # paid-session.md §5's normative default, stated rather than inherited: the
+  # lease tracks funding, so a publisher who stops paying winds down instead of
+  # transcoding for free.
+  lease_policy: funding-tracking
+  # lease_max_seconds is deliberately ABSENT, and this is the one place this
+  # catalog leaves a session uncapped. The rig set no maximum — unlike the NeMo
+  # stream, which wrote `max_session_seconds: 3600` — and a live channel has no
+  # natural end: a cap invented here would cut a legitimate long broadcast at a
+  # number nobody chose. Funding is the bound instead, which is what
+  # funding-tracking means.
+  # One work unit per second of output, matching the runner's `seconds-elapsed`
+  # meter at granularity 1. This is what makes runway_units and lease seconds
+  # the same number.
+  burn_rate_per_second: 1.0
+  # Two minutes, the widest low-water mark in the catalog. Cutting off a live
+  # broadcast is the most visible failure this pool can produce — an audience
+  # sees it, not just the caller — so the gateway gets a long warning through
+  # `balance.will_refuse_next_refill` (paid-session.md §6) rather than a tight
+  # one.
+  min_runway_units: 120
+  # Advisory only; the buyer owns its real increment because it is the buyer's
+  # exposure bound (offering-axes.md §3). Ten minutes suits a workload that
+  # runs for hours — the NeMo stream's five is sized for a meeting.
+  runway_increment_units: 600
+  # The spec defaults (10/3), chosen rather than inherited. The NeMo stream
+  # tightens to 5/3 because its runner meters every second; here the tradeoff
+  # runs the other way. 30 seconds of unmetered encode on a 2080 is cheap, and
+  # a tighter threshold would tear down a live broadcast over one transient
+  # failed event post — for a live channel a false teardown costs more than the
+  # runtime it saves.
+  heartbeat: { interval_seconds: 10, missed_threshold: 3 }
+
+certification:
+  # The rig probed http-status on http://live-runner:8080/healthz. The step
+  # runs the probe the RUNNER declared and sets only sufficiency
+  # (certification-steps.md §3.1).
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  # The paid-session form of `request`: open a session, validate the descriptor
+  # envelope, hold it, terminate, and confirm the status path agrees — the only
+  # way to prove a session runner works without paying it.
+  - name: open
+    type: request
+    required: true
+    config:
+      # No `session_params`: the rig declared no create-time parameters, and
+      # for an rtmp-hls-shaped runtime there is nothing the buyer supplies at
+      # open — the runner mints the ingest and playback coordinates itself.
+      # (Contrast trickle-egress/v1, where the buyer's egress target genuinely
+      # does ride in session_params.) The runner's `session_params_schema` is
+      # the authority if that changes; it is advisory, never a validator.
+      #
+      # No `expect_descriptor_schema` either: the runner declares which schema
+      # it emits, so the step accepts whatever it declared rather than pinning
+      # rtmp-hls/v1 from here.
+      # Reachability (plan 0046): the broker dials the descriptor's
+      # `rtmp_url` from its own vantage and completes the RTMP handshake,
+      # proving the member's RTMPS port, the agent's forward and the
+      # runner's router all answer. Not a publish — that needs an encoder.
+      # `hls_url` is not dialled: with no publisher there is no playlist.
+      reach: { field: rtmp_url }
+      hold_ms: 5000
+  # NOT required, and the reason is the workload rather than the plumbing.
+  #
+  # This offering meters OUTPUT seconds, and a session opened by certification
+  # has no publisher pushing into it, so a correct runner may honestly report
+  # zero. That is the opposite of the NeMo streaming template, whose `seconds`
+  # meter counts session wall time and therefore ticks with no client at all —
+  # which is why its usage step IS required. Gating this one would refuse
+  # eligibility to runners that are working perfectly.
+  #
+  # The consequence is real and should not be glossed: this is the only
+  # template in the catalog that can certify without proving it can bill. The
+  # broker can now verify session usage — a runner reports to a certification
+  # callback and the step reads it (certification-steps.md §3.3) — so what is
+  # still missing is only a probe publisher to give this workload something to
+  # transcode. Make the step required once one exists.
+  - { name: usage, type: usage, required: false, config: { min_units: 1, window_ms: 15000 } }
+
+# The rig wrote `gpu_model: 2080`, honoured as the pool's `rtx-2080` class —
+# "2080" is not a driver marketing string, so an exact `gpu_models` gate built
+# from it would match nothing (runner-attach.md §3.1, placement/class.go).
+#
+# This is the constraint in the catalog most worth a second look, though it is
+# the operator's to make: live transcode is the workload with the least slack —
+# it either keeps up with the publisher or drops frames — and it is scoped to
+# the oldest cards in the fleet. That may be exactly right for a single
+# 720p ingest and exactly wrong for anything above it.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
+# gtx-1080 added 2026-09-02 (plan 0045 §5, decision 9 on lnm-of6). For the
+# H.264/HEVC this offering sells, Pascal NVENC is the 2080's peer rather than
+# its lesser: it encodes both codecs, runs 1080p well past real time, and takes
+# the same number of concurrent sessions under current drivers. What Turing
+# added (HEVC B-frames, a little quality per bit) is a scoring difference, and
+# the non-required latency step ranks it down rather than refusing the card.
+# Neither class does AV1. The 1080 is admitted by NO AI template: vLLM needs
+# compute capability 7.0+, and whether any other image runs on sm_61 depends
+# on that image's CUDA base — a fact its author owns, not this catalog.
+requirements:
+  gpu_classes: [gtx-1080, rtx-2080, arc-a770, arc-b580, flex-170]
+
+# The highest of the three transcode templates and the highest anything gets
+# outside the chat rig. On a 2080 that could take a live ingest or a batch job,
+# the live one must win: a queued VOD transcode waits harmlessly, a live
+# broadcast that cannot get a card is a broadcast that does not happen.
+priority: 26
+
+# Primary only, twice over: 0040 §4.4 gives 2080-class cards one template
+# (placement.DefaultStances rtx-2080: 1), and a live session holds the card,
+# the encoder and the sole in-flight slot for its whole duration.
+stacking: { primary: true, secondary_on: [] }
+
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode (its predecessor,
+# livepeer-modules-transcode-runners, is stale since June 2026 and is being
+# archived — decision 11 on lnm-of6): live-runner-* serves
+# `POST /v1/video/live/sessions`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+# One image for every card (corrected 2026-09-05): the live runner is ubuntu
+# + ffmpeg + a media router with no vendor build stage, so it takes the
+# image map's `any` key rather than a tag per vendor. The device block is
+# still rendered by the card's vendor, so the encoder can use it.
+#
+# `rtmp_port` (plan 0046 §2.7): the container's RTMP ingest. The member
+# publishes one RTMPS port; the agent's edge terminates TLS on it with the
+# host's certificate and forwards here, and the pool hands the runner
+# `LIVEPEER_PUBLIC_RTMP_URL=rtmps://<public host>:1936` to advertise. The
+# HLS side rides the HTTP edge under `LIVEPEER_PUBLIC_URL`.
+runner_compose:
+  image:
+    any: tztcloud/live-runner:v1.4.1
+  rtmp_port: 1935
+
+# min_jobs counts SESSIONS, and a live session may run for hours — so 5 is
+# already a long probation in wall-clock terms, and a larger number would keep
+# a working runner on a 2% share for weeks.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 5 }
+
+active: { share_cap_ppm: 200000 }
+
+commission_bps: 1000

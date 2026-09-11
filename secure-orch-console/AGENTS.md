@@ -23,9 +23,11 @@ Inherited from the repo root, plus:
 - **The cold key never crosses a host boundary.** v0.1 holds it as a
   V3 JSON keystore on the secure-orch host. Hardware-backed signers
   are out of scope for v0.1 (plan 0019 §13 Q1 + §14).
-- **No auto-sign.** The operator-confirm gesture is not skippable.
-  Resolver-side replay protection makes a fresh sign cheap; that is
-  not a license to skip the diff review.
+- **Auto-sign only inside the policy envelope.** In the hand-carry
+  flow the operator-confirm gesture is not skippable. `--agent` (plan
+  0042) is the only exception: it auto-signs `renewal` / `benign`
+  candidates strictly within the sign policy and holds everything else
+  for operator review. Never widen that envelope implicitly.
 - **Bytes-identical canonicalization** with the resolver / coordinator
   / gateway verify path. The `internal/canonical/` package is the
   single source of truth on both sides of the sign/verify boundary.
@@ -55,6 +57,10 @@ internal/
   diff/                     — candidate-vs-last-signed structural diff
   audit/                    — rolling JSONL audit log with size-based rotation
   config/                   — operator config (keystore path, last-signed path, listen, audit log)
+  lastsigned/               — atomic last-signed.json read/write
+  policy/                   — sign-policy parsing + candidate classification
+  agent/                    — plan 0042 outbound sign-cycle loop (pull, classify,
+                              auto-sign, hold, push, alerts)
   protocol/                 — gRPC client to the local protocol-daemon unix
                               socket (status reads + the orchestrator write
                               actions: set cut/share, transfer-bond,

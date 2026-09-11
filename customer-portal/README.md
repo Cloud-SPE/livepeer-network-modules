@@ -22,6 +22,7 @@ runtime. See
 | `@livepeer-network-modules/customer-portal/admin` | Operator admin engine |
 | `@livepeer-network-modules/customer-portal/db` | drizzle pgSchema, migration utilities |
 | `@livepeer-network-modules/customer-portal/registry` | Service-registry hooks (placeholder) |
+| `@livepeer-network-modules/customer-portal/routes` | Customer self-service Fastify routes |
 
 ## Build
 

@@ -7,6 +7,13 @@ renders: mermaid
 
 # Architecture
 
+> **Plan 0043 (decision 8).** The daemon no longer builds or signs
+> manifests. `orch-coordinator` builds the candidate and the cold key on
+> `secure-orch-console` signs it, so `BuildManifest`, `SignManifest`,
+> `BuildAndSign`, `ProbeWorker` and the `livepeer-registry-refresh` CLI
+> were deleted along with the daemon's own v3.0.1 manifest schema. What
+> remains on `Publisher` is `GetIdentity` and `Health`.
+
 ## Deployment archetype
 
 **Archetype A is the only supported deployment** as of v3.0.1 (suite-wide
@@ -16,7 +23,7 @@ reset; see `livepeer-network-suite/docs/exec-plans/active/0003-archetype-a-deplo
   secure-orch host alongside the cold-key keystore. Operator-mediated
   cadence: operator hand-edits `raw-registry-manifest.json` (or has it pre-filled
   by an orch-coordinator's `/registry/offerings` scrape), runs
-  `livepeer-registry-refresh`, hand-carries the signed manifest back
+  `orch-coordinator`, hand-carries the signed manifest back
   to the public host that serves it.
 - **Resolver** (this daemon, `--mode=resolver`) runs as a sidecar
   alongside any gateway that needs to discover orchestrators. Reads
@@ -172,9 +179,7 @@ sequenceDiagram
     participant Reg as ServiceRegistry<br/>(on chain)
 
     Note over Op,Reg: Bootstrap (one-time per orchestrator)
-    Op->>Pub: BuildManifest(spec)
     Pub-->>Op: unsigned manifest JSON
-    Op->>Pub: SignManifest(json)
     Pub->>KS: read private key
     Pub->>Pub: canonical bytes →<br/>keccak256 → secp256k1 sign
     Pub->>FS: write signed manifest
@@ -182,8 +187,6 @@ sequenceDiagram
     Note over Op,Reg: In v3.0.1, protocol-daemon owns the one-time<br/>and follow-on setServiceURI writes
 
     Note over Op,Reg: Manifest update (whenever capabilities change)
-    Op->>Pub: BuildManifest(new spec)
-    Op->>Pub: SignManifest(json)
     Pub->>FS: overwrite signed manifest
     Note right of FS: HTTP server picks up<br/>the new file on next request<br/>— NO chain transaction
 ```
@@ -310,8 +313,8 @@ Which RPCs fire in each phase.
 
 | Phase | Caller | RPC | Mounted in mode |
 |---|---|---|---|
-| Publish bootstrap | Operator's tooling | `Publisher.BuildManifest` | publisher |
-| Publish bootstrap | Operator's tooling | `Publisher.SignManifest` | publisher |
+| Publish bootstrap | `orch-coordinator` | builds the manifest candidate | outside this daemon |
+| Publish bootstrap | `secure-orch-console` | cold-key signature | outside this daemon |
 | Publish bootstrap | `protocol-daemon` | on-chain `setServiceURI` | chain write owned outside this repo |
 | Publish probe | Operator's tooling | reserved `Publisher.ProbeWorker` RPC | publisher |
 | Resolve | Consumer app | `Resolver.ResolveByAddress` | resolver |
@@ -327,7 +330,7 @@ Full method shapes: [docs/product-specs/grpc-surface.md](../product-specs/grpc-s
 ## Build artifacts
 
 - Single Go binary: `livepeer-service-registry-daemon` (~13 MB built locally; ~21 MB Docker image)
-- Generated proto code: `proto/gen/go/livepeer/registry/v1/` (committed; regenerate via `make proto`)
+- Generated proto code: imported from the sibling `proto-contracts/` module (`livepeer/registry/v1`; committed there, regenerated via `make proto` from that module — this repo has no `proto/` tree)
 - Docker image: `tztcloud/livepeer-service-registry-daemon:vX.Y.Z` (Docker Hub, pushed via `make docker-push` locally; `.github/workflows/docker.yml` auto-publishes on tagged release)
 
 ## What this architecture does NOT solve

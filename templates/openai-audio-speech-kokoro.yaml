@@ -1,0 +1,153 @@
+# Text to speech — Kokoro-82M, as run on the operator's "ai-rig-broker".
+#
+# The smallest model in the catalog by two orders of magnitude, which is why it
+# is priced per thousand characters and why it can share a card.
+
+id: openai-audio-speech-kokoro
+capability: openai:audio-speech
+offering_id: kokoro
+protocol: paid-job/v1
+display_name: Text to speech (Kokoro-82M)
+description: >-
+  OpenAI-compatible speech synthesis: JSON in, audio out. Metered in input
+  characters, so the caller knows the price of a request before sending it —
+  the bill is a function of the text, not of how long the audio turned out.
+
+# The operator's real rate: 252 Gwei per 1000 input characters, against a 1000
+# denominator because per-character pricing cannot be expressed in whole wei
+# any other way (offering-axes.md §6 — this is exactly the case `per_units`
+# exists for; a layer that drops it bills 1000x).
+#
+# This is the one price on either rig that matches the catalog's own reference
+# almost exactly: docs/references/2026-06-15-openai-compatible-market-pricing.md
+# recommends 251675906381 wei/1000 chars for `hexgrad/Kokoro-82M` (30% under
+# OpenRouter's $0.62/M chars), and the operator rounded it to 252e9. So this
+# number has a derivation behind it, unlike most of the catalog.
+price_default: { amount_wei: "252000000000", per_units: 1000 }
+
+# The rig pinned no concurrency here. Four in flight is pool policy: an 82M
+# model synthesises a sentence in well under a second and leaves the card idle
+# between requests, so a shallow queue is what keeps it fed. It is still the
+# lightest workload in the catalog by far, which is what the stacking below
+# rests on.
+capacity: { max_in_flight: 4, queue_limit: 4 }
+
+extra:
+  provider: kokoro
+  # The upstream weights. Worth advertising because "kokoro" names a family and
+  # the 82M release is a specific, small member of it.
+  backend_model: hexgrad/Kokoro-82M
+  audio:
+    task: speech
+    # The rig's voice catalog, carried whole. This is the clearest case in the
+    # catalog for operator `extra`: it is a stable product fact a caller must
+    # have BEFORE it sends a request (an unknown `voice` is a 400, not a
+    # degraded result), it is not derivable from the model identity, and it is
+    # not volatile runtime state — which is the test
+    # docs/design-docs/architecture-overview.md sets for what belongs here.
+    #
+    # `aliases` maps the OpenAI voice names callers already have hard-coded
+    # onto the voices this model actually has, so an existing OpenAI client
+    # works unmodified. `native` is what the model really offers.
+    voices:
+      default: af_bella
+      native: [af_bella, am_michael, bm_george, am_adam, af_sarah, bf_emma, bf_isabella, bm_lewis]
+      aliases:
+        alloy: af_bella
+        echo: am_michael
+        fable: bm_george
+        onyx: am_adam
+        nova: af_sarah
+        shimmer: af_bella
+        ash: am_adam
+        sage: bf_emma
+        verse: am_michael
+        coral: bf_isabella
+        ballad: bm_lewis
+
+# The rig's `constraints.gpu_vendor`. Advertised, not enforced: the placement
+# gate is `requirements.gpu_classes` below, and both classes there are NVIDIA
+# parts. This block is what a gateway filtering on silicon actually sees.
+constraints:
+  gpu_vendor: NVIDIA
+
+match:
+  identity.openai.model: kokoro
+
+certification:
+  # Runs the probe the runner declared (the rig used http-status on /healthz);
+  # the template sets sufficiency only (certification-steps.md §3.1). Three
+  # attempts is enough for an 82M model — it is loaded before the container is
+  # done starting.
+  - { name: ready, type: readiness, required: true, config: { attempts: 3, interval_ms: 2000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: unary
+      body:
+        model: "{{identity.openai.model}}"
+        input: "ping"
+        # Substituted from this template's own extra rather than written twice,
+        # so the probe can never drift from the advertised default voice
+        # (certification-steps.md §4 substitutes `{{offer.extra.<dotted path>}}`).
+        # A missing value here is a template bug and errors the step, which is
+        # the behaviour we want if someone deletes the voices block.
+        voice: "{{offer.extra.audio.voices.default}}"
+      # Speech returns binary, not JSON, so there is nothing to assert a
+      # JSONPath against — the check is that the content type is audio at all.
+      # The certification-steps.md §7 speech family is exactly this shape.
+      expect_content_type: "audio/"
+      # 4 MiB. Above the type default of 1 MiB because even a short utterance
+      # in an uncompressed format clears it, and a step that fails with
+      # `response_too_large` would look like a broken runner.
+      max_response_bytes: 4194304
+  # The rig metered this with a request-formula over the input character count,
+  # so the units are known before the response exists. Which formula is
+  # runner-declared and frozen (runner-attach.md §3.2); the step only proves it
+  # yields a billable count.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+
+# The rig wrote `constraints.gpu: "4090"`, `gpu_vendor: NVIDIA`. Stated as a
+# class rather than a model string for the usual reason: model strings are the
+# driver's exact case-sensitive marketing names (runner-attach.md §3.1), so an
+# allowlist of them silently excludes rebadges, while `rtx-4090` is the pool's
+# normalised class for all of them.
+#
+# rtx-5090 is a widening of what the operator wrote, added so this template can
+# be the secondary that a 5090 chat primary leaves room for; an 82M TTS model
+# on a 5090 is not a hardware question.
+#
+# No gpu_vram_min_bytes. Kokoro fits in well under a gigabyte, so any floor
+# stated here would be about the card, not the model — and the class list
+# already says that.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
+
+# Above Whisper, below the vision and chat families. Speech has the same
+# rider profile as Whisper but shorter, cheaper requests, so on a card where
+# both could be primary it is the better use of a slot nothing else claimed.
+priority: 18
+
+# Stackable, and the least disruptive rider in the catalog: 82M parameters is
+# a rounding error against a chat model's KV cache, and a synthesis request is
+# over in under a second. `primary: true` still holds for a card where nothing
+# else qualifies.
+stacking:
+  primary: true
+  secondary_on: [rtx-4090, rtx-5090]
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+# The highest min_jobs in the catalog, because each job is the cheapest: 30
+# synthesis requests cost a probationary card seconds of work, and the failure
+# modes worth catching (an alias that maps to a voice the model does not have)
+# only appear across a spread of requests.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 30 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

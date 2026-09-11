@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version"
 	"io"
 	"log/slog"
 	"net/http"
@@ -230,11 +231,13 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 	fc := brokerclient.NewFake()
 	addr := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	fc.Set("http://x:1", &types.BrokerOfferings{
+		SpecVersion:    version.VERSION,
 		OrchEthAddress: addr,
 		Capabilities: []types.BrokerOffering{{
 			CapabilityID:    "cap",
 			OfferingID:      "off",
-			InteractionMode: "http-stream@v1",
+			Protocol:        "paid-job/v1",
+			Job:             &types.JobAxes{"transports": []any{"stream"}},
 			WorkUnit:        types.WorkUnit{Name: "tokens"},
 			PricePerUnitWei: "100",
 		}},
@@ -243,14 +246,6 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 		BrokerStatus: "ready",
 		Capabilities: []types.BrokerHealthCapability{{
 			ID: "cap", OfferingID: "off", Status: "ready",
-			Metadata: &types.BrokerHealthMetadata{
-				Applicable:            true,
-				LastResult:            "models_probe_failed",
-				LastSuccessAt:         time.Now().UTC().Add(-3 * time.Minute),
-				LastSuccessAgeSeconds: 180,
-				ConsecutiveFailures:   2,
-				LastError:             "probe failed",
-			},
 		}},
 	}, nil)
 	svc, err := scrape.New(scrape.Config{
@@ -258,9 +253,6 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 		Brokers:        []config.Broker{{Name: "b1", BaseURL: "http://x:1"}},
 		ScrapeInterval: time.Second,
 		ScrapeTimeout:  time.Second,
-		WorkerURLOverride: map[string]string{
-			"b1": "https://b1.example/",
-		},
 	}, fc, slog.Default())
 	if err != nil {
 		t.Fatal(err)

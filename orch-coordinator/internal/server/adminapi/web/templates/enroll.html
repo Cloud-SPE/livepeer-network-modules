@@ -1,0 +1,79 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Hot zone</p>
+  <h1>Enroll host</h1>
+  <p class="muted">Mint the credential a host presents when it attaches. The credential grants <em>attach</em> and nothing else: not eligibility, not a price, and never a manifest change. Certification still gates the work.</p>
+  {{template "hotzone-context" .}}
+</section>
+
+{{if .Issued}}
+<section class="upload">
+  <h2>Credential for <code>{{.Issued.HostID}}</code></h2>
+  <article class="alert-item alert-warn">
+    <strong>Shown once</strong>
+    <span>The broker stores only a hash. Copy this into the host's bundle now — if it is lost, rotate or re-enroll.</span>
+  </article>
+  <dl class="meta">
+    <dt>credential</dt>
+    <dd><span class="copy-inline"><code>{{.Issued.Credential.Token}}</code><button type="button" class="copy-button" data-copy-value="{{.Issued.Credential.Token}}">Copy</button></span></dd>
+    <dt>credential_id</dt><dd><code>{{.Issued.CredentialID}}</code></dd>
+    <dt>expires</dt><dd>{{.Issued.ExpiresAt.Format "2006-01-02 15:04:05Z"}}</dd>
+    <dt>broker</dt><dd>{{.IssuedBroker}}</dd>
+  </dl>
+  <h3>Agent environment</h3>
+  <pre class="code-block">LIVEPEER_HOST_ID={{.Issued.HostID}}
+{{range $k, $v := .Issued.Bundle.BrokerURLs}}{{if eq $k "quic"}}LIVEPEER_BROKER_QUIC_ADDR={{$v}}
+{{else}}LIVEPEER_BROKER_URL={{$v}}
+{{end}}{{end}}LIVEPEER_ATTACH_CREDENTIAL_FILE=/etc/livepeer/attach-credential
+LIVEPEER_RUNNERS_FILE=/etc/livepeer/runners.json</pre>
+  <p class="muted"><small>The same variables serve a pool member and an orchestrator's own hardware; only who minted the credential differs.</small></p>
+</section>
+{{end}}
+
+<section class="upload">
+  <h2>Enroll a host</h2>
+  <form method="post" action="/enroll">
+    <label>broker
+      <select name="broker" required>
+        {{range .Brokers}}{{if .Administrable}}<option value="{{.Name}}">{{.Name}}</option>{{end}}{{end}}
+      </select>
+    </label>
+    <label>host_id <input type="text" name="host_id" placeholder="leave blank to generate"></label>
+    <label>label <input type="text" name="label" placeholder="rig in rack 3"></label>
+    <button type="submit">Mint credential</button>
+  </form>
+</section>
+
+<section class="roster">
+  <h2>Enrollments</h2>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th>host</th><th>credential</th><th>state</th><th>expires</th><th>broker / source</th><th></th></tr></thead>
+    <tbody>
+    {{range $row := .Credentials}}
+      <tr>
+        <td><strong>{{.HostID}}</strong>{{if .Label}}<br><small>{{.Label}}</small>{{end}}</td>
+        <td><code>{{.CredentialID}}</code><br><small class="muted">{{.Kind}}</small></td>
+        <td><span class="badge drift-{{.State}}">{{.State}}</span></td>
+        <td>{{.ExpiresAt.Format "2006-01-02"}}</td>
+        <td>{{.Broker}}<br><small class="muted">{{.Source}}</small></td>
+        <td>
+          {{if ne .State "revoked"}}
+          <form method="post" action="/enroll/revoke">
+            <input type="hidden" name="broker" value="{{$row.Broker}}">
+            <input type="hidden" name="credential_id" value="{{$row.CredentialID}}">
+            <input type="text" name="reason" placeholder="reason (audited)">
+            <button type="submit">Revoke</button>
+          </form>
+          {{end}}
+        </td>
+      </tr>
+    {{else}}
+      <tr><td colspan="6"><em>no enrollments</em></td></tr>
+    {{end}}
+    </tbody>
+  </table>
+  </div>
+  <p class="muted"><small>Revoking deletes the secret and closes the host's connections. A revoked credential can never re-attach.</small></p>
+</section>
+{{end}}

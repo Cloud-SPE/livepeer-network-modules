@@ -92,7 +92,7 @@ A single deployment can run *both* on the same host with two daemons (publisher 
 ## Build artifacts
 
 - Single Go binary: `livepeer-service-registry-daemon`
-- Generated proto code: `proto/gen/go/livepeer/registry/v1/`
+- Generated proto code: imported from the sibling `proto-contracts/` module (`livepeer/registry/v1`), not generated in this repo
 - Optional: Docker image (distroless/static, ~20 MB)
 
 ## Backwards compatibility surface

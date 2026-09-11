@@ -49,31 +49,61 @@ Authorization: Bearer <token>           # OPTIONAL — see Auth below
 Content-Type: application/json
 
 {
-  "worker_eth_address": "0x1234...abcd",   // OPTIONAL — orch-internal only
+  "orch_eth_address": "0x1234...abcd",
   "capabilities": [
     {
-      "name": "openai:chat-completions",
-      "work_unit": "token",
-      "offerings": [
-        {
-          "id": "gpt-oss-20b",
-          "price_per_work_unit_wei": "1250000"
-        }
-      ],
-      "extra": { /* opaque, optional, workload-specific */ }
+      "capability_id": "openai:chat-completions",
+      "offering_id": "gpt-oss-20b",
+      "protocol": "paid-job/v1",              // paid-job/v1 | paid-session/v1
+      "job": { "transports": ["unary"] },     // paid-job/* only
+      "work_unit": { "name": "token" },
+      "price_per_unit_wei": "1250000",
+      "per_units": 1,
+      "extra": { /* opaque, optional, workload-specific */ },
+      "constraints": { /* always present, may be {} */ }
+    },
+    {
+      "capability_id": "livepeer:vtuber-session",
+      "offering_id": "vtuber-1080p30",
+      "protocol": "paid-session/v1",
+      "session": {                            // paid-session/* only
+        "descriptor_schema": "vtuber-session/v1",   // <name>/v<major>
+        "attachment": "external",               // external (the only value)
+        "metering": "runner-reported",          // runner-reported (the only value)
+        "refill": "extensible",                 // extensible | bounded
+        "heartbeat": { "interval_seconds": 10, "missed_threshold": 3 },
+        "lease": { "policy": "funding-tracking" }  // funding-tracking | fixed
+      },
+      "work_unit": { "name": "second" },
+      "price_per_unit_wei": "500",
+      "per_units": 1,
+      "constraints": {}
     }
   ]
 }
 ```
 
-The body shape is exactly the modules-canonical capability fragment defined in
-[manifest-schema.md](manifest-schema.md): `capabilities[i] = {name, work_unit?, offerings?: [...], extra?}`.
-A worker contributes one such fragment; the optional top-level
-`worker_eth_address` is orch-internal metadata only. The
-orch-coordinator may store/display it, but it is excluded from the raw
-proposal and signed manifest. The orch-coordinator merges N
-workers' fragments (along with operator-supplied node identity:
-`id`/`url` and optional node-level `extra`) into the final `nodes[]` of the manifest.
+The body is a **flat list of capability tuples**, one per
+`(capability_id, offering_id)` pair — not the node-oriented
+`capabilities[].offerings[]` nesting of the resolver's projected view.
+It matches the manifest payload defined by
+`livepeer-network-protocol/manifest/schema.json`.
+
+Each tuple declares exactly one `protocol` (`paid-job/v1` or
+`paid-session/v1`) plus the matching axes object: `job` for `paid-job/*`,
+`session` for `paid-session/*`. A `paid-*` tuple missing its axes object
+produces a manifest that fails schema validation downstream. The field
+formerly named `interaction_mode` no longer exists.
+
+This daemon treats `protocol`, `job`, and `session` as pure pass-through —
+it gates on none of them (see `internal/types/coordinator_envelope.go`).
+Gateways and the broker are the consumers that actually read the axes.
+
+A worker (or the `capability-broker` fronting it) contributes one such
+payload. `orch_eth_address` is the orchestrator identity the broker is
+configured with; `worker_url` is *not* in the body — the orch-coordinator
+fills it in from whichever broker it scraped. The coordinator merges N
+payloads into the final signed manifest's `capabilities[]`.
 
 ## What the worker omits
 
@@ -141,8 +171,11 @@ side.
 
 ## See also
 
-- [manifest-schema.md](manifest-schema.md) — what the body fragment slots
-  into (the manifest's `nodes[i].capabilities[j]` shape).
+- `livepeer-network-protocol/manifest/schema.json` — the authoritative
+  schema for the capability tuples in this body and in the signed manifest.
+- [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json) — this daemon's own v3
+  node-oriented manifest shape (a *different*, node-grouped projection;
+  do not conflate the two).
 - [adding-a-new-workload.md](adding-a-new-workload.md) — onramp recipe for
   new workload authors; implementing this endpoint is step 5 of the recipe.
 - `livepeer-orch-coordinator` plan 0002 §step 4c — coordinator-side scraper

@@ -5,19 +5,64 @@ on an orchestrator host. Pairs with `payment-daemon/docs/operator-runbook.md`
 (payment-side concerns) and the spec subfolder
 (`livepeer-network-protocol/`) for wire-shape questions.
 
-## 1. Listener topology
+Rewritten 2026-08-19 for the v1 protocols (`paid-job/v1`,
+`paid-session/v1`). The mode-era RTMP/HLS pipeline sections are gone with
+the modes.
 
-The broker exposes three listeners; default ports + roles:
+## 1. Listener topology
 
 | Flag | Default | Purpose | Reachability |
 |---|---|---|---|
-| `--listen` | `:8080` | Paid `/v1/cap` dispatch + `/registry/*` + `/_hls/...` LL-HLS playback. | Gateway-reachable (LAN or public, operator's call). |
+| `--listen` | `:8080` | Paid surface: `POST /v1/job`, `/v1/session/*` (incl. the runner events endpoint), plus `/registry/*` and ticket-params. | Gateway- and runner-reachable (LAN or public, operator's call). |
 | `--metrics` | `:9090` | Prometheus scrape endpoint. | Operator's metrics network only. |
-| `--rtmp-listen-addr` | empty (disabled) | RTMP ingest for `rtmp-ingress-hls-egress@v0`. Set to e.g. `:1935`. | Gateway-reachable; **never** directly to the public internet. |
 
-Configure each listener separately at the network layer. The RTMP listener
-in particular is plaintext (no TLS); the gateway terminates customer TLS
-upstream per the locked plan-0011-followup §13 Q1 decision.
+The admin surface (`/admin/v1/*`) rides the paid listener but must be
+protected by `admin_auth` and network policy — see §1.1.
+
+`external_base_url` in host-config is the gateway-reachable route identity of
+the paid listener and remains the origin bound into spend authorizations and
+session control URLs. `runner_callback_base_url` may name a distinct trusted
+origin for runner events and certification callbacks (for example, a private
+service name); it defaults to `external_base_url`. Neither value is derived
+from inbound request headers. If the callback origin is wrong, runners post
+events into the void and sessions die by heartbeat loss.
+
+## 1.0 Settlement signing key
+
+`identity.settlement_key_file` names the hot secp256k1 key this broker
+signs settlement records with. Without it every record goes out unsigned
+and a clearinghouse refuses it for anything financially material.
+
+```sh
+# mint (0600, refuses to overwrite) — prints the public key
+livepeer-capability-broker settlement-key generate --out /etc/livepeer/broker-settlement.key
+# read the public half back later
+livepeer-capability-broker settlement-key pubkey --file /etc/livepeer/broker-settlement.key
+```
+
+The broker announces the key at `GET /registry/settlement-keys`
+(broker-admin §7.1): a statement naming the orch, the key, this broker's
+`external_base_url` and its configured window, signed by the key itself.
+The orch-coordinator reads it on scrape, verifies the proof, and carries
+the key into the manifest candidate; the cold key delegates it when the
+operator signs. Nothing is copied by hand.
+
+**The one trap:** `external_base_url` is inside the signed statement, and
+the coordinator compares it (scheme and host) against the `base_url` it
+scraped this broker at. If the broker says its public hostname while
+`coordinator-config.brokers[].base_url` points at a LAN address, the
+coordinator's roster shows the key as `unproven: statement names a
+different broker URL` and does not delegate it. Make the two agree, or
+leave `external_base_url` unset on a broker with no paid-session offers.
+
+`settlement_key_not_before` / `settlement_key_expires_at` are optional.
+Leave them unset: the coordinator assigns a window from first sight
+(`publish.settlement_key_validity`, default one year), remembers it, and
+renews it by a sign cycle. Set them only to make the broker refuse to sign
+outside a window you chose, and then mirror the published one.
+
+Rotate by generating a new file, pointing `settlement_key_file` at it and
+restarting. The old key stays delegated until its window closes.
 
 ## 1.1 Runtime reload in production
 
@@ -37,201 +82,184 @@ The normal production sequence is:
    - broker `last_reload_attempt_id` matches the triggered attempt
    - broker `loaded_revision` matches the controller desired revision
 
-Do not treat file placement alone as convergence.
+Do not treat file placement alone as convergence. Note that removing a
+paid-session capability while sessions for it are active leaves those
+sessions unroutable: they wind down via heartbeat enforcement rather than
+crashing, but prefer draining first.
 
-## 2. RTMP pipeline (mode `rtmp-ingress-hls-egress@v0`)
+## 1.9 Credential store
 
-Live RTMP → FFmpeg → LL-HLS pipeline lit up by plan 0011-followup.
+`credential_store.path` is a second bbolt file with the same persistence
+and backup rules as the session store; `sealing_key_file` may be the same
+key. Losing the file orphans every runner enrollment (hosts re-enroll);
+losing the key makes it unreadable. Enrollment, rotation, and revocation
+are admin-API gestures — see
+[`design-docs/credential-store.md`](./design-docs/credential-store.md).
 
-### 2.1. Port exposure
+## 2. Durable state store
 
-Default port `:1935` (IANA-reserved). Reachable from the gateway only.
-Cloud security-group rules:
+`session_store` in host-config is the broker's persistence layer:
+paid-session authority (identifiers, payment counters, usage watermarks,
+sealed descriptor private parts) and paid-job idempotency records share
+one bbolt file.
 
-- **Allow:** ingress on `1935/tcp` from the gateway's source CIDR.
-- **Deny:** ingress on `1935/tcp` from `0.0.0.0/0`.
-
-The gateway adapter (plan 0008-followup) is the customer-facing TLS +
-auth wrapper. v0.1 deployments without the gateway adapter expose `:1935`
-directly to customers (smoke-grade); production deployments add the
-gateway in front.
-
-The URL the broker returns at session-open is path-shaped:
-`rtmp://<broker>:1935/<session_id>/<stream_key>`. The `stream_key`
-field on the session-open response is a 32-byte URL-safe random bearer
-the listener constant-time-compares against the open-session record.
-Mismatched stream keys get an RTMP `_error` immediately.
-
-### 2.2. GPU encoder hardware
-
-Per the locked plan-0011-followup §13 Q3 decision, the production
-default is a 5-rung H.264 ABR ladder with NVIDIA NVENC primary. NVIDIA
-Pascal+ (GTX 1060 / 1070 / 1080 minimum; Turing / Ampere / Ada
-recommended) is the Livepeer transcoder fleet norm.
-
-Operators select the encoder via `--encoder=auto|nvenc|qsv|vaapi|libx264`:
-
-- **`auto` (default)** — runtime probes for available encoders and
-  prefers in order: NVENC → QSV → VAAPI → libx264. Probe walks
-  `ffmpeg -hide_banner -encoders` plus `-init_hw_device` for each
-  vendor; first available wins.
-- **`nvenc`** — NVIDIA NVENC. Requires NVIDIA driver + cuda-toolkit
-  installed on the host. Validate with `ffmpeg -hide_banner -encoders
-  | grep h264_nvenc`.
-- **`qsv`** — Intel QuickSync. Requires `intel-media-driver` (or
-  `intel-media-va-driver-non-free` on older releases) + Skylake+
-  iGPU or discrete Arc GPU.
-- **`vaapi`** — generic VAAPI. Covers AMD VCN-capable GPUs (RX 5700+)
-  + Intel iGPU via the mesa VAAPI driver (`mesa-va-drivers`).
-- **`libx264`** — software CPU x264. **Not the default for production
-  deployments.** Available as an explicit operator opt-in for
-  hardware-less environments.
-
-If `--encoder=auto` finds no GPU encoder AND `--encoder-allow-cpu=false`
-(default), the broker refuses to start with a clear error:
-
-```
-error: no GPU encoder detected; install NVIDIA driver + cuda-toolkit,
-OR set --encoder-allow-cpu=true to use libx264 (production deployments
-should use a GPU)
+```yaml
+session_store:
+  path: /var/lib/livepeer/broker-state.db
+  sealing_key_file: /etc/livepeer/broker-seal.key   # 32 raw bytes or 64 hex chars
 ```
 
-Production deployments should keep `--encoder-allow-cpu=false`. CI /
-dev environments flip the flag.
+Operational rules:
 
-### 2.3. Profile selection
+- **The path must be a persistent volume.** Losing the file orphans every
+  active session: runners keep serving and posting events that 401, and
+  wholesale-account reservations remain unresolved. Broker restart recovery
+  only works when both this file and the payment daemon's authorization state
+  survive.
+- **The sealing key is not rotatable in place** (v1): records sealed under
+  the old key fail closed on read. Treat key loss as state loss — sessions
+  become unreadable and wind down terminally. Back the key up with the same
+  care as the payment daemon's keystore.
+- **Authorization watermarks in this file are money.** The payment daemon
+  durably remembers authorization and advance sequence results. Restoring the
+  broker and daemon from inconsistent points can leave work conservatively
+  unresolved. Snapshot their stores at one coordinated point and reconcile
+  every active authorization after restore.
+- Wrong-size key files fail startup loudly; a missing `session_store` with
+  paid-job capabilities runs with **in-process** idempotency and logs a
+  warning — acceptable for dev, non-conformant for production.
+- Housekeeping is automatic: terminal session records evict after the
+  retention window, job records after the 24h idempotency window.
 
-`backend.profile` per capability in `host-config.yaml`:
+## 3. paid-session operations
 
-| Profile | Use | GPU required? |
+Per-offering knobs (host-config `session:` block):
+
+| Knob | Default | Meaning |
 |---|---|---|
-| `passthrough` | `-c:v copy -c:a copy`. CI smoke / dev / no-transcode pass-through. | No |
-| `h264-live-1080p-nvenc` | 5-rung H.264 ABR ladder (240p / 360p / 480p / 720p / 1080p) + AAC, NVENC. **Production default.** | NVIDIA Pascal+ |
-| `h264-live-1080p-qsv` | Same ladder, Intel QuickSync. | Intel Skylake+ |
-| `h264-live-1080p-vaapi` | Same ladder, VAAPI (AMD / Intel iGPU). | AMD RX 5700+ or Intel iGPU |
-| `h264-live-1080p-libx264` | Same ladder, software x264. Operator opt-in only. | No |
+| `heartbeat.interval_seconds` / `missed_threshold` | 10 / 3 | A runner silent past `interval × threshold` is torn down (`heartbeat_lost`): runner terminated, payment closed, capacity released. |
+| `lease_max_seconds` | 3600 | Operator cap on the funding-tracking lease. |
+| `burn_rate_per_second` | 1 | Units/second estimate used to convert runway into lease time. |
+| `min_runway_units` | 0 (policy-derived) | Minimum authorization reservation requested at open and after usage advances; the signed cap still bounds it. |
+| `runner.create_path` / `status_path` / `terminate_path` | — | The runner's session API paths (`{id}` substituted). No default URL space exists. |
 
-Bitrate ladder mirrors Apple's HLS Authoring Spec + Mux's published
-encoder recommendations: 240p baseline 400 kbps, 360p baseline 800 kbps,
-480p main 1400 kbps, 720p main 2800 kbps, 1080p high 5000 kbps. AAC
-stereo audio shared across rungs. 4s GOP.
+Terminal `close_reason` values you will see in status responses and logs:
+`gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
+`heartbeat_lost`, `insufficient_balance`, `recovery_failed`,
+`open_failed`, `output_failed`. Every winddown is the same idempotent path
+(terminate runner → settle authorization → release capacity → record reason); a repeated
+trigger is a no-op.
 
-### 2.4. FFmpeg licensing
+Restart behavior: before serving, the broker verifies that every nonterminal
+record names a durable account authorization. It then queries the payment
+daemon and runner. Both still hold it → resume with the same authorization,
+credentials, grants, and usage watermark. Missing authorization state or a
+lost runner → terminate fail closed as `recovery_failed`. An undrained legacy
+record without authorization state refuses broker startup.
 
-Broker ships LGPL FFmpeg by default (no `--enable-gpl`). Operators
-who want GPL libs (x264 / x265 default encoders) supply their own via
-`--ffmpeg-binary=/usr/local/bin/my-ffmpeg`. The relicensing
-implication is the operator's responsibility.
+Output-producing runners may additionally report `output_state` as `waiting`,
+`producing`, or `stalled`, plus a sanitized `last_failure_code`. These are
+independent from heartbeat liveness: a stalled callback proves the runner is
+responsive, not that customer output is healthy. Status reports `unknown` for
+older runners. A continuously stalled session is wound down after 60 seconds
+as `output_failed`; the runner may enforce a tighter workload-owned deadline.
+Watch `livepeer_protocol_session_output_health_total{state="stalled"}` together
+with `livepeer_protocol_session_winddowns_total{reason="output_failed"}`.
 
-LGPL is sufficient for: NVENC, QSV, VAAPI, AAC, fmp4 muxing, LL-HLS.
-GPL is required for: software libx264 / libx265 (when using GPL
-builds). The default `libx264` profile we ship uses the LGPL build of
-libx264; operators bringing GPL builds must `--ffmpeg-binary` swap.
+### 3.1 Runner self-description
 
-### 2.5. LL-HLS playback
+Several fields above are facts only the runner knows: `descriptor_schema`,
+`work_unit.name`, the runner's own paths, `metering`. Declaring them here
+as well creates two sources of truth, and the broker's runtime checks
+exist only because they can disagree — a `work_unit` mismatch rejects
+**every** usage event for a session's lifetime, which is an expensive way
+to learn about a typo.
 
-LL-HLS is the v0.1 default per plan-0011-followup §13 Q5 lock.
-Glass-to-glass latency ~1-3 seconds with 2s segment duration + 333ms
-parts + 4-segment rolling window.
+Runner facts are no longer configured here at all: a runner attaches and
+declares them, and the broker freezes them into the offer
+(`runner-attach.md`). A capability the broker rejects at attach is
+visible on the coordinator's Runners page with the disagreeing field
+named — see plan 0043 item 11 for what replaced the describe path and
+its quarantine behaviour.
 
-Player compatibility:
+## 4. paid-job operations
 
-- **Compatible** — hls.js 1.0+, native Safari (macOS / iOS).
-- **Compatible with caveats** — Android browsers' built-in players
-  may need fallback to legacy HLS v3 for older Android versions.
-- **Incompatible** — niche players that only speak HLS v1-v3.
+- Idempotency: gateways retry with the same `Livepeer-Request-Id` and
+  converge on the recorded outcome. An exchange interrupted mid-flight
+  blocks its request id for 10 minutes, then retries converge on a failed
+  terminal record.
+- The usage claim (`Livepeer-Work-Units`) is on every terminal response —
+  header for `unary`/`multipart`, HTTP trailer for `stream`. A gateway
+  complaining about missing stream claims is usually an intermediary
+  buffering proxy stripping trailers: the paid listener must be reachable
+  without a trailer-stripping hop.
+- Buffered bodies are capped at 64 MiB per exchange.
 
-For player compatibility issues, flip `--hls-legacy=true` to fall
-back to mpegts segments + standard HLS v3 (4-6s segments, ~12-24s
-glass-to-glass). The flag is operator-side, not per-capability.
+### Wholesale accounts
 
-### 2.6. Resource sizing per concurrent stream
+Configure `external_base_url` exactly as payer services use it; authorization
+admission rejects a different `broker_uri`. Wholesale accounts are mandatory
+for every paid offer and require no `extra.features.wholesale_accounts` flag.
+Every job, session open, and session refill requires
+`Livepeer-Authorization`; `Livepeer-Payment` alone never admits work.
 
-Approximate per-stream load (pinned 1080p source @ 30fps):
+`POST /v1/payment/account` returns the receiver's read-only account or
+authorization observation. Serve it only over the configured HTTPS origin. It
+does not grant spend authority, but it reveals wholesale balance and should be
+rate-limited at the edge.
 
-| Profile | CPU | RAM | tmpfs scratch |
-|---|---|---|---|
-| `passthrough` | ~0.1-0.3 cores | ~50 MB | ~25 MB |
-| `h264-live-1080p-nvenc` | ~1.0 cores (host) + GPU NVENC slot | ~200 MB | ~80 MB (1080p rung dominates) |
-| `h264-live-1080p-libx264` | ~3-4 cores (5 rungs encoded in software) | ~500 MB | ~80 MB |
+`POST /v1/payment/account/fund` accepts a payer-signed `Livepeer-Payment` with
+the matching `Livepeer-Capability` and `Livepeer-Offering` headers. It adds
+ticket EV to the stable account but cannot reserve or invoke work. This is the
+aggregate replenishment path for out-of-path payers; it does not require a
+customer session credential or SDK callback. Rate-limit it for resource
+protection, but retries are economically idempotent by ticket nonce.
 
-For 100 concurrent passthrough streams: ~10-30 cores, ~5 GB RAM,
-~2.5 GB tmpfs. For 10 concurrent NVENC ABR ladders: ~10 cores,
-~2 GB RAM, ~800 MB tmpfs, plus GPU NVENC sessions (Pascal allows
-3-5 concurrent, Turing+ allows ~8-15).
+An out-of-path funding intermediary calls this endpoint itself before handing
+the workload-bound authorization and broker URL to the end caller; the caller
+does not relay the funding ticket.
 
-Operators cap at the listener level via `--rtmp-max-concurrent-streams`
-(default 100). Above the cap, the listener accepts the TCP connection
-then rejects in `OnPublish`.
+This release is a hard cut. Before deployment, stop new admissions and drain
+all payment-only jobs, sessions, and debit retries. Migrate verified residual
+generation balances exactly once, then upgrade broker, receiver, and payer
+clients together. Do not synthesize authorization state for an existing
+session; mixed versions fail closed.
 
-### 2.7. Common failure modes
+For sessions, the broker reserves a heartbeat-sized runway rather than the
+full cumulative cap. Runner usage advances the cumulative debit and replaces
+runway atomically. Session refills carry a successor authorization naming the
+predecessor and may also carry only the ticket shortfall needed by the
+aggregate account.
+A settlement RPC left uncertain remains `accounting_pending` and retries
+idempotently rather than releasing value after delivered work.
 
-| Symptom | Likely cause | What to check |
+## 5. Metrics
+
+Registry surface metrics (`livepeer_broker_registry_*`) are unchanged.
+Protocol-engine metrics (all on the `--metrics` listener):
+
+| Metric | Labels | Meaning |
 |---|---|---|
-| Customer encoder gets RTMP `_error` immediately | Stream-key auth failed (constant-time mismatch) or session has expired. Broker logs `rtmp.publish_rejected` with redacted key prefix. | Confirm the gateway minted the right URL and the customer pushed within the session's `expires_at`. |
-| `Livepeer-Error: ffmpeg_subprocess_failed` on a control-WS or in broker logs | FFmpeg subprocess exited non-zero before the RTMP push completed. 128KB stderr ring buffer captured. | Inspect `livepeer_ffmpeg_subprocess_failures_total{capability,reason}` for the failure class. Common: codec not found, unsupported source format, GPU unavailable. |
-| `Livepeer-Error: rtmp_ingest_idle_timeout` | RTMP push was idle for `--rtmp-idle-timeout` (default 10s). Customer encoder may have stalled or the network is dropping packets. | Check the gateway's logs for the per-customer connection state; raise `--rtmp-idle-timeout` if the operator's customers run very low-bitrate / sparse-packet streams. |
-| `Livepeer-Error: insufficient_balance` (trailer or in logs) | Payment-daemon's `SufficientBalance` returned false on a tick. Plan 0015. | Have the gateway raise the initial `face_value`. See `payment-daemon/docs/operator-runbook.md` §6.5.3 for the termination flow. |
-| Disk-full on segment write | tmpfs scratch sized too small for concurrent-stream count. | Resize the `--hls-scratch-dir` mount; see §2.6 for sizing guidance. |
-| `lt; 1s` interim-debit tick warning | Operator set `--interim-debit-interval` below 1s. The warning is intentional. | Raise the value to `1s` minimum for production. |
+| `livepeer_protocol_session_opens_total` | `outcome` (opened\|replayed\|failed) | Session opens. A rising `failed` usually means runner create or descriptor validation failures. |
+| `livepeer_protocol_session_winddowns_total` | `reason` (the stable close reasons in §3) | Terminal winddowns. Alerting rules for `heartbeat_lost` and `recovery_failed` ship in `docs/operations/prometheus/alerts.yaml`. |
+| `livepeer_protocol_session_events_total` | `outcome` (accepted\|duplicate\|rejected\|retryable\|unauthorized) | Runner event intake. `unauthorized` spikes suggest a stale runner or probing; sustained `retryable` means payment-daemon trouble. |
+| `livepeer_protocol_session_debited_units_total` | — | Units debited from usage claims (the seller's meter, aggregated). |
+| `livepeer_protocol_job_exchanges_total` | `transport`, `outcome` (ok\|client_error\|backend_error\|replayed\|refused) | paid-job exchanges. `replayed` is gateways exercising idempotency; `refused` is transport negotiation misses. |
 
-### 2.8. Observability metrics
+Per-capability request rate, error ratio, and latency come from the paid
+middleware as `livepeer_paid_requests_total{capability,offering,outcome}`,
+`livepeer_paid_request_duration_seconds`, and
+`livepeer_paid_work_units_total` — these carry the capability/offering
+labels the `livepeer_protocol_*` counters deliberately do not.
 
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `livepeer_rtmp_active_sessions` | gauge | (none) | In-flight publish-state RTMP connections. |
-| `livepeer_rtmp_bytes_in_total` | counter | `capability,offering` | RTMP bytes received from customer encoders, per-capability. |
-| `livepeer_hls_segments_written_total` | counter | `capability,offering` | LL-HLS / HLS segments flushed to scratch. |
-| `livepeer_ffmpeg_subprocess_failures_total` | counter | `capability,reason` | Non-zero FFmpeg exits classified by stderr-pattern (`codec_not_found`, `gpu_unavailable`, `network_drop`, `unknown`). |
-| `livepeer_rtmp_idle_timeouts_total` | counter | (none) | Sessions reaped by the watchdog idle-timeout trigger (plan 0011-followup §7.2). |
-| `livepeer_mode_hls_cleanup_failed_total` | counter | (none) | scratch-dir `RemoveAll` failures (soft fail; logged). |
+The `paid request` structured log lines (request id, capability,
+protocol, status, work units, duration) remain the per-exchange trace.
 
-Plus the cross-cutting metrics from the payment middleware
-(`livepeer_payment_*`); see `payment-daemon/docs/operator-runbook.md` §8.
-
-When `pool_snapshot.url` is configured, `/metrics` also exports Pool snapshot
-control-plane gauges:
-
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `livepeer_pool_snapshot_cache_status` | gauge | `status` | One-hot broker view of the current snapshot cache state (`fresh`, `stale`, `expired`, `bootstrap_pending`, `fetch_error`). |
-| `livepeer_pool_snapshot_generated_timestamp_seconds` | gauge | (none) | Unix timestamp from the latest Pool snapshot document. |
-| `livepeer_pool_snapshot_fetched_timestamp_seconds` | gauge | (none) | Unix timestamp when the broker last fetched a snapshot successfully. |
-| `livepeer_pool_snapshot_setting_seconds` | gauge | `setting` | Broker-local snapshot timing settings (`timeout`, `poll_interval`, `stale_after`, `expire_after`). |
-| `livepeer_pool_snapshot_entry_state_total` | gauge | `capability,offering,state` | Current count of snapshot entries by Pool entry state. |
-| `livepeer_pool_snapshot_routing_reason_total` | gauge | `capability,offering,routing_reason` | Current count of snapshot entries by routing reason. |
-| `livepeer_pool_snapshot_automatic_warmup_total` | gauge | `capability,offering` | Current count of snapshot entries in automatic warm-up. |
-| `livepeer_pool_snapshot_cooldown_total` | gauge | `capability,offering` | Current count of snapshot entries still cooling down. |
-| `livepeer_pool_snapshot_average_recent_window_age_seconds` | gauge | `capability,offering` | Average recent-window age across snapshot entries for an offering. |
-| `livepeer_backend_outcome_emit_total` | counter | `outcome,result` | Best-effort backend outcome report attempts toward `pool-controller`, labeled by emitted outcome class and transport result. |
-| `livepeer_work_receipt_emit_total` | counter | `status,result` | Best-effort work receipt emit attempts toward `pool-controller`, labeled by receipt status (`stub` or `final`) and transport result. |
-| `livepeer_backend_selection_final_total` | counter | `capability,offering,backend_id,reason` | Final selected backend winners after broker-local health and Pool state are combined, labeled by the surviving selection reason. |
-| `livepeer_backend_selection_denied_total` | counter | `capability,offering,backend_id,reason` | Per-candidate request-time denials after broker-local health and Pool state are combined. |
-| `livepeer_backend_selection_exhausted_total` | counter | `capability,offering,reason` | Request-time failures where no backend remained eligible after final selection filtering. |
-
-The broker also instruments its two external dependency surfaces. Payment-daemon
-client RPCs (every call the broker makes over the unix socket):
-
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `livepeer_payment_client_requests_total` | counter | `method,result` | Payment-daemon RPCs issued by the broker. `method` is the RPC (`open_session`, `process_payment`, `debit_balance`, `sufficient_balance`, `get_balance`, `close_session`, `get_ticket_params`); `result` is `ok` or the gRPC status code (e.g. `Unavailable`). |
-| `livepeer_payment_client_request_duration_seconds` | histogram | `method` | Wall-clock duration of payment-daemon client RPCs. |
-| `livepeer_payment_client_in_flight` | gauge | `method` | Currently in-flight payment-daemon client RPCs. |
-
-Unpaid registry endpoint serving (these sit outside the paid middleware chain, so
-they are not covered by `livepeer_mode_*`):
-
-| Metric | Type | Labels | Meaning |
-|---|---|---|---|
-| `livepeer_broker_registry_scrape_total` | counter | `endpoint,code` | Scrapes of `/registry/offerings` and `/registry/health`. `endpoint` is `offerings` or `health`; `code` is the terminal HTTP status. |
-| `livepeer_broker_registry_scrape_duration_seconds` | histogram | `endpoint` | Wall-clock duration of registry endpoint scrapes. |
-| `livepeer_broker_registry_payload_bytes` | histogram | `endpoint` | Response payload size in bytes. |
-| `livepeer_broker_registry_published_offerings` | gauge | (none) | Distinct `(capability, offering)` pairs currently published at `/registry/offerings`. |
-
-## 3. Other modes
-
-This runbook will grow per-mode sections as `0012-followup`
-(`session-control-plus-media`) and `0008-followup` (gateway-side
-adapters) land. v0.1 ships only the RTMP-pipeline section above; the
-HTTP-family modes (`http-reqresp`, `http-stream`, `http-multipart`)
-need no operator-side guidance beyond the listener topology in §1.
+**Alerting.** `docs/operations/prometheus/alerts.yaml` ships rules for
+both protocol surfaces. The one to understand before it pages you is
+`BrokerSessionsDyingByHeartbeat`: it fires when `heartbeat_lost`
+*dominates* winddowns rather than merely occurring, because that pattern
+is the signature of a wrong `external_base_url` — runners cannot reach
+the callback URL, so every session opens, reports nothing, and dies on
+schedule. Thresholds in that file are starting points sized for a busy
+orchestrator; tune them to your own session volume.

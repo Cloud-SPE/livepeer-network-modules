@@ -6,7 +6,7 @@ IMAGE   ?= tztcloud/livepeer-pool-payout-executor
 TAG     ?= dev
 VERSION := $(shell cat ../livepeer-network-protocol/VERSION 2>/dev/null || echo dev)
 
-.PHONY: build test run dev publish clean help
+.PHONY: build test run dev publish clean help coverage coverage-check
 
 build: ## Build dev image locally
 	docker build \
@@ -47,6 +47,17 @@ publish: ## Build + push multi-arch image (requires TAG set to a real version)
 		-t $(IMAGE):$(TAG) \
 		-f Dockerfile \
 		..
+
+coverage: ## Write coverage.out for every package that has tests (host Go toolchain; CI runs the same)
+	@# Skip the coverage-exempt CLI packages and limit the package list to
+	@# packages that actually have tests. No-test packages add no signal to
+	@# the gate and can trip missing `covdata` lookups in the selected Go
+	@# toolchain. Same convention as protocol-daemon and the registry daemon.
+	go test -coverprofile=coverage.out -covermode=atomic \
+		$$(go list -f '{{if or (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... | sed '/^$$/d' | grep -vE '/cmd/livepeer-pool-payout-executor$$')
+
+coverage-check: coverage ## Fail if any non-exempt package is under the 75% per-package floor (plan 0048 §2.6)
+	go run ./lint/coverage-gate --root .
 
 clean: ## Remove dev images
 	docker rmi $(IMAGE):$(TAG) 2>/dev/null || true

@@ -40,7 +40,7 @@ services:
       - --last-signed=/var/lib/secure-orch/last-signed.json
       - --audit-log=/var/log/secure-orch/audit.log.jsonl
       - --audit-rotate-size=104857600
-      - --listen=${SECURE_ORCH_LISTEN}
+      - --listen=${SECURE_ORCH_LISTEN:-0.0.0.0:8081}
       # --- agent mode (plan 0042) ---
       - --agent
       - --coordinator-url=${COORDINATOR_URL:?set COORDINATOR_URL to the coordinator admin base URL}
@@ -50,5 +50,5 @@ services:
       - --agent-poll-interval=${AGENT_POLL_INTERVAL:-60s}
       - --alert-webhook-url=${ALERT_WEBHOOK_URL:-}
     volumes:
-      - ${AGENT_TOKEN_FILE}:/etc/secure-orch/agent-token:ro
-      - ${SIGN_POLICY_FILE}:/etc/secure-orch/sign-policy.json:ro
+      - ${AGENT_TOKEN_FILE:-/opt/livepeer/agent-token}:/etc/secure-orch/agent-token:ro
+      - ${SIGN_POLICY_FILE:-/opt/livepeer/sign-policy.json}:/etc/secure-orch/sign-policy.json:ro

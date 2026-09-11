@@ -1,0 +1,13 @@
+[
+  { "name": "ready", "type": "readiness" },
+  { "name": "smoke", "type": "request",
+    "config": { "transport": "unary",
+                "body": { "model": "{{identity.openai.model}}", "messages": [ { "role": "user", "content": "ping" } ], "max_tokens": 8 },
+                "assert": [ "$.choices[0].message.content", { "path": "$.usage.total_tokens", "min": 1 } ] } },
+  { "name": "usage", "type": "usage", "config": { "min_units": 1 } },
+  { "name": "stream", "type": "request", "required": false,
+    "config": { "transport": "stream",
+                "body": { "model": "{{identity.openai.model}}", "messages": [ { "role": "user", "content": "ping" } ], "stream": true, "max_tokens": 8 },
+                "assert": [ "$[0].choices[0].delta" ] } },
+  { "name": "latency", "type": "latency", "required": false, "config": { "samples": 3, "p50_max_ms": 4000, "measure": "first_byte" } }
+]

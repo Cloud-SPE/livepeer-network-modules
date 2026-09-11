@@ -2,6 +2,42 @@ identity:
   orch_eth_address: 0x1234567890abcdef1234567890abcdef12345678
   label: pool-a
 
+# The curated workload catalog (plan 0044 §3.2). Templates are files,
+# reviewed in version control; this pool decides which of them it
+# enables and what it charges, through PUT /admin/v1/template-overrides/{id}.
+template_catalog_dir: ../templates
+
+# A GPU's identity is self-asserted: the member's agent reports a uuid
+# and the pool has only their word for it. Uniqueness of that uuid is
+# what stops one card earning twice under two wallets — but it also
+# means the first claim wins, so a uuid learned from a log or a previous
+# owner could block the real owner indefinitely.
+#
+# It cannot EARN, though: a runner is pinned to its device and will not
+# start without it, so an unproven claim never certifies. Releasing such
+# a claim after a grace period turns a standing block into a temporary
+# one, and leaves only genuine disputes — two members both running the
+# card — for an operator.
+#
+# claims:
+#   grace_hours: 168            # seven days
+#   sweep_interval_minutes: 60
+
+# How many templates a GPU class runs at once (plan 0040 §4.4). Omit to
+# take the built-in stances: the older consumer cards run one workload
+# and nothing else, because they have neither the memory headroom nor
+# the scheduler to share without both tenants suffering; a 4090 or 5090
+# takes a primary plus one low-footprint secondary, which is what
+# stacking exists for. A class named nowhere runs one template.
+#
+# Raising a stance does not by itself stack anything: a template also
+# has to declare that class in its own stacking.secondary_on.
+#
+# placement:
+#   max_templates_per_class:
+#     rtx-4090: 2
+#     h100: 4
+
 admin_auth:
   bearer_token_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
 
@@ -9,10 +45,6 @@ listen:
   paid: ":8080"
   metrics: ":9090"
 
-synthetic_probes:
-  enabled: false
-  interval_ms: 30000
-  timeout_ms: 3000
 
 scoring:
   cooldown_duration_ms: 300000
@@ -30,11 +62,24 @@ scoring:
   public_worst_offerings_limit: 5
 
 bootstrap:
-  broker_apply_timeout_ms: 30000
-  broker_apply_command:
-    - /usr/local/bin/livepeer-broker-apply
+  # One broker: the short form. Every enabled template is pushed here.
   broker_admin_url: http://broker-admin.local
   broker_admin_timeout_ms: 5000
+
+  # A fleet: list them instead, and the short form above is ignored.
+  # Each broker is pushed independently and every one is attempted even
+  # when an earlier one fails, so an unreachable machine does not leave
+  # the rest of the pool serving a stale offer set. The push carries a
+  # revision, so retrying a broker that already has this content is free.
+  #
+  # brokers:
+  #   - name: broker-eu
+  #     admin_url: http://broker-eu.internal:8080
+  #     auth: { bearer_token_ref: env://BROKER_EU_ADMIN_TOKEN }
+  #     timeout_ms: 5000
+  #   - name: broker-us
+  #     admin_url: http://broker-us.internal:8080
+  #     auth: { bearer_token_ref: env://BROKER_US_ADMIN_TOKEN }
 
 payment_daemon:
   socket: /var/run/livepeer/payment-daemon.sock

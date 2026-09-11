@@ -1,0 +1,57 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 3,
+      "interval_ms": 2000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "timeout_ms": 120000,
+    "config": {
+      "body": {
+        "input": {
+          "download_url": "{{fixture_url.video/mp4-2s-720p}}"
+        },
+        "output": {
+          "stream": {
+            "artifact_uri": "cert://720p.mp4",
+            "upload_url": "{{sink_url}}/720p.mp4"
+          }
+        },
+        "rendition": {
+          "codec": "av1",
+          "fps": 30,
+          "height": 720,
+          "name": "720p",
+          "width": 1280
+        },
+        "schema": "video-transcode-vod/v2",
+        "workload_id": "cert-{{run.id}}"
+      },
+      "transport": "stream"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 40
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "p50_max_ms": 90000,
+      "samples": 2
+    }
+  }
+]

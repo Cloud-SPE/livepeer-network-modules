@@ -77,3 +77,9 @@ func (b *DevBroker) RedemptionsCount() int {
 	defer b.mu.Unlock()
 	return b.redemptionsCount
 }
+
+// TicketValidityPeriod returns the value the deployed contracts have
+// carried, so a dev run agrees with mainnet arithmetic.
+func (b *DevBroker) TicketValidityPeriod(_ context.Context) (int64, error) {
+	return 2, nil
+}

@@ -61,22 +61,6 @@ var (
 		Help: "Total backend outcome ingests by capability, offering, and outcome class.",
 	}, []string{"capability", "offering", "outcome"})
 
-	syntheticProbeRunsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "livepeer_pool_synthetic_probe_runs_total",
-		Help: "Total synthetic probe runs by overall result.",
-	}, []string{"result"})
-
-	syntheticProbeRunDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
-		Name:    "livepeer_pool_synthetic_probe_run_duration_seconds",
-		Help:    "Wall-clock duration of synthetic probe runs by overall result.",
-		Buckets: prometheus.DefBuckets,
-	}, []string{"result"})
-
-	syntheticProbeResultsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-		Name: "livepeer_pool_synthetic_probe_results_total",
-		Help: "Total synthetic probe results by capability, offering, status, and reason.",
-	}, []string{"capability", "offering", "status", "reason"})
-
 	workReceiptStatusTotal = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "livepeer_pool_work_receipt_status_total",
 		Help: "Current count of persisted work receipts by status.",
@@ -206,19 +190,6 @@ func RecordBackendOutcomeIngest(outcome types.BackendOutcome) {
 	).Inc()
 }
 
-func RecordSyntheticProbeRunSummary(summaryResults []ProbeResultMetric, duration time.Duration, result string) {
-	syntheticProbeRunsTotal.WithLabelValues(metricLabel(result)).Inc()
-	syntheticProbeRunDuration.WithLabelValues(metricLabel(result)).Observe(duration.Seconds())
-	for _, item := range summaryResults {
-		syntheticProbeResultsTotal.WithLabelValues(
-			item.CapabilityID,
-			item.OfferingID,
-			metricLabel(item.Status),
-			metricLabel(item.Reason),
-		).Inc()
-	}
-}
-
 func UpdateAccountingSnapshot(workReceipts []types.WorkReceipt, roundReceipts []types.RoundReceipt, payoutIntents []types.PayoutIntent) {
 	metricsMu.Lock()
 	defer metricsMu.Unlock()
@@ -293,22 +264,6 @@ func TestRoundReceiptGauge() prometheus.Gauge {
 
 func TestPayoutIntentStatusGauge(status string) prometheus.Gauge {
 	return payoutIntentStatusTotal.WithLabelValues(metricLabel(status))
-}
-
-type ProbeResultMetric struct {
-	CapabilityID string
-	OfferingID   string
-	Status       string
-	Reason       string
-}
-
-func NewProbeResultMetric(capabilityID, offeringID, status, reason string) ProbeResultMetric {
-	return ProbeResultMetric{
-		CapabilityID: capabilityID,
-		OfferingID:   offeringID,
-		Status:       status,
-		Reason:       reason,
-	}
 }
 
 func splitKey(value string) (string, string, bool) {

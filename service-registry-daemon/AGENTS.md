@@ -37,7 +37,7 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 ## Toolchain
 
 - Go 1.25+
-- `buf` + `protoc` for `proto/` generation
+- `buf` + `protoc` — only in the sibling `proto-contracts/` module, which owns the `.proto` sources and generated stubs this daemon imports
 - `golangci-lint` + custom lints in `lint/`
 
 ## Commands
@@ -45,7 +45,6 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 - `make build` — build the daemon binary
 - `make test` — run unit tests (race-enabled)
 - `make lint` — run all lints (golangci-lint + custom)
-- `make proto` — regenerate code from `.proto` files
 - `make doc-lint` — validate knowledge-base cross-links and freshness
 
 ## Invariants (do not break without a design-doc)
@@ -65,7 +64,7 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 | How does information flow end-to-end? | `docs/design-docs/architecture.md#information-flow` (Mermaid diagrams) |
 | Why is X done this way? | `docs/design-docs/` |
 | What's in flight? | `docs/exec-plans/active/` |
-| What's the manifest schema? | `docs/design-docs/manifest-schema.md` |
+| What's the manifest schema? | `../livepeer-network-protocol/manifest/schema.json` |
 | How does legacy fallback work? | `docs/design-docs/serviceuri-modes.md` |
 | What's the gRPC contract? | `docs/product-specs/grpc-surface.md` |
 | What metrics are emitted? | `docs/design-docs/observability.md` |

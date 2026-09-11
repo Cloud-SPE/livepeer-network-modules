@@ -10,7 +10,7 @@ One binary, two modes:
 
 | Mode | Role | Exposes | Uses |
 |---|---|---|---|
-| `--mode=publisher` | Orchestrator-side (operator that wants their capabilities discoverable) | `Publisher` gRPC — `BuildManifest`, `SignManifest`, reserved `ProbeWorker` stub | Local keystore |
+| `--mode=publisher` | Orchestrator-side identity endpoint | `Publisher` gRPC — `GetIdentity`, `Health` | Local keystore |
 | `--mode=resolver`  | Consumer-side (gateway / bridge / AI router that wants to find orchestrators) | `Resolver` gRPC — `ResolveByAddress`, `Select`, `ListKnown`, `Refresh`, `GetAuditLog` | Chain RPC (read-only), HTTP for manifest fetch, BoltDB cache, optional static `nodes.yaml` overlay |
 
 Under the hood the daemon implements a **signed-manifest discovery flow**:
@@ -54,7 +54,7 @@ Resolver deployments should pass the exact registry contract they intend to use 
   --mode=resolver \
   --socket=/var/run/livepeer-service-registry.sock \
   --store-path=/var/lib/livepeer/registry-cache.db \
-  --chain-rpc=https://arb1.arbitrum.io/rpc \
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
   --service-registry-address=0xC92d06C74A26B312bcDE600F0aA22EAC2efA0a90 \
   --static-overlay=/etc/livepeer/nodes.yaml
 ```
@@ -68,17 +68,23 @@ export LIVEPEER_KEYSTORE_PASSWORD="$(cat /etc/livepeer/ks-password)"
 ./bin/livepeer-service-registry-daemon \
   --mode=publisher \
   --socket=/var/run/livepeer-service-registry-publisher.sock \
-  --chain-rpc=https://arb1.arbitrum.io/rpc \
-  --keystore-path=/etc/livepeer/keystore.json \
-  --manifest-out=/var/www/livepeer/.well-known/livepeer-registry.json
-```
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
+  --keystore-path=/etc/livepeer/keystore.json
+  ```
 
-The publisher writes the signed manifest JSON to `--manifest-out` whenever `SignManifest` is invoked over gRPC; the operator's existing HTTP server (Caddy / nginx / etc.) serves it at the on-chain `serviceURI`. The publisher does NOT compete with the operator's TLS / port story.
+**This daemon no longer builds or signs manifests** (plan 0043 decision
+8). `orch-coordinator` builds the manifest candidate and the cold key on
+`secure-orch-console` signs it; the operator's existing HTTP server
+(Caddy / nginx / etc.) serves the result at the on-chain `serviceURI`.
+Building and signing here was a second path to a document that must have
+exactly one, and a second manifest shape beside the protocol module's
+envelope — so `BuildManifest`, `SignManifest`, `BuildAndSign`,
+`ProbeWorker` and the `livepeer-registry-refresh` CLI are gone. What
+publisher mode still answers is `GetIdentity` and `Health`: questions
+about this daemon, not about a manifest.
 
-The current v3.0.1 binary is signing-only in publisher mode. On-chain
-`ServiceRegistry.setServiceURI` submission now belongs to
-`protocol-daemon`; this daemon only builds and signs manifests.
-`ProbeWorker` remains reserved and returns failed-precondition today.
+On-chain `ServiceRegistry.setServiceURI` submission belongs to
+`protocol-daemon`.
 
 See [`docs/operations/running-the-daemon.md`](docs/operations/running-the-daemon.md) for the full flag reference.
 
@@ -93,7 +99,7 @@ docker pull tztcloud/livepeer-service-registry-daemon:v3.0.1
 For a turn-key resolver, copy the run-only example env and bring up the stack:
 
 ```sh
-cp compose/.env.example .env     # set CHAIN_RPC; pin TAG
+cp compose/.env.example .env     # set CHAIN_RPC_URLS; pin TAG if needed
 docker compose -f compose/docker-compose.yml up -d
 docker compose logs -f
 ```
@@ -152,9 +158,9 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 ## Highlights
 
 - **Explicit resolver registry order** — each resolver deployment reads a primary `--service-registry-address` and may optionally fall back to `--ai-service-registry-address` when the primary registry has no pointer. The returned on-chain `serviceURI` is treated as the manifest URL to fetch. See [`docs/design-docs/serviceuri-modes.md`](docs/design-docs/serviceuri-modes.md).
-- **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`docs/design-docs/signature-scheme.md`](docs/design-docs/signature-scheme.md).
+- **Signed claims, recovered against chain identity** — every manifest is signed `eth-personal-sign` over canonical bytes. The resolver recovers the signer and verifies it matches the eth address whose `serviceURI` pointed us there. Mismatch is rejected with `signature_mismatch` and never cached. See [`references/archived/references/archived/signature-scheme.md`](references/archived/references/archived/signature-scheme.md).
 - **Workload-agnostic capability namespace** — `openai:chat-completions`, `livepeer:transcoder/h264`, `myco:custom-pipeline-v3` are all opaque to the daemon. No code change needed to ship a new capability type. See [`docs/design-docs/workload-agnostic-strings.md`](docs/design-docs/workload-agnostic-strings.md).
-- **Static overlay as policy authority** — the on-chain manifest is canonical for what the operator advertises; operator-curated `nodes.yaml` is canonical for what the consumer accepts (`enabled`, `tier_allowed`, `weight`, `unsigned_allowed`). Augment, don't replace. SIGHUP / fsnotify hot-reload. See [`docs/design-docs/static-overlay.md`](docs/design-docs/static-overlay.md).
+- **Static overlay as policy authority** — the on-chain manifest is canonical for what the operator advertises; operator-curated `nodes.yaml` is canonical for what the consumer accepts (`enabled`, `tier_allowed`, `weight`, `unsigned_allowed`). Augment, don't replace. Loaded once at startup — edit the file and restart (no hot-reload). See [`docs/design-docs/static-overlay.md`](docs/design-docs/static-overlay.md).
 - **Last-good fallback with audit trail** — refresh failures don't evict the cache. Resolver returns the last-good entry with `freshness_status: stale_failing` so consumers can apply their own circuit-breaker policy. Every cache transition is logged to a queryable audit bucket. See [`docs/design-docs/resolver-cache.md`](docs/design-docs/resolver-cache.md).
 - **Boundary-validating decoder** — JSON enters the system through exactly one function (`types.DecodeManifest`), which enforces schema, eth-address case, URL scheme, signature shape, duplicate-id checks. A custom lint (`lint/no-unverified-manifest`) flags any other code that tries to `json.Unmarshal` into a `*types.Manifest`.
 - **Structured logging** via stdlib `log/slog` with `--log-level={debug,info,warn,error}` and `--log-format={text,json}`. Every chain read, manifest fetch, signature recovery, cache transition, and publisher-mode reserved-stub failure is a structured event with a stable error-code string.
@@ -167,7 +173,7 @@ For the full mental model — **component map, publish/resolve sequence diagrams
 
 The initial scaffold (exec-plan [`0001-repo-scaffold`](docs/exec-plans/completed/0001-repo-scaffold.md)) landed everything you see here: the layered Go code, the manifest pipeline, providers (chain/signer/verifier/fetcher/store/clock/logger), repo (cache + audit), services (resolver/publisher/selection/legacy), Go-native runtime, CLI, two examples, custom lints, CI workflows, Dockerfile, full docs.
 
-[`0002-grpc-wire-binding`](docs/exec-plans/completed/0002-grpc-wire-binding.md) followed: generated proto stubs under `proto/gen/` are bound to a real `*grpc.Server` listening on a unix socket via `internal/runtime/grpc/listener.go`, with panic-recovery + per-RPC-deadline + structured-logging interceptors, gRPC standard health, and reflection. The Go-native handler surface in `internal/runtime/grpc/server.go` remains as the in-process integration target the adapters delegate to.
+[`0002-grpc-wire-binding`](docs/exec-plans/completed/0002-grpc-wire-binding.md) followed: the generated proto stubs (now imported from the sibling `proto-contracts/` module) are bound to a real `*grpc.Server` listening on a unix socket via `internal/runtime/grpc/listener.go`, with panic-recovery + per-RPC-deadline + structured-logging interceptors, gRPC standard health, and reflection. The Go-native handler surface in `internal/runtime/grpc/server.go` remains as the in-process integration target the adapters delegate to.
 
 Tech debt is tracked in [`docs/exec-plans/tech-debt-tracker.md`](docs/exec-plans/tech-debt-tracker.md). Notable backlog items: HSM/KMS signer, hot/cold delegation, manifest-update streaming RPC, Controller-resolved contract addresses with periodic re-resolve, multi-arch Docker images.
 
@@ -181,18 +187,19 @@ Tech debt is tracked in [`docs/exec-plans/tech-debt-tracker.md`](docs/exec-plans
 ├── PRODUCT_SENSE.md                # who this is for / what "good" looks like
 ├── README.md                       # this file
 ├── LICENSE                         # MIT
-├── Makefile                        # build / test / lint / proto / docker
+├── Makefile                        # build / test / lint / docker
 ├── Dockerfile                      # distroless/static, ~13 MB
-├── compose.yaml                    # example resolver-mode deployment
+├── compose.yaml                    # example publisher-mode deployment
+├── compose/docker-compose.yml      # run-only resolver-mode deployment
 ├── registry.example.yaml           # example operator overlay
 │
 ├── cmd/
-│   └── livepeer-service-registry-daemon/  # main binary
+│   ├── livepeer-service-registry-daemon/  # main binary
 │
-├── proto/
-│   ├── buf.yaml / buf.gen.yaml     # buf v2 config
-│   ├── livepeer/registry/v1/       # proto source-of-truth (types, resolver, publisher)
-│   └── gen/go/livepeer/registry/v1/  # generated bindings (committed)
+│   # .proto sources + generated stubs are NOT in this repo — they live
+│   # in the sibling `proto-contracts/` module (livepeer/registry/v1),
+│   # imported via the go.mod replace. Regenerate with
+│   # `make proto` from proto-contracts/.
 │
 ├── internal/
 │   ├── types/                      # pure data: Manifest, Node, EthAddress, errors, canonical bytes
@@ -246,7 +253,6 @@ Tech debt is tracked in [`docs/exec-plans/tech-debt-tracker.md`](docs/exec-plans
 | `make build` | Build `bin/livepeer-service-registry-daemon` |
 | `make test` | `go test -race ./...` — full unit + table tests |
 | `make lint` | `golangci-lint run` + custom Go lints (`doc-gardener`, `no-unverified-manifest`) |
-| `make proto` | `buf lint && buf generate` — regenerate `proto/gen/go/...` |
 | `make doc-lint` | Just the doc-gardener (frontmatter + cross-link check) |
 | `make tidy` | `go mod tidy` |
 | `make docker-build` | Build a tagged image (`DOCKER_TAG=...`) |
@@ -274,7 +280,7 @@ See [`docs/product-specs/legacy-compat.md`](docs/product-specs/legacy-compat.md)
 - [PLANS.md](PLANS.md) — how work is planned
 - [PRODUCT_SENSE.md](PRODUCT_SENSE.md) — who this is for, what "good" looks like
 - [docs/design-docs/architecture.md#information-flow](docs/design-docs/architecture.md#information-flow) — Mermaid component map + publish / resolve / trust diagrams
-- [docs/design-docs/manifest-schema.md](docs/design-docs/manifest-schema.md) — manifest format
+- [../livepeer-network-protocol/manifest/schema.json](../livepeer-network-protocol/manifest/schema.json) — manifest format
 - [docs/design-docs/serviceuri-modes.md](docs/design-docs/serviceuri-modes.md) — four resolver modes (three legacy-compat + chainless static-overlay synth)
 - [docs/product-specs/grpc-surface.md](docs/product-specs/grpc-surface.md) — gRPC API
 - [docs/design-docs/observability.md](docs/design-docs/observability.md) — Prometheus metrics catalog + sample queries

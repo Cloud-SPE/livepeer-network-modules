@@ -1,0 +1,183 @@
+/* portal.css — member portal components layered on the shared operator design
+   system (style.css) and the pool component classes (pool.css).
+
+   The member portal is the same product as the operator console and uses the
+   same shell, tokens, cards and pills. What lives here is only what the member
+   surface has and the console does not: the once-shown credential panel, the
+   nested GPU/placement rows, and the inline confirmation blocks that stand in
+   front of rotate and retire. No new color values are introduced. */
+
+@layer components {
+  /* A wider auth card than the operator login: wallet sign-in carries a
+     manual-signing fallback with a full message to read. */
+  .auth-card-wide {
+    max-width: 44rem;
+  }
+
+  .manual-signin {
+    display: grid;
+    gap: 0.6rem;
+    margin-top: 1.1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+
+  .manual-signin h2 {
+    font-size: 0.95rem;
+    margin-bottom: 0;
+  }
+
+  /* The credential panel. A token is shown once and the pool cannot show it
+     again, so the panel is deliberately loud and does not collapse on its own. */
+  .secret-panel {
+    display: grid;
+    gap: 0.6rem;
+    padding: 1rem 1.1rem;
+    border: 1px solid var(--warn);
+    border-radius: var(--radius);
+    background: var(--warn-tint);
+  }
+
+  .secret-panel h3 {
+    margin-bottom: 0;
+    color: var(--warn);
+    font-size: 0.95rem;
+  }
+
+  .secret-panel pre {
+    border-color: var(--border-strong);
+    overflow-wrap: anywhere;
+    white-space: pre-wrap;
+  }
+
+  .secret-panel .small {
+    color: var(--fg);
+  }
+
+  /* Host card internals: a host holds GPUs, a GPU holds placements. Nesting is
+     expressed with an inset rule rather than another card border, so the depth
+     reads without three stacked boxes. */
+  .gpu-list,
+  .placement-list {
+    display: grid;
+    gap: 0.55rem;
+  }
+
+  .gpu-item {
+    display: grid;
+    gap: 0.45rem;
+    padding: 0.7rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--card-soft-bg);
+  }
+
+  .placement-item {
+    display: grid;
+    gap: 0.3rem;
+    padding: 0.55rem 0 0.55rem 0.8rem;
+    border-left: 2px solid var(--border-strong);
+  }
+
+  .placement-item.state-active {
+    border-left-color: var(--ok);
+  }
+
+  .placement-item.state-probationary,
+  .placement-item.state-testing,
+  .placement-item.state-pending,
+  .placement-item.state-draining {
+    border-left-color: var(--warn);
+  }
+
+  .placement-item.state-throttled,
+  .placement-item.state-suspended,
+  .placement-item.state-retired {
+    border-left-color: var(--danger);
+  }
+
+  /* The reason and its evidence sit beside the state, never behind a control:
+     a member reading "throttled" has to be able to read why in the same glance. */
+  .reason {
+    display: grid;
+    gap: 0.2rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: var(--radius-sm);
+    background: var(--surface-2);
+    font-size: 0.8rem;
+  }
+
+  .reason dt {
+    color: var(--muted);
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .reason dd {
+    margin: 0;
+    color: var(--fg);
+    overflow-wrap: anywhere;
+  }
+
+  .reason dd.mono {
+    color: var(--fg);
+  }
+
+  /* Inline confirmation. Destructive member actions open this in place rather
+     than a native dialog, so the consequence is on screen next to the button
+     that causes it. */
+  .confirm {
+    display: grid;
+    gap: 0.5rem;
+    margin-top: 0.6rem;
+    padding: 0.8rem 0.9rem;
+    border: 1px solid var(--danger);
+    border-radius: var(--radius-sm);
+    background: var(--danger-tint);
+  }
+
+  .confirm strong {
+    color: var(--danger);
+  }
+
+  .confirm p {
+    margin-bottom: 0;
+    color: var(--fg);
+    font-size: 0.82rem;
+  }
+
+  .confirm input {
+    max-width: 22rem;
+  }
+
+  .empty-state {
+    display: grid;
+    gap: 0.4rem;
+    padding: 1.1rem 1.2rem;
+    border: 1px dashed var(--border-strong);
+    border-radius: var(--radius);
+    background: var(--card-soft-bg);
+  }
+}
+
+@layer utilities {
+  .pill-ok {
+    border-color: transparent;
+    background: var(--ok-tint);
+    color: var(--ok);
+  }
+
+  .pill-warn {
+    border-color: transparent;
+    background: var(--warn-tint);
+    color: var(--warn);
+  }
+
+  .pill-bad {
+    border-color: transparent;
+    background: var(--danger-tint);
+    color: var(--danger);
+  }
+}

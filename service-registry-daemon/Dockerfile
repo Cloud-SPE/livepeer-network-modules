@@ -29,13 +29,6 @@ RUN CGO_ENABLED=0 GOOS=linux go build \
         -o /out/livepeer-service-registry-daemon \
         ./cmd/livepeer-service-registry-daemon
 
-RUN CGO_ENABLED=0 GOOS=linux go build \
-        -trimpath \
-        -tags 'netgo osusergo' \
-        -ldflags "-s -w" \
-        -o /out/livepeer-registry-refresh \
-        ./cmd/livepeer-registry-refresh
-
 RUN mkdir -p /runtime/var/run/livepeer /runtime/var/lib/livepeer && \
     chown -R 65532:65532 /runtime
 
@@ -43,7 +36,6 @@ RUN mkdir -p /runtime/var/run/livepeer /runtime/var/lib/livepeer && \
 FROM gcr.io/distroless/static:nonroot
 
 COPY --from=builder /out/livepeer-service-registry-daemon /usr/local/bin/livepeer-service-registry-daemon
-COPY --from=builder /out/livepeer-registry-refresh /usr/local/bin/livepeer-registry-refresh
 COPY --from=builder --chown=65532:65532 /runtime/ /
 
 USER nonroot:nonroot

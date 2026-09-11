@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/templates"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -64,7 +65,7 @@ type BundleInput struct {
 	Enrollment     types.HostEnrollment
 	Token          string
 	Assignments    []types.TemplateAssignment
-	Templates      []types.TemplateCatalogEntry
+	Templates      []templates.Template
 }
 
 func New(stateRepo *repo.StateRepo) *Service {
@@ -190,6 +191,44 @@ func (s *Service) CreateEnrollment(req CreateEnrollmentRequest) (CreateEnrollmen
 	return CreateEnrollmentResult{Enrollment: enrollment, Token: token}, nil
 }
 
+// Rotate issues a fresh enrollment token and broker session credential
+// for an existing host, invalidating the old pair.
+//
+// Both secrets rotate together on purpose. They are handed to the same
+// host at the same time and a member who rotates because one may have
+// leaked has no way to know it was only one — rotating half would leave
+// them believing they had recovered when they had not.
+//
+// The new token is returned once and stored only as a hash, so this is
+// the sole moment it exists anywhere the member can read it.
+func (s *Service) Rotate(enrollmentID string) (types.HostEnrollment, string, error) {
+	enrollment, err := s.repo.GetHostEnrollment(strings.TrimSpace(enrollmentID))
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	switch enrollment.Status {
+	case types.HostEnrollmentRevoked, types.HostEnrollmentRetired:
+		// Rotating a dead enrollment would quietly revive it.
+		return types.HostEnrollment{}, "", fmt.Errorf("enrollment %s is %s", enrollment.ID, enrollment.Status)
+	}
+	token, err := randomHex(32)
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	sessionCred, err := randomHex(32)
+	if err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	now := s.now()
+	enrollment.EnrollmentTokenHash = HashToken(token)
+	enrollment.BrokerSessionCredential = sessionCred
+	enrollment.UpdatedAt = now
+	if err := s.repo.PutHostEnrollment(enrollment); err != nil {
+		return types.HostEnrollment{}, "", err
+	}
+	return enrollment, token, nil
+}
+
 // GetEnrollmentForToken validates a host enrollment bearer token and returns
 // the matching enrollment. Enrollment tokens are host-side credentials; member
 // dashboard actions should continue to use member authentication.
@@ -291,60 +330,106 @@ func randomHex(n int) (string, error) {
 }
 
 func bundleEnv(input BundleInput) string {
+	// Two families of name, and they are not interchangeable.
+	//
+	// LIVEPEER_* is what the agent reads to ATTACH to the broker; POOL_*
+	// is what it reads to talk to this controller. The bundle used to
+	// emit only the POOL_ names, so a member ran `docker compose up` and
+	// the agent found no broker URL and no credential — a fresh bundle
+	// could not attach at all.
+	//
+	// LIVEPEER_HOST_ID is the enrolment id on purpose. The broker relays
+	// hardware keyed by the host id the agent declares, and the
+	// controller stores GPUs against the enrolment; if the agent
+	// invented its own id from the hostname, its cards would attach to
+	// an enrolment that does not exist and placement would find nothing
+	// to place on.
 	return "POOL_CONTROLLER_URL=" + input.ControllerURL + "\n" +
-		"POOL_BROKER_URL=" + input.BrokerURL + "\n" +
-		"POOL_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
 		"POOL_ENROLLMENT_ID=" + input.Enrollment.ID + "\n" +
 		"POOL_MEMBER_ETH_ADDRESS=" + input.Enrollment.MemberEthAddress + "\n" +
-		"POOL_BROKER_SESSION_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
-		"POOL_WORKER_BACKENDS=" + workerBackendsEnv(input) + "\n" +
-		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n"
+		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n" +
+		"LIVEPEER_HOST_ID=" + input.Enrollment.ID + "\n" +
+		"LIVEPEER_BROKER_URL=" + input.BrokerURL + "\n" +
+		"LIVEPEER_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
+		"LIVEPEER_ATTACH_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
+		// Public edge (plan 0046). Empty means this host is not public
+		// and the pool places no session work on it. To become public:
+		// set the https origin callers reach this host at, put tls.crt
+		// and tls.key in ./edge, and open the port. Issuing the name and
+		// certificate is the member's until the pool issues them
+		// (plan 0046 §7).
+		"LIVEPEER_PUBLIC_URL=\n" +
+		"LIVEPEER_EDGE_PORT=8443\n" +
+		"LIVEPEER_EDGE_RTMPS_PORT=1936\n"
 }
 
 func bundleReadme(input BundleInput) string {
 	return "# Livepeer Pool member host\n\n" +
-		"Run `docker compose up -d` from this directory. The member agent will connect outbound to the Pool broker and report visible GPUs.\n\n" +
+		"Run `docker compose up -d` from this directory. That is the whole of it.\n\n" +
+		"The agent connects outbound to the Pool broker, reports the GPUs it can\n" +
+		"see, and asks the Pool what it should be running. Nothing needs to be\n" +
+		"opened to the internet on this host.\n\n" +
+		"## What the Pool runs here\n\n" +
+		"The agent writes `runners.compose.yaml` and starts the containers the\n" +
+		"Pool has placed on your GPUs. You can read that file at any time to see\n" +
+		"exactly what is running and why — each service names the template and\n" +
+		"the assignment it came from.\n\n" +
+		"## What the Pool asks of your host\n\n" +
+		"The agent mounts the Docker socket, because starting and stopping those\n" +
+		"containers is its job. That is a real grant of privilege on this\n" +
+		"machine and you should know you are making it. The agent starts only\n" +
+		"images from the Pool's published template catalog, pinned to the GPUs\n" +
+		"assigned to you.\n\n" +
+		"## Leaving\n\n" +
+		"`docker compose down` stops everything. To leave properly, retire the\n" +
+		"host from the member portal first: your placements drain, in-flight\n" +
+		"work finishes, and you stop being sent new jobs before the containers\n" +
+		"go away.\n\n" +
 		"Enrollment: `" + input.Enrollment.ID + "`\n"
 }
 
+// bundleCompose ships the AGENT and nothing else.
+//
+// It used to ship a service per placement, which meant the bundle went
+// stale the moment the pool placed anything new: a member would have
+// had to re-download and re-apply it for every change. The agent now
+// pulls its desired state and writes runners.compose.yaml itself (plan
+// 0044 §3.4), so the bundle is a bootstrap — the one thing that has to
+// arrive out of band — and the runner set is live state.
+//
+// The generated file is included from here rather than merged into it,
+// so `docker compose up` in this directory starts the agent and
+// whatever the agent has decided should run alongside it.
 func bundleCompose(input BundleInput) string {
-	out := "services:\n" +
+	return "include:\n" +
+		"  - path: ./runners.compose.yaml\n" +
+		"    required: false\n" +
+		"services:\n" +
 		"  pool_member_agent:\n" +
-		"    image: ${POOL_MEMBER_AGENT_IMAGE:-livepeer-pool-member-agent:dev}\n" +
+		"    image: ghcr.io/cloud-spe/livepeer-pool-member-agent:latest\n" +
 		"    restart: unless-stopped\n" +
 		"    gpus: all\n" +
 		"    env_file: .env\n" +
+		// The agent's edge (plan 0046 §2): the one TLS listener on the
+		// host that callers of a session runner reach. Published even
+		// on a host that never becomes public — the port is inert until
+		// LIVEPEER_PUBLIC_URL is set and a certificate is mounted.
+		"    ports:\n" +
+		"      - \"${LIVEPEER_EDGE_PORT:-8443}:8443\"\n" +
+		// RTMPS ingest for live session runners (plan 0046 §2.7): the
+		// agent terminates TLS and forwards to the runner's rtmp_port.
+		"      - \"${LIVEPEER_EDGE_RTMPS_PORT:-1936}:1936\"\n" +
 		"    volumes:\n" +
+		"      - ./edge:/etc/livepeer/edge:ro\n" +
 		"      - ./enrollment-token:/run/livepeer/enrollment-token:ro\n" +
-		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n"
-	for _, assignment := range input.Assignments {
-		template, ok := templateByID(input.Templates, assignment.TemplateID)
-		if !ok {
-			continue
-		}
-		image := stringComposeValue(template.RunnerCompose, "image")
-		if image == "" {
-			continue
-		}
-		service := runnerServiceName(assignment.ID)
-		out += "  " + service + ":\n" +
-			"    image: " + image + "\n" +
-			"    restart: unless-stopped\n" +
-			"    gpus: all\n"
-		if cmd := stringSliceComposeValue(template.RunnerCompose, "command"); len(cmd) > 0 {
-			out += "    command:\n"
-			for _, item := range cmd {
-				out += "      - " + item + "\n"
-			}
-		}
-		if env := stringMapComposeValue(template.RunnerCompose, "environment"); len(env) > 0 {
-			out += "    environment:\n"
-			for k, v := range env {
-				out += "      " + k + ": " + v + "\n"
-			}
-		}
-	}
-	return out
+		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n" +
+		// The agent writes the runner compose file and drives docker,
+		// so it needs the socket and a place to write. This is the
+		// whole of what the pool asks of the host, and the member
+		// README says so plainly rather than burying it.
+		"      - /var/run/docker.sock:/var/run/docker.sock\n" +
+		"      - ./:/workspace\n" +
+		"    working_dir: /workspace\n"
 }
 
 func bundleUpdateScript() string {
@@ -364,107 +449,4 @@ func bundleAgentConfig(input BundleInput) string {
 		"controller_url: " + input.ControllerURL + "\n" +
 		"broker_url: " + input.BrokerURL + "\n" +
 		"token_file: /run/livepeer/enrollment-token\n"
-}
-
-func workerBackendsEnv(input BundleInput) string {
-	var parts []string
-	for _, assignment := range input.Assignments {
-		template, ok := templateByID(input.Templates, assignment.TemplateID)
-		if !ok {
-			continue
-		}
-		internalURL := stringComposeValue(template.RunnerCompose, "internal_url")
-		image := stringComposeValue(template.RunnerCompose, "image")
-		// Include the backend when the template gives any way to reach a runner:
-		// an explicit internal_url (operator runs their own runner; the bundle
-		// ships nothing) or a shipped image (the bundle spins one up and the
-		// agent talks to it at the default service URL). Skip only when neither
-		// is present -- there is nothing to route to. This decouples backend
-		// inclusion from shipping a runner image (bundleCompose still gates the
-		// runner service on image).
-		if internalURL == "" && image == "" {
-			continue
-		}
-		if internalURL == "" {
-			internalURL = "http://" + runnerServiceName(assignment.ID) + ":8080"
-		}
-		parts = append(parts, assignment.ID+"="+internalURL)
-	}
-	return strings.Join(parts, ",")
-}
-
-func templateByID(items []types.TemplateCatalogEntry, id string) (types.TemplateCatalogEntry, bool) {
-	for _, item := range items {
-		if item.ID == id {
-			return item, true
-		}
-	}
-	return types.TemplateCatalogEntry{}, false
-}
-
-func runnerServiceName(id string) string {
-	id = strings.ToLower(strings.TrimSpace(id))
-	var b strings.Builder
-	b.WriteString("runner_")
-	for _, r := range id {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			b.WriteRune(r)
-		} else {
-			b.WriteByte('_')
-		}
-	}
-	return strings.TrimRight(b.String(), "_")
-}
-
-func stringComposeValue(m map[string]any, key string) string {
-	if m == nil {
-		return ""
-	}
-	value, ok := m[key]
-	if !ok || value == nil {
-		return ""
-	}
-	return strings.TrimSpace(fmt.Sprint(value))
-}
-
-func stringSliceComposeValue(m map[string]any, key string) []string {
-	value, ok := m[key]
-	if !ok {
-		return nil
-	}
-	raw, ok := value.([]any)
-	if !ok {
-		if stringsValue, ok := value.([]string); ok {
-			return stringsValue
-		}
-		return nil
-	}
-	out := make([]string, 0, len(raw))
-	for _, item := range raw {
-		if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-func stringMapComposeValue(m map[string]any, key string) map[string]string {
-	value, ok := m[key]
-	if !ok {
-		return nil
-	}
-	raw, ok := value.(map[string]any)
-	if !ok {
-		if stringMap, ok := value.(map[string]string); ok {
-			return stringMap
-		}
-		return nil
-	}
-	out := make(map[string]string, len(raw))
-	for k, v := range raw {
-		if s := strings.TrimSpace(fmt.Sprint(v)); s != "" {
-			out[k] = s
-		}
-	}
-	return out
 }

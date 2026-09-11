@@ -19,7 +19,13 @@ Component-local, abbreviated. The full discussion lives in plan 0019
 4. **Coordinator-host compromise (candidate poisoning).** The
    principal reason the sign cycle is operator-driven. The diff
    renderer surfaces extra capabilities, silent `price` /
-   `worker_url` changes, eth_address swaps. Auto-sign is forbidden.
+   `worker_url` changes, eth_address swaps, and any change to
+   `settlement_keys` — the highest-value move for a compromised
+   coordinator, since an attacker-controlled key there redirects
+   settlement authority without touching a tuple; it is held critical
+   under every policy and the page shows, per broker, how to read the
+   key over a path the coordinator does not control. Auto-sign is
+   forbidden.
 5. **Cold-key compromise.** Game over for this orch's identity until
    rotation. Defense in depth: V3 keystore (password-protected,
    eager-decrypt + zero on shutdown). Hardware-backed signers are

@@ -11,7 +11,7 @@ What an operator publishes; what a consumer can rely on.
 ## What the publisher MUST do
 
 - Host a JSON document at `<serviceURI>/.well-known/livepeer-registry.json`, served over HTTPS (or HTTP if the operator's TLS terminator is upstream).
-- The document MUST conform to [docs/design-docs/manifest-schema.md](../design-docs/manifest-schema.md) — schema_version, eth_address, issued_at, nodes, signature.
+- The document MUST conform to [../livepeer-network-protocol/manifest/schema.json](../../livepeer-network-protocol/manifest/schema.json) — schema_version, eth_address, issued_at, nodes, signature.
 - The signature MUST be `eth-personal-sign` over the canonical bytes, produced by the same eth key that controls the on-chain `serviceURI`.
 - The manifest MUST be ≤ 4 MiB in raw bytes by default. Operators may raise the fetch cap up to 16 MiB via `--manifest-max-bytes`.
 - Cache-Control headers SHOULD allow caching (≥ 60s) but MUST NOT exceed the operator's intended update cadence.

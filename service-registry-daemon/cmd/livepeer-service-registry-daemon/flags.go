@@ -2,9 +2,11 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"strings"
 
+	chaincfg "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 )
 
@@ -20,7 +22,7 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	mode := fs.String("mode", "", "operating mode: publisher | resolver (required)")
 	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "unix socket path for gRPC")
 	fs.StringVar(&cfg.StorePath, "store-path", cfg.StorePath, "BoltDB file path")
-	fs.StringVar(&cfg.ChainRPC, "chain-rpc", cfg.ChainRPC, "Ethereum JSON-RPC endpoint (mutually exclusive with --dev)")
+	fs.Var((*csvList)(&cfg.ChainRPCURLs), "chain-rpc-urls", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read fails over across the list (required in resolver mode; mutually exclusive with --dev)")
 	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "expected chain ID (sanity check)")
 	fs.StringVar(&cfg.ControllerAddress, "controller-address", cfg.ControllerAddress, "Livepeer Controller contract address; used for resolver chain auto-discovery (BondingManager + RoundsManager). Default Arbitrum One")
 	fs.StringVar(&cfg.ServiceRegistryAddress, "service-registry-address", cfg.ServiceRegistryAddress, "optional override for the primary registry contract address; when empty, resolver reads ServiceRegistry from Controller")
@@ -28,6 +30,11 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.StringVar(&cfg.LogFormat, "log-format", cfg.LogFormat, "text|json")
 	fs.StringVar(&cfg.LogLevel, "log-level", cfg.LogLevel, "debug|info|warn|error")
 	fs.BoolVar(&cfg.Dev, "dev", cfg.Dev, "use in-memory fakes; throwaway key in publisher mode")
+	fs.StringVar(&cfg.ChainSeedPath, "chain-seed", cfg.ChainSeedPath,
+		"YAML file of address → serviceURI pairs preloaded into the in-memory chain (--dev only). "+
+			"Lets a hermetic run resolve through the signed manifest path — real signature "+
+			"verification and real settlement_keys, no chain. Overlay-only is unsigned by "+
+			"construction and carries no settlement delegation.")
 
 	// Resolver-only
 	discovery := fs.String("discovery", string(cfg.Discovery), `cache seeding source: "chain" (walk BondingManager pool on each round event) or "overlay-only" (--static-overlay only)`)
@@ -64,16 +71,14 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	cfg.KeystorePassword = readPassword(*keystorePasswordFile)
 
 	// Dev mode forces overlay-only discovery — no real chain to walk.
-	if cfg.Dev {
+	//
+	// Unless a seed supplies one. --chain-seed exists precisely so a
+	// chain-free run can resolve through the SIGNED manifest path, which
+	// requires reading the (in-memory) chain; forcing overlay-only there
+	// makes the daemon reject its own documented invocation, because
+	// overlay-only never reads the chain and validation says so.
+	if cfg.Dev && cfg.ChainSeedPath == "" {
 		cfg.Discovery = config.DiscoveryOverlayOnly
-	}
-
-	// In --dev mode, suppress the default chain-rpc unless the operator
-	// explicitly passed one. This keeps the validator from tripping on
-	// the dev/chain-rpc mutual-exclusion when the user just wrote
-	// `--mode=resolver --dev`.
-	if cfg.Dev && !flagSet(fs, "chain-rpc") {
-		cfg.ChainRPC = ""
 	}
 
 	if err := cfg.Validate(); err != nil {
@@ -82,16 +87,22 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	return cfg, false, nil
 }
 
-// flagSet reports whether name was explicitly set on the command line
-// (vs. left at default).
-func flagSet(fs *flag.FlagSet, name string) bool {
-	found := false
-	fs.Visit(func(f *flag.Flag) {
-		if f.Name == name {
-			found = true
-		}
-	})
-	return found
+// csvList is the flag.Value for --chain-rpc-urls. Parsing lives in
+// chain-commons so every daemon rejects the same inputs the same way.
+type csvList []string
+
+func (l *csvList) String() string { return strings.Join(*l, ",") }
+
+func (l *csvList) Set(v string) error {
+	urls, err := chaincfg.ParseRPCURLs(v)
+	if err != nil {
+		return err
+	}
+	if len(urls) == 0 {
+		return fmt.Errorf("list must not be empty")
+	}
+	*l = urls
+	return nil
 }
 
 // usage prints flag help. Used when --help / -h is passed.

@@ -8,9 +8,9 @@
 //   - "frame_megapixel"   — frame × width × height / 1_000_000 (floored)
 //   - "out_time_seconds"  — out_time_us / 1_000_000, ceiled
 //
-// The mode driver wires a LiveCounter sibling that reads the same
-// counters mid-flight so the interim-debit ticker in plan 0015 sees a
-// running view of the encoded media seconds / frames.
+// The mode driver wires a LiveCounter sibling that reads the same counters
+// mid-flight so authorization-backed settlement sees a running view of the
+// encoded media seconds / frames.
 package ffmpegprogress
 
 import (
@@ -120,8 +120,8 @@ func (e *Extractor) Width() uint64 { return e.width }
 // unit=frame_megapixel).
 func (e *Extractor) Height() uint64 { return e.height }
 
-// LiveCounter is the running view exposed to the interim-debit
-// ticker. The mode driver registers a LiveCounter that wraps the
+// LiveCounter is the running view exposed to authorization settlement. The
+// mode driver registers a LiveCounter that wraps the
 // encoder's per-session FrameCount / OutTimeUs atomics; this package
 // provides the conversion to the configured unit.
 type LiveCounter struct {

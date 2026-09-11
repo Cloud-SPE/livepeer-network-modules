@@ -1,0 +1,181 @@
+# ABR transcode — as run on the operator's "us-central-broker" rig.
+#
+# One source in, a rendition ladder out. Sibling to video-transcode-vod on the
+# same rig and the same cards; the two are told apart by capability id, which
+# is why they can both keep a `default`-shaped offering id without colliding
+# in the loader — and why both were renamed anyway (see below).
+
+id: video-transcode-abr
+capability: video:transcode.abr
+offering_id: abr-default
+protocol: paid-job/v1
+display_name: ABR transcode (rendition ladder)
+description: >-
+  One source file in, an adaptive-bitrate rendition ladder out. Priced per
+  job, so a three-rendition ladder and a one-rendition ladder cost the caller
+  the same.
+
+# Per 1000 frame-megapixels of delivered output, aggregated over every video
+# rendition (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
+# corrected the same day in …-pricing-correction.md).
+# Decided 2026-09-05, replacing the rig's flat 4.8e12 per job: a ladder
+# encodes the source several times over, and a flat price made ABR the worse
+# return on an encoder-hour while charging a ten-second clip like a film.
+# The runner counts the units and claims them in the response trailer; the
+# rate is the same as the VOD sibling's because the unit already carries the
+# ladder's extra work.
+price_default: { amount_wei: "1629000000000", per_units: 1000 }
+
+# Same as its VOD sibling: the rig pinned nothing, and two in flight is what
+# NVENC will take on a 2080 without the renditions starving each other. The
+# queue stays shallow so a caller gets a 503 with a backoff instead of a long
+# silent wait.
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+extra:
+  provider: abr-runner
+  video:
+    # The rig's own task string, and it differs from the VOD offering's
+    # (`transcode`) — this is the field that tells a caller which of the two
+    # products they are looking at when both are on the same host.
+    task: abr-transcode
+    # No presets, codecs, or packaging list: the architecture-overview video
+    # contract has a place for each and the rig declared none. An invented
+    # ladder here would be a promise to callers that nothing checks.
+
+# The rig's `constraints:` block. `region` is the load-bearing one — a gateway
+# choosing where to send a source file is choosing a network path — and these
+# axes reach the manifest tuple, which `requirements` does not.
+constraints:
+  tier: standard
+  gpu_vendor: NVIDIA
+  region: us-central
+
+# No `match:`. There is no model identity to select on and the rig runs one
+# ABR runner, so any runner declaring this capability is the one this offer
+# wants (template.go, Match).
+
+certification:
+  # The rig probed `http-jsonpath` on http://abr-runner:8080/healthz asserting
+  # $.status == "ok" — a stricter probe than its VOD sibling's plain
+  # http-status, and the strictest on any of the three rigs.
+  #
+  # None of that is written here, and this is the clearest case in the catalog
+  # for why: certification-steps.md §3.1 runs the probe the RUNNER declared,
+  # and the author sets only sufficiency. The JSONPath and the expected value
+  # are the runner's own knowledge of what "ready" means for it — a template
+  # that restated them would be the operator authoring the runner's half, and
+  # would drift the moment the runner changed its health payload.
+  #
+  # What IS expressible is that this probe is more informative than a status
+  # code, so a single ready result is worth more here: `consecutive: 1` over
+  # three attempts rather than the longer ramps the model-loading templates
+  # need.
+  - { name: ready, type: readiness, required: true, config: { attempts: 3, interval_ms: 2000, consecutive: 1 } }
+  - name: smoke
+    type: request
+    required: true
+    # A real ladder encode of a 2s clip; the type default of 30s is for an
+    # OpenAI ping, not for ffmpeg.
+    timeout_ms: 60000
+    config:
+      # The runner's own request schema, `video-transcode-abr/v2`
+      # (livepeer-modules-transcode abr-runner/contract_v2.go; corrected
+      # 2026-09-05 — the earlier body here was read from the stale June
+      # repository). The runner streams typed SSE progress and a terminal
+      # result; the broker relays that body verbatim and reads only the
+      # `Livepeer-Work-Units` trailer. Every URL is run-scoped and
+      # broker-minted (certification-steps.md §4): the runner fetches a real
+      # 2s clip and writes each artifact under the run's sink.
+      #
+      # The preset and the rendition keys are the runner's (`presets.yaml`,
+      # `abr-standard`: 1080p/720p/480p/360p); the transcode team confirms
+      # the destination map this probe must carry for that preset.
+      transport: stream
+      body:
+        schema: video-transcode-abr/v2
+        workload_id: "cert-{{run.id}}"
+        input: { download_url: "{{fixture_url.video/mp4-2s-720p}}" }
+        ladder: { preset: abr-standard }
+        output:
+          manifest: { artifact_uri: "cert://manifest.m3u8", upload_url: "{{sink_url}}/manifest.m3u8" }
+          renditions:
+            "1080p": { playlist: { artifact_uri: "cert://1080p.m3u8", upload_url: "{{sink_url}}/1080p.m3u8" }, stream: { artifact_uri: "cert://1080p.ts", upload_url: "{{sink_url}}/1080p.ts" } }
+            "720p": { playlist: { artifact_uri: "cert://720p.m3u8", upload_url: "{{sink_url}}/720p.m3u8" }, stream: { artifact_uri: "cert://720p.ts", upload_url: "{{sink_url}}/720p.ts" } }
+            "480p": { playlist: { artifact_uri: "cert://480p.m3u8", upload_url: "{{sink_url}}/480p.m3u8" }, stream: { artifact_uri: "cert://480p.ts", upload_url: "{{sink_url}}/480p.ts" } }
+            "360p": { playlist: { artifact_uri: "cert://360p.m3u8", upload_url: "{{sink_url}}/360p.m3u8" }, stream: { artifact_uri: "cert://360p.ts", upload_url: "{{sink_url}}/360p.ts" } }
+  # A 2s four-rung ladder is well over a hundred frame-megapixels; a claim
+  # under 100 is a runner counting something other than delivered output.
+  # Which rendition counted what is the runner's arithmetic, with the
+  # runner's fixtures; the broker reads the trailer.
+  - { name: usage, type: usage, required: true, config: { min_units: 100 } }
+  # Two rungs take longer than one, so the bound is looser than the VOD
+  # template's. Not required either way — a slow encoder is a scoring input,
+  # not an ineligible one.
+  - { name: latency, type: latency, required: false, config: { samples: 2, p50_max_ms: 30000 } }
+
+# The rig wrote `gpu_model: 2080`, honoured as the pool's `rtx-2080` class.
+# The exact-model form was never available: `gpu_models` matches the driver's
+# case-sensitive marketing name (runner-attach.md §3.1) and "2080" is not one
+# — a card reports "NVIDIA GeForce RTX 2080 Ti" — so a literal list built from
+# the operator's string would match nothing. The class covers Ti and SUPER,
+# which is what they meant.
+#
+# Not widened to newer classes: this template cannot stack (see below), so a
+# wider list would only take primary slots on cards the operator never offered
+# for transcode.
+# Intel added 2026-09-01 (plan 0045 §4): the intel build of this runner
+# exists, and a class list that named no Intel card would leave every one of
+# those images unrunnable — ClassOf returns ClassUnknown for a card no class
+# matches, and placement rejects it. Which Intel cards belong here is a fleet
+# question; these are the classes placement knows today.
+# gtx-1080 added 2026-09-02 (plan 0045 §5, decision 9 on lnm-of6). For the
+# H.264/HEVC this offering sells, Pascal NVENC is the 2080's peer rather than
+# its lesser: it encodes both codecs, runs 1080p well past real time, and takes
+# the same number of concurrent sessions under current drivers. What Turing
+# added (HEVC B-frames, a little quality per bit) is a scoring difference, and
+# the non-required latency step ranks it down rather than refusing the card.
+# Neither class does AV1. The 1080 is admitted by NO AI template: vLLM needs
+# compute capability 7.0+, and whether any other image runs on sm_61 depends
+# on that image's CUDA base — a fact its author owns, not this catalog.
+requirements:
+  gpu_classes: [gtx-1080, rtx-2080, arc-a770, arc-b580, flex-170]
+
+# Just under its VOD sibling, and the gap is the price's doing rather than the
+# product's: both charge per job, an ABR job does several times the encoding,
+# so at equal price VOD returns more per encoder-hour. Still well above the
+# catalog's three unconstrained templates (12/11/10), which also match a 2080
+# and would otherwise take this rig's own cards.
+priority: 21
+
+# Primary only. 0040 §4.4 gives 2080-class cards one template
+# (placement.DefaultStances rtx-2080: 1), so any secondary_on here would
+# describe stacking that cannot happen on the only class this template runs on.
+stacking: { primary: true, secondary_on: [] }
+
+# The runner, per vendor (plan 0045 §4). Same product on either card, a
+# different build for each; the controller picks at desired-state render,
+# where it knows the card, and placement refuses a card whose vendor has no
+# entry here rather than letting it fail at compose up on a member's host.
+# Confirmed against livepeer-modules-transcode (its predecessor,
+# livepeer-modules-transcode-runners, is stale since June 2026 and is being
+# archived — decision 11 on lnm-of6): abr-runner-* serves
+# `POST /v1/video/transcode/abr`. AMD waits for a later iteration and has no key.
+#
+# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
+# job_id, status polled) and therefore cannot be billed under paid-job; and
+# they do not yet serve the runner self-description contract (§3). Until both
+# land, the agent refuses this image LOUDLY, naming it. That is the design:
+# the failure message is the impacted-runner inventory.
+runner_compose:
+  image:
+    nvidia: tztcloud/abr-runner-nvidia:v1.4.1
+    intel: tztcloud/abr-runner-intel:v1.4.1
+
+# High min_jobs for the same reason as VOD: transcode failures are bursty and
+# codec-dependent, so a small sample promotes on luck.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 30 }
+
+active: { share_cap_ppm: 200000 }
+
+commission_bps: 1000

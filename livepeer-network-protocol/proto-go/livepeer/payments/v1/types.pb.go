@@ -32,6 +32,67 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type SpendAuthorizationState int32
+
+const (
+	SpendAuthorizationState_SPEND_AUTHORIZATION_STATE_UNSPECIFIED SpendAuthorizationState = 0
+	SpendAuthorizationState_SPEND_AUTHORIZATION_ISSUED            SpendAuthorizationState = 1
+	SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED          SpendAuthorizationState = 2
+	SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED           SpendAuthorizationState = 3
+	SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED    SpendAuthorizationState = 4
+	SpendAuthorizationState_SPEND_AUTHORIZATION_OUTCOME_UNKNOWN   SpendAuthorizationState = 5
+	SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED        SpendAuthorizationState = 6
+)
+
+// Enum value maps for SpendAuthorizationState.
+var (
+	SpendAuthorizationState_name = map[int32]string{
+		0: "SPEND_AUTHORIZATION_STATE_UNSPECIFIED",
+		1: "SPEND_AUTHORIZATION_ISSUED",
+		2: "SPEND_AUTHORIZATION_ADMITTED",
+		3: "SPEND_AUTHORIZATION_SETTLED",
+		4: "SPEND_AUTHORIZATION_EXPIRED_UNUSED",
+		5: "SPEND_AUTHORIZATION_OUTCOME_UNKNOWN",
+		6: "SPEND_AUTHORIZATION_SUPERSEDED",
+	}
+	SpendAuthorizationState_value = map[string]int32{
+		"SPEND_AUTHORIZATION_STATE_UNSPECIFIED": 0,
+		"SPEND_AUTHORIZATION_ISSUED":            1,
+		"SPEND_AUTHORIZATION_ADMITTED":          2,
+		"SPEND_AUTHORIZATION_SETTLED":           3,
+		"SPEND_AUTHORIZATION_EXPIRED_UNUSED":    4,
+		"SPEND_AUTHORIZATION_OUTCOME_UNKNOWN":   5,
+		"SPEND_AUTHORIZATION_SUPERSEDED":        6,
+	}
+)
+
+func (x SpendAuthorizationState) Enum() *SpendAuthorizationState {
+	p := new(SpendAuthorizationState)
+	*p = x
+	return p
+}
+
+func (x SpendAuthorizationState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SpendAuthorizationState) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_payments_v1_types_proto_enumTypes[0].Descriptor()
+}
+
+func (SpendAuthorizationState) Type() protoreflect.EnumType {
+	return &file_livepeer_payments_v1_types_proto_enumTypes[0]
+}
+
+func (x SpendAuthorizationState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SpendAuthorizationState.Descriptor instead.
+func (SpendAuthorizationState) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{0}
+}
+
 // PaymentRejectionReason is the machine-readable reason a payee daemon
 // rejected a ticket in ProcessPayment. UNSPECIFIED means the ticket was
 // accepted.
@@ -77,11 +138,11 @@ func (x PaymentRejectionReason) String() string {
 }
 
 func (PaymentRejectionReason) Descriptor() protoreflect.EnumDescriptor {
-	return file_livepeer_payments_v1_types_proto_enumTypes[0].Descriptor()
+	return file_livepeer_payments_v1_types_proto_enumTypes[1].Descriptor()
 }
 
 func (PaymentRejectionReason) Type() protoreflect.EnumType {
-	return &file_livepeer_payments_v1_types_proto_enumTypes[0]
+	return &file_livepeer_payments_v1_types_proto_enumTypes[1]
 }
 
 func (x PaymentRejectionReason) Number() protoreflect.EnumNumber {
@@ -90,7 +151,7 @@ func (x PaymentRejectionReason) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use PaymentRejectionReason.Descriptor instead.
 func (PaymentRejectionReason) EnumDescriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{0}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{1}
 }
 
 type SettlementRecord_SettlementOutcome int32
@@ -102,6 +163,10 @@ const (
 	SettlementRecord_OVERFUNDED                     SettlementRecord_SettlementOutcome = 3
 	SettlementRecord_STOPPED_AT_BUDGET              SettlementRecord_SettlementOutcome = 4
 	SettlementRecord_TOPPED_UP                      SettlementRecord_SettlementOutcome = 5
+	// Reserved for decoding pre-authorization records. Authorization-only
+	// brokers MUST NOT emit a terminal DEBIT_FAILED record: uncertain account
+	// settlement remains accounting_pending and retries the same authorization.
+	SettlementRecord_DEBIT_FAILED SettlementRecord_SettlementOutcome = 6
 )
 
 // Enum value maps for SettlementRecord_SettlementOutcome.
@@ -113,6 +178,7 @@ var (
 		3: "OVERFUNDED",
 		4: "STOPPED_AT_BUDGET",
 		5: "TOPPED_UP",
+		6: "DEBIT_FAILED",
 	}
 	SettlementRecord_SettlementOutcome_value = map[string]int32{
 		"SETTLEMENT_OUTCOME_UNSPECIFIED": 0,
@@ -121,6 +187,7 @@ var (
 		"OVERFUNDED":                     3,
 		"STOPPED_AT_BUDGET":              4,
 		"TOPPED_UP":                      5,
+		"DEBIT_FAILED":                   6,
 	}
 )
 
@@ -135,11 +202,11 @@ func (x SettlementRecord_SettlementOutcome) String() string {
 }
 
 func (SettlementRecord_SettlementOutcome) Descriptor() protoreflect.EnumDescriptor {
-	return file_livepeer_payments_v1_types_proto_enumTypes[1].Descriptor()
+	return file_livepeer_payments_v1_types_proto_enumTypes[2].Descriptor()
 }
 
 func (SettlementRecord_SettlementOutcome) Type() protoreflect.EnumType {
-	return &file_livepeer_payments_v1_types_proto_enumTypes[1]
+	return &file_livepeer_payments_v1_types_proto_enumTypes[2]
 }
 
 func (x SettlementRecord_SettlementOutcome) Number() protoreflect.EnumNumber {
@@ -148,7 +215,56 @@ func (x SettlementRecord_SettlementOutcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use SettlementRecord_SettlementOutcome.Descriptor instead.
 func (SettlementRecord_SettlementOutcome) EnumDescriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{13, 0}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{17, 0}
+}
+
+// The outcome. A distinct value on purpose: a zero-unit settlement
+// says an exchange happened and cost nothing, which is a different
+// claim and one a consumer must not confuse with this.
+type NonAdmissionRecord_Outcome int32
+
+const (
+	NonAdmissionRecord_OUTCOME_UNSPECIFIED NonAdmissionRecord_Outcome = 0
+	NonAdmissionRecord_NOT_ADMITTED        NonAdmissionRecord_Outcome = 1
+)
+
+// Enum value maps for NonAdmissionRecord_Outcome.
+var (
+	NonAdmissionRecord_Outcome_name = map[int32]string{
+		0: "OUTCOME_UNSPECIFIED",
+		1: "NOT_ADMITTED",
+	}
+	NonAdmissionRecord_Outcome_value = map[string]int32{
+		"OUTCOME_UNSPECIFIED": 0,
+		"NOT_ADMITTED":        1,
+	}
+)
+
+func (x NonAdmissionRecord_Outcome) Enum() *NonAdmissionRecord_Outcome {
+	p := new(NonAdmissionRecord_Outcome)
+	*p = x
+	return p
+}
+
+func (x NonAdmissionRecord_Outcome) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (NonAdmissionRecord_Outcome) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_payments_v1_types_proto_enumTypes[3].Descriptor()
+}
+
+func (NonAdmissionRecord_Outcome) Type() protoreflect.EnumType {
+	return &file_livepeer_payments_v1_types_proto_enumTypes[3]
+}
+
+func (x NonAdmissionRecord_Outcome) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use NonAdmissionRecord_Outcome.Descriptor instead.
+func (NonAdmissionRecord_Outcome) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{18, 0}
 }
 
 // PriceInfo conveys pricing info for a unit of work.
@@ -1043,6 +1159,443 @@ func (x *FundingIntent) GetTopUpAllowed() bool {
 	return false
 }
 
+// SpendAuthorizationPayload is the payer-signed authority for exactly one
+// job or logical session. It is deliberately separate from Payment: tickets
+// add value to a stable payer-payee account, while this payload says which
+// engagement may reserve and debit that value.
+//
+// Signature input is the deterministic protobuf encoding of this message,
+// hashed with keccak256 and signed with Ethereum personal_sign (EIP-191).
+type SpendAuthorizationPayload struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Domain/version tag. Producers MUST set
+	// "livepeer-spend-authorization/v1".
+	Domain                     string         `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
+	Payer                      []byte         `protobuf:"bytes,2,opt,name=payer,proto3" json:"payer,omitempty"`
+	Payee                      []byte         `protobuf:"bytes,3,opt,name=payee,proto3" json:"payee,omitempty"`
+	AuthorizationId            string         `protobuf:"bytes,4,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	RequestId                  string         `protobuf:"bytes,5,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SessionId                  string         `protobuf:"bytes,6,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Protocol                   string         `protobuf:"bytes,7,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	Capability                 string         `protobuf:"bytes,8,opt,name=capability,proto3" json:"capability,omitempty"`
+	Offering                   string         `protobuf:"bytes,9,opt,name=offering,proto3" json:"offering,omitempty"`
+	AcceptedPrice              *AcceptedPrice `protobuf:"bytes,10,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
+	MaxDebitWei                *BigUInt       `protobuf:"bytes,11,opt,name=max_debit_wei,json=maxDebitWei,proto3" json:"max_debit_wei,omitempty"`
+	MaxTotalUnits              uint64         `protobuf:"varint,12,opt,name=max_total_units,json=maxTotalUnits,proto3" json:"max_total_units,omitempty"`
+	NotBefore                  string         `protobuf:"bytes,13,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
+	ExpiresAt                  string         `protobuf:"bytes,14,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	RequestDigest              []byte         `protobuf:"bytes,15,opt,name=request_digest,json=requestDigest,proto3" json:"request_digest,omitempty"`
+	CallerPublicKey            []byte         `protobuf:"bytes,16,opt,name=caller_public_key,json=callerPublicKey,proto3" json:"caller_public_key,omitempty"`
+	Revision                   uint64         `protobuf:"varint,17,opt,name=revision,proto3" json:"revision,omitempty"`
+	PredecessorAuthorizationId string         `protobuf:"bytes,18,opt,name=predecessor_authorization_id,json=predecessorAuthorizationId,proto3" json:"predecessor_authorization_id,omitempty"`
+	BrokerUri                  string         `protobuf:"bytes,19,opt,name=broker_uri,json=brokerUri,proto3" json:"broker_uri,omitempty"`
+	ChainId                    uint64         `protobuf:"varint,20,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	Denomination               string         `protobuf:"bytes,21,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	unknownFields              protoimpl.UnknownFields
+	sizeCache                  protoimpl.SizeCache
+}
+
+func (x *SpendAuthorizationPayload) Reset() {
+	*x = SpendAuthorizationPayload{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpendAuthorizationPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpendAuthorizationPayload) ProtoMessage() {}
+
+func (x *SpendAuthorizationPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpendAuthorizationPayload.ProtoReflect.Descriptor instead.
+func (*SpendAuthorizationPayload) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SpendAuthorizationPayload) GetDomain() string {
+	if x != nil {
+		return x.Domain
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetPayer() []byte {
+	if x != nil {
+		return x.Payer
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetPayee() []byte {
+	if x != nil {
+		return x.Payee
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetAuthorizationId() string {
+	if x != nil {
+		return x.AuthorizationId
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetCapability() string {
+	if x != nil {
+		return x.Capability
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetOffering() string {
+	if x != nil {
+		return x.Offering
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetAcceptedPrice() *AcceptedPrice {
+	if x != nil {
+		return x.AcceptedPrice
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetMaxDebitWei() *BigUInt {
+	if x != nil {
+		return x.MaxDebitWei
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetMaxTotalUnits() uint64 {
+	if x != nil {
+		return x.MaxTotalUnits
+	}
+	return 0
+}
+
+func (x *SpendAuthorizationPayload) GetNotBefore() string {
+	if x != nil {
+		return x.NotBefore
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetExpiresAt() string {
+	if x != nil {
+		return x.ExpiresAt
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetRequestDigest() []byte {
+	if x != nil {
+		return x.RequestDigest
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetCallerPublicKey() []byte {
+	if x != nil {
+		return x.CallerPublicKey
+	}
+	return nil
+}
+
+func (x *SpendAuthorizationPayload) GetRevision() uint64 {
+	if x != nil {
+		return x.Revision
+	}
+	return 0
+}
+
+func (x *SpendAuthorizationPayload) GetPredecessorAuthorizationId() string {
+	if x != nil {
+		return x.PredecessorAuthorizationId
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetBrokerUri() string {
+	if x != nil {
+		return x.BrokerUri
+	}
+	return ""
+}
+
+func (x *SpendAuthorizationPayload) GetChainId() uint64 {
+	if x != nil {
+		return x.ChainId
+	}
+	return 0
+}
+
+func (x *SpendAuthorizationPayload) GetDenomination() string {
+	if x != nil {
+		return x.Denomination
+	}
+	return ""
+}
+
+type SpendAuthorization struct {
+	state         protoimpl.MessageState     `protogen:"open.v1"`
+	Payload       *SpendAuthorizationPayload `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
+	Signature     []byte                     `protobuf:"bytes,2,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SpendAuthorization) Reset() {
+	*x = SpendAuthorization{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SpendAuthorization) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SpendAuthorization) ProtoMessage() {}
+
+func (x *SpendAuthorization) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SpendAuthorization.ProtoReflect.Descriptor instead.
+func (*SpendAuthorization) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *SpendAuthorization) GetPayload() *SpendAuthorizationPayload {
+	if x != nil {
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *SpendAuthorization) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
+// AccountFundingIntent asks the sender to fund only the difference between a
+// payer-selected target float and a trusted receiver balance observation.
+// The caller is the payer application on the sender daemon's trusted socket;
+// untrusted end callers never supply these values directly.
+type AccountFundingIntent struct {
+	state                protoimpl.MessageState `protogen:"open.v1"`
+	TargetAvailableWei   *BigUInt               `protobuf:"bytes,1,opt,name=target_available_wei,json=targetAvailableWei,proto3" json:"target_available_wei,omitempty"`
+	ObservedAvailableWei *BigUInt               `protobuf:"bytes,2,opt,name=observed_available_wei,json=observedAvailableWei,proto3" json:"observed_available_wei,omitempty"`
+	unknownFields        protoimpl.UnknownFields
+	sizeCache            protoimpl.SizeCache
+}
+
+func (x *AccountFundingIntent) Reset() {
+	*x = AccountFundingIntent{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *AccountFundingIntent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*AccountFundingIntent) ProtoMessage() {}
+
+func (x *AccountFundingIntent) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use AccountFundingIntent.ProtoReflect.Descriptor instead.
+func (*AccountFundingIntent) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *AccountFundingIntent) GetTargetAvailableWei() *BigUInt {
+	if x != nil {
+		return x.TargetAvailableWei
+	}
+	return nil
+}
+
+func (x *AccountFundingIntent) GetObservedAvailableWei() *BigUInt {
+	if x != nil {
+		return x.ObservedAvailableWei
+	}
+	return nil
+}
+
+type WholesaleAccountView struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	Payer             []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	Payee             []byte                 `protobuf:"bytes,2,opt,name=payee,proto3" json:"payee,omitempty"`
+	CreditedValueWei  *BigUInt               `protobuf:"bytes,3,opt,name=credited_value_wei,json=creditedValueWei,proto3" json:"credited_value_wei,omitempty"`
+	ReservedValueWei  *BigUInt               `protobuf:"bytes,4,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
+	DebitedValueWei   *BigUInt               `protobuf:"bytes,5,opt,name=debited_value_wei,json=debitedValueWei,proto3" json:"debited_value_wei,omitempty"`
+	AvailableValueWei *BigUInt               `protobuf:"bytes,6,opt,name=available_value_wei,json=availableValueWei,proto3" json:"available_value_wei,omitempty"`
+	Version           uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
+	ObservedAt        string                 `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ChainId           uint64                 `protobuf:"varint,9,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	Denomination      string                 `protobuf:"bytes,10,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *WholesaleAccountView) Reset() {
+	*x = WholesaleAccountView{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *WholesaleAccountView) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*WholesaleAccountView) ProtoMessage() {}
+
+func (x *WholesaleAccountView) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use WholesaleAccountView.ProtoReflect.Descriptor instead.
+func (*WholesaleAccountView) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *WholesaleAccountView) GetPayer() []byte {
+	if x != nil {
+		return x.Payer
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetPayee() []byte {
+	if x != nil {
+		return x.Payee
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetCreditedValueWei() *BigUInt {
+	if x != nil {
+		return x.CreditedValueWei
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetReservedValueWei() *BigUInt {
+	if x != nil {
+		return x.ReservedValueWei
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetDebitedValueWei() *BigUInt {
+	if x != nil {
+		return x.DebitedValueWei
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetAvailableValueWei() *BigUInt {
+	if x != nil {
+		return x.AvailableValueWei
+	}
+	return nil
+}
+
+func (x *WholesaleAccountView) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *WholesaleAccountView) GetObservedAt() string {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return ""
+}
+
+func (x *WholesaleAccountView) GetChainId() uint64 {
+	if x != nil {
+		return x.ChainId
+	}
+	return 0
+}
+
+func (x *WholesaleAccountView) GetDenomination() string {
+	if x != nil {
+		return x.Denomination
+	}
+	return ""
+}
+
 // SettlementRecord is the broker-authoritative accounting result for a request/session.
 type SettlementRecord struct {
 	state            protoimpl.MessageState             `protogen:"open.v1"`
@@ -1055,14 +1608,82 @@ type SettlementRecord struct {
 	BilledValueWei   *BigUInt                           `protobuf:"bytes,7,opt,name=billed_value_wei,json=billedValueWei,proto3" json:"billed_value_wei,omitempty"`
 	Outcome          SettlementRecord_SettlementOutcome `protobuf:"varint,8,opt,name=outcome,proto3,enum=livepeer.payments.v1.SettlementRecord_SettlementOutcome" json:"outcome,omitempty"`
 	// Optional workload-specific metadata. Not part of canonical arithmetic.
-	Breakdown     map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Breakdown map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	// Stable broker-local session id.
+	SessionId string `protobuf:"bytes,10,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// In authorization-only records work_id mirrors authorization_id. The
+	// predecessor/rotation fields are retained only to decode historical
+	// ticket-session records and MUST be empty/zero on new records.
+	WorkId             string `protobuf:"bytes,11,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	PredecessorWorkId  string `protobuf:"bytes,12,opt,name=predecessor_work_id,json=predecessorWorkId,proto3" json:"predecessor_work_id,omitempty"`
+	RotationGeneration uint32 `protobuf:"varint,13,opt,name=rotation_generation,json=rotationGeneration,proto3" json:"rotation_generation,omitempty"`
+	// Cumulative over the whole logical session. debited_units is the
+	// authoritative billing quantity:
+	// claimed_units is what a runner asserted, debited_units is what the
+	// ledger moved. billed_value_wei above is
+	// ceil(debited_units * amount_wei / per_units) over these cumulative
+	// units — one ceiling over the total, never a sum of per-event
+	// ceilings (offering-axes.md §6.1).
+	ClaimedUnits uint64 `protobuf:"varint,14,opt,name=claimed_units,json=claimedUnits,proto3" json:"claimed_units,omitempty"`
+	DebitedUnits uint64 `protobuf:"varint,15,opt,name=debited_units,json=debitedUnits,proto3" json:"debited_units,omitempty"`
+	// Historical ticket-session generation fields. Authorization-only brokers
+	// MUST leave them zero/empty; aggregate ticket funding is reported through
+	// account_funding_value_wei and account observations instead.
+	GenerationDebitedUnits   uint64   `protobuf:"varint,16,opt,name=generation_debited_units,json=generationDebitedUnits,proto3" json:"generation_debited_units,omitempty"`
+	GenerationBilledValueWei *BigUInt `protobuf:"bytes,17,opt,name=generation_billed_value_wei,json=generationBilledValueWei,proto3" json:"generation_billed_value_wei,omitempty"`
+	GenerationFundedValueWei *BigUInt `protobuf:"bytes,18,opt,name=generation_funded_value_wei,json=generationFundedValueWei,proto3" json:"generation_funded_value_wei,omitempty"`
+	// The price this session was pinned to at open. Carried so a reader
+	// can recompute billed_value_wei without trusting it.
+	AmountWei *BigUInt `protobuf:"bytes,19,opt,name=amount_wei,json=amountWei,proto3" json:"amount_wei,omitempty"`
+	PerUnits  uint64   `protobuf:"varint,20,opt,name=per_units,json=perUnits,proto3" json:"per_units,omitempty"`
+	// Monotonic per session_id and unchanged by authorization revision.
+	// (session_id, settlement_seq) is the replay binding: a record is
+	// meaningful for exactly one session at exactly one point in its life.
+	SettlementSeq uint64 `protobuf:"varint,21,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
+	// When this record was produced. A record is a statement about the
+	// session as of this instant, not a cached blob.
+	IssuedAt string `protobuf:"bytes,22,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
+	// Session state when the record was produced: "open", "winding_down"
+	// or "closed". Distinguishes an interim snapshot from a final
+	// settlement.
+	State string `protobuf:"bytes,23,opt,name=state,proto3" json:"state,omitempty"`
+	// Broker-assigned id for a single job exchange, matching
+	// `Livepeer-Job-Id`. REQUIRED on a paid-job settlement.
+	//
+	// job_id is broker-assigned; request_id and authorization_id provide the
+	// caller-owned and payer-owned bindings.
+	JobId string `protobuf:"bytes,24,opt,name=job_id,json=jobId,proto3" json:"job_id,omitempty"`
+	// Historical ticket-session curve position. Authorization-only brokers
+	// MUST leave this zero; billed_value_wei is computed on the authorization's
+	// cumulative units.
+	PaymentCumulativeUnits uint64 `protobuf:"varint,25,opt,name=payment_cumulative_units,json=paymentCumulativeUnits,proto3" json:"payment_cumulative_units,omitempty"`
+	// The GATEWAY's own id for this session, echoed from session open.
+	// REQUIRED on a paid-session settlement.
+	//
+	// This is the identifier the session consumer issued itself.
+	GatewaySessionId string `protobuf:"bytes,26,opt,name=gateway_session_id,json=gatewaySessionId,proto3" json:"gateway_session_id,omitempty"`
+	// The gateway's own id for this EXCHANGE, echoed from
+	// `Livepeer-Request-Id`. REQUIRED on a paid-job settlement.
+	//
+	// This is the counterpart to gateway_session_id on the job path and MUST
+	// match the required Livepeer-Request-Id.
+	RequestId string `protobuf:"bytes,27,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// ---- authorization-backed account settlement ----
+	// Required for paid-workload settlements. These fields keep account
+	// funding, temporary reservation, and actual debit visibly distinct.
+	AuthorizationId        string   `protobuf:"bytes,28,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	AuthorizedValueWei     *BigUInt `protobuf:"bytes,29,opt,name=authorized_value_wei,json=authorizedValueWei,proto3" json:"authorized_value_wei,omitempty"`
+	ReservedValueWei       *BigUInt `protobuf:"bytes,30,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
+	ReleasedValueWei       *BigUInt `protobuf:"bytes,31,opt,name=released_value_wei,json=releasedValueWei,proto3" json:"released_value_wei,omitempty"`
+	AccountFundingValueWei *BigUInt `protobuf:"bytes,32,opt,name=account_funding_value_wei,json=accountFundingValueWei,proto3" json:"account_funding_value_wei,omitempty"`
+	AccountVersion         uint64   `protobuf:"varint,33,opt,name=account_version,json=accountVersion,proto3" json:"account_version,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *SettlementRecord) Reset() {
 	*x = SettlementRecord{}
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[13]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1074,7 +1695,7 @@ func (x *SettlementRecord) String() string {
 func (*SettlementRecord) ProtoMessage() {}
 
 func (x *SettlementRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[13]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1087,7 +1708,7 @@ func (x *SettlementRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SettlementRecord.ProtoReflect.Descriptor instead.
 func (*SettlementRecord) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{13}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *SettlementRecord) GetAcceptedQuoteRef() *QuoteRef {
@@ -1153,6 +1774,341 @@ func (x *SettlementRecord) GetBreakdown() map[string]string {
 	return nil
 }
 
+func (x *SettlementRecord) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetPredecessorWorkId() string {
+	if x != nil {
+		return x.PredecessorWorkId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetRotationGeneration() uint32 {
+	if x != nil {
+		return x.RotationGeneration
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetClaimedUnits() uint64 {
+	if x != nil {
+		return x.ClaimedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetDebitedUnits() uint64 {
+	if x != nil {
+		return x.DebitedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetGenerationDebitedUnits() uint64 {
+	if x != nil {
+		return x.GenerationDebitedUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetGenerationBilledValueWei() *BigUInt {
+	if x != nil {
+		return x.GenerationBilledValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetGenerationFundedValueWei() *BigUInt {
+	if x != nil {
+		return x.GenerationFundedValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetAmountWei() *BigUInt {
+	if x != nil {
+		return x.AmountWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetPerUnits() uint64 {
+	if x != nil {
+		return x.PerUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetSettlementSeq() uint64 {
+	if x != nil {
+		return x.SettlementSeq
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetIssuedAt() string {
+	if x != nil {
+		return x.IssuedAt
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetState() string {
+	if x != nil {
+		return x.State
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetJobId() string {
+	if x != nil {
+		return x.JobId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetPaymentCumulativeUnits() uint64 {
+	if x != nil {
+		return x.PaymentCumulativeUnits
+	}
+	return 0
+}
+
+func (x *SettlementRecord) GetGatewaySessionId() string {
+	if x != nil {
+		return x.GatewaySessionId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetAuthorizationId() string {
+	if x != nil {
+		return x.AuthorizationId
+	}
+	return ""
+}
+
+func (x *SettlementRecord) GetAuthorizedValueWei() *BigUInt {
+	if x != nil {
+		return x.AuthorizedValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetReservedValueWei() *BigUInt {
+	if x != nil {
+		return x.ReservedValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetReleasedValueWei() *BigUInt {
+	if x != nil {
+		return x.ReleasedValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetAccountFundingValueWei() *BigUInt {
+	if x != nil {
+		return x.AccountFundingValueWei
+	}
+	return nil
+}
+
+func (x *SettlementRecord) GetAccountVersion() uint64 {
+	if x != nil {
+		return x.AccountVersion
+	}
+	return 0
+}
+
+// NonAdmissionRecord is a broker's signed statement that it never
+// admitted an exchange for a request id.
+//
+// It exists because expiry proves an envelope can never be spent AGAIN
+// and proves nothing about whether it was already used. A customer can
+// submit an envelope, take the work, withhold the job id and settlement
+// from its clearinghouse, wait out expiry and ask for the money back —
+// and chain state cannot tell that apart from genuine non-use, because a
+// losing ticket is never redeemed and most tickets lose.
+//
+// So this is the evidence a refund needs, and it is deliberately shaped
+// so it cannot be laundered through the party that benefits from it:
+// a consumer fetches it directly from the broker, keyed on an id the
+// CONSUMER issued.
+//
+// It is a claim, not a proof — but an attributable one. A broker that
+// signs a non-admission and has also signed a settlement for the same
+// request has produced two contradictory statements under one delegated
+// key, which is why both MUST be retained.
+type NonAdmissionRecord struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Always "paid-job/v1" or "paid-session/v1". Present so a record
+	// cannot be replayed across protocols.
+	Protocol string `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	// The request id the consumer issued and queried by. This is the ONE
+	// field below that the broker independently knows: it looked this id
+	// up in its own store and found nothing.
+	RequestId string `protobuf:"bytes,2,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	// ---- caller-supplied scope ----
+	//
+	// EVERYTHING IN THIS BLOCK IS ECHOED FROM THE QUERY, NOT OBSERVED BY
+	// THE BROKER. It describes an exchange that never happened, so the
+	// broker has nothing of its own to check it against.
+	//
+	// It is signed anyway, as scope: a record naming only a request id
+	// could be replayed against a different envelope that happened to
+	// carry the same id from another payer. A consumer MUST compare every
+	// field to its own record before acting — the broker's signature here
+	// attests "I have no record of request_id X, asked in this context",
+	// and not "these values are true".
+	WorkId    string `protobuf:"bytes,3,opt,name=work_id,json=workId,proto3" json:"work_id,omitempty"`
+	Sender    []byte `protobuf:"bytes,4,opt,name=sender,proto3" json:"sender,omitempty"`
+	Recipient []byte `protobuf:"bytes,5,opt,name=recipient,proto3" json:"recipient,omitempty"`
+	// Full quote identity, mirroring a settlement's accepted_quote_ref
+	// including both fingerprints, so the record is bound to the same
+	// commercial terms the exchange would have carried. Caller-supplied,
+	// like the rest of this block.
+	AcceptedQuoteRef *QuoteRef `protobuf:"bytes,6,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
+	// The broker asserting it, so a consumer knows whose key must have
+	// signed and whose statement to hold against them later.
+	BrokerEthAddress string `protobuf:"bytes,7,opt,name=broker_eth_address,json=brokerEthAddress,proto3" json:"broker_eth_address,omitempty"`
+	// When the broker looked. RFC3339 with nanoseconds.
+	ObservedAt string `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	// The earliest moment this broker's records are continuous through.
+	//
+	// A consumer MUST reject the record unless coverage began no later
+	// than its own job's issuance: a store that was reset, restored from
+	// backup, or reinitialized after issuance cannot distinguish "never
+	// admitted" from "forgot". A broker whose store lost continuity MUST
+	// move this forward and thereby disqualify itself for jobs older than
+	// the gap, rather than attest across it.
+	CoverageStartedAt string                     `protobuf:"bytes,9,opt,name=coverage_started_at,json=coverageStartedAt,proto3" json:"coverage_started_at,omitempty"`
+	Outcome           NonAdmissionRecord_Outcome `protobuf:"varint,10,opt,name=outcome,proto3,enum=livepeer.payments.v1.NonAdmissionRecord_Outcome" json:"outcome,omitempty"`
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *NonAdmissionRecord) Reset() {
+	*x = NonAdmissionRecord{}
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[18]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NonAdmissionRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NonAdmissionRecord) ProtoMessage() {}
+
+func (x *NonAdmissionRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[18]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NonAdmissionRecord.ProtoReflect.Descriptor instead.
+func (*NonAdmissionRecord) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *NonAdmissionRecord) GetProtocol() string {
+	if x != nil {
+		return x.Protocol
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetWorkId() string {
+	if x != nil {
+		return x.WorkId
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetSender() []byte {
+	if x != nil {
+		return x.Sender
+	}
+	return nil
+}
+
+func (x *NonAdmissionRecord) GetRecipient() []byte {
+	if x != nil {
+		return x.Recipient
+	}
+	return nil
+}
+
+func (x *NonAdmissionRecord) GetAcceptedQuoteRef() *QuoteRef {
+	if x != nil {
+		return x.AcceptedQuoteRef
+	}
+	return nil
+}
+
+func (x *NonAdmissionRecord) GetBrokerEthAddress() string {
+	if x != nil {
+		return x.BrokerEthAddress
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetObservedAt() string {
+	if x != nil {
+		return x.ObservedAt
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetCoverageStartedAt() string {
+	if x != nil {
+		return x.CoverageStartedAt
+	}
+	return ""
+}
+
+func (x *NonAdmissionRecord) GetOutcome() NonAdmissionRecord_Outcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return NonAdmissionRecord_OUTCOME_UNSPECIFIED
+}
+
 // TicketStatus reports the payee daemon's disposition for one ticket
 // inside a ProcessPayment batch.
 type TicketStatus struct {
@@ -1167,7 +2123,7 @@ type TicketStatus struct {
 
 func (x *TicketStatus) Reset() {
 	*x = TicketStatus{}
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1179,7 +2135,7 @@ func (x *TicketStatus) String() string {
 func (*TicketStatus) ProtoMessage() {}
 
 func (x *TicketStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[14]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1192,7 +2148,7 @@ func (x *TicketStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TicketStatus.ProtoReflect.Descriptor instead.
 func (*TicketStatus) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{14}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *TicketStatus) GetSenderNonce() uint32 {
@@ -1242,7 +2198,7 @@ type PendingRedemption struct {
 
 func (x *PendingRedemption) Reset() {
 	*x = PendingRedemption{}
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1254,7 +2210,7 @@ func (x *PendingRedemption) String() string {
 func (*PendingRedemption) ProtoMessage() {}
 
 func (x *PendingRedemption) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_types_proto_msgTypes[15]
+	mi := &file_livepeer_payments_v1_types_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1267,7 +2223,7 @@ func (x *PendingRedemption) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PendingRedemption.ProtoReflect.Descriptor instead.
 func (*PendingRedemption) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{15}
+	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *PendingRedemption) GetTicketHash() []byte {
@@ -1373,7 +2329,56 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xfa\x05\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xa4\x06\n" +
+	"\x19SpendAuthorizationPayload\x12\x16\n" +
+	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
+	"\x05payer\x18\x02 \x01(\fR\x05payer\x12\x14\n" +
+	"\x05payee\x18\x03 \x01(\fR\x05payee\x12)\n" +
+	"\x10authorization_id\x18\x04 \x01(\tR\x0fauthorizationId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x05 \x01(\tR\trequestId\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x06 \x01(\tR\tsessionId\x12\x1a\n" +
+	"\bprotocol\x18\a \x01(\tR\bprotocol\x12\x1e\n" +
+	"\n" +
+	"capability\x18\b \x01(\tR\n" +
+	"capability\x12\x1a\n" +
+	"\boffering\x18\t \x01(\tR\boffering\x12J\n" +
+	"\x0eaccepted_price\x18\n" +
+	" \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12A\n" +
+	"\rmax_debit_wei\x18\v \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\vmaxDebitWei\x12&\n" +
+	"\x0fmax_total_units\x18\f \x01(\x04R\rmaxTotalUnits\x12\x1d\n" +
+	"\n" +
+	"not_before\x18\r \x01(\tR\tnotBefore\x12\x1d\n" +
+	"\n" +
+	"expires_at\x18\x0e \x01(\tR\texpiresAt\x12%\n" +
+	"\x0erequest_digest\x18\x0f \x01(\fR\rrequestDigest\x12*\n" +
+	"\x11caller_public_key\x18\x10 \x01(\fR\x0fcallerPublicKey\x12\x1a\n" +
+	"\brevision\x18\x11 \x01(\x04R\brevision\x12@\n" +
+	"\x1cpredecessor_authorization_id\x18\x12 \x01(\tR\x1apredecessorAuthorizationId\x12\x1d\n" +
+	"\n" +
+	"broker_uri\x18\x13 \x01(\tR\tbrokerUri\x12\x19\n" +
+	"\bchain_id\x18\x14 \x01(\x04R\achainId\x12\"\n" +
+	"\fdenomination\x18\x15 \x01(\tR\fdenomination\"}\n" +
+	"\x12SpendAuthorization\x12I\n" +
+	"\apayload\x18\x01 \x01(\v2/.livepeer.payments.v1.SpendAuthorizationPayloadR\apayload\x12\x1c\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xbc\x01\n" +
+	"\x14AccountFundingIntent\x12O\n" +
+	"\x14target_available_wei\x18\x01 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x12targetAvailableWei\x12S\n" +
+	"\x16observed_available_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x14observedAvailableWei\"\xf0\x03\n" +
+	"\x14WholesaleAccountView\x12\x14\n" +
+	"\x05payer\x18\x01 \x01(\fR\x05payer\x12\x14\n" +
+	"\x05payee\x18\x02 \x01(\fR\x05payee\x12K\n" +
+	"\x12credited_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10creditedValueWei\x12K\n" +
+	"\x12reserved_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10reservedValueWei\x12I\n" +
+	"\x11debited_value_wei\x18\x05 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0fdebitedValueWei\x12M\n" +
+	"\x13available_value_wei\x18\x06 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x11availableValueWei\x12\x18\n" +
+	"\aversion\x18\a \x01(\x04R\aversion\x12\x1f\n" +
+	"\vobserved_at\x18\b \x01(\tR\n" +
+	"observedAt\x12\x19\n" +
+	"\bchain_id\x18\t \x01(\x04R\achainId\x12\"\n" +
+	"\fdenomination\x18\n" +
+	" \x01(\tR\fdenomination\"\xd1\x0f\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -1383,10 +2388,38 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x10funded_value_wei\x18\x06 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12G\n" +
 	"\x10billed_value_wei\x18\a \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0ebilledValueWei\x12R\n" +
 	"\aoutcome\x18\b \x01(\x0e28.livepeer.payments.v1.SettlementRecord.SettlementOutcomeR\aoutcome\x12S\n" +
-	"\tbreakdown\x18\t \x03(\v25.livepeer.payments.v1.SettlementRecord.BreakdownEntryR\tbreakdown\x1a<\n" +
+	"\tbreakdown\x18\t \x03(\v25.livepeer.payments.v1.SettlementRecord.BreakdownEntryR\tbreakdown\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\n" +
+	" \x01(\tR\tsessionId\x12\x17\n" +
+	"\awork_id\x18\v \x01(\tR\x06workId\x12.\n" +
+	"\x13predecessor_work_id\x18\f \x01(\tR\x11predecessorWorkId\x12/\n" +
+	"\x13rotation_generation\x18\r \x01(\rR\x12rotationGeneration\x12#\n" +
+	"\rclaimed_units\x18\x0e \x01(\x04R\fclaimedUnits\x12#\n" +
+	"\rdebited_units\x18\x0f \x01(\x04R\fdebitedUnits\x128\n" +
+	"\x18generation_debited_units\x18\x10 \x01(\x04R\x16generationDebitedUnits\x12\\\n" +
+	"\x1bgeneration_billed_value_wei\x18\x11 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x18generationBilledValueWei\x12\\\n" +
+	"\x1bgeneration_funded_value_wei\x18\x12 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x18generationFundedValueWei\x12<\n" +
+	"\n" +
+	"amount_wei\x18\x13 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\tamountWei\x12\x1b\n" +
+	"\tper_units\x18\x14 \x01(\x04R\bperUnits\x12%\n" +
+	"\x0esettlement_seq\x18\x15 \x01(\x04R\rsettlementSeq\x12\x1b\n" +
+	"\tissued_at\x18\x16 \x01(\tR\bissuedAt\x12\x14\n" +
+	"\x05state\x18\x17 \x01(\tR\x05state\x12\x15\n" +
+	"\x06job_id\x18\x18 \x01(\tR\x05jobId\x128\n" +
+	"\x18payment_cumulative_units\x18\x19 \x01(\x04R\x16paymentCumulativeUnits\x12,\n" +
+	"\x12gateway_session_id\x18\x1a \x01(\tR\x10gatewaySessionId\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x1b \x01(\tR\trequestId\x12)\n" +
+	"\x10authorization_id\x18\x1c \x01(\tR\x0fauthorizationId\x12O\n" +
+	"\x14authorized_value_wei\x18\x1d \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x12authorizedValueWei\x12K\n" +
+	"\x12reserved_value_wei\x18\x1e \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10reservedValueWei\x12K\n" +
+	"\x12released_value_wei\x18\x1f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10releasedValueWei\x12X\n" +
+	"\x19account_funding_value_wei\x18  \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x16accountFundingValueWei\x12'\n" +
+	"\x0faccount_version\x18! \x01(\x04R\x0eaccountVersion\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x89\x01\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9b\x01\n" +
 	"\x11SettlementOutcome\x12\"\n" +
 	"\x1eSETTLEMENT_OUTCOME_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05EXACT\x10\x01\x12\x0f\n" +
@@ -1394,7 +2427,25 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"OVERFUNDED\x10\x03\x12\x15\n" +
 	"\x11STOPPED_AT_BUDGET\x10\x04\x12\r\n" +
-	"\tTOPPED_UP\x10\x05\"\xcc\x01\n" +
+	"\tTOPPED_UP\x10\x05\x12\x10\n" +
+	"\fDEBIT_FAILED\x10\x06\"\xed\x03\n" +
+	"\x12NonAdmissionRecord\x12\x1a\n" +
+	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x02 \x01(\tR\trequestId\x12\x17\n" +
+	"\awork_id\x18\x03 \x01(\tR\x06workId\x12\x16\n" +
+	"\x06sender\x18\x04 \x01(\fR\x06sender\x12\x1c\n" +
+	"\trecipient\x18\x05 \x01(\fR\trecipient\x12L\n" +
+	"\x12accepted_quote_ref\x18\x06 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12,\n" +
+	"\x12broker_eth_address\x18\a \x01(\tR\x10brokerEthAddress\x12\x1f\n" +
+	"\vobserved_at\x18\b \x01(\tR\n" +
+	"observedAt\x12.\n" +
+	"\x13coverage_started_at\x18\t \x01(\tR\x11coverageStartedAt\x12J\n" +
+	"\aoutcome\x18\n" +
+	" \x01(\x0e20.livepeer.payments.v1.NonAdmissionRecord.OutcomeR\aoutcome\"4\n" +
+	"\aOutcome\x12\x17\n" +
+	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x10\n" +
+	"\fNOT_ADMITTED\x10\x01\"\xcc\x01\n" +
 	"\fTicketStatus\x12!\n" +
 	"\fsender_nonce\x18\x01 \x01(\rR\vsenderNonce\x12W\n" +
 	"\x10rejection_reason\x18\x02 \x01(\x0e2,.livepeer.payments.v1.PaymentRejectionReasonR\x0frejectionReason\x12\x1f\n" +
@@ -1409,7 +2460,15 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"face_value\x18\x03 \x01(\fR\tfaceValue\x12\x1b\n" +
 	"\tqueued_at\x18\x04 \x01(\x03R\bqueuedAt\x12\x1a\n" +
-	"\battempts\x18\x05 \x01(\x05R\battempts*\xa6\x02\n" +
+	"\battempts\x18\x05 \x01(\x05R\battempts*\x9c\x02\n" +
+	"\x17SpendAuthorizationState\x12)\n" +
+	"%SPEND_AUTHORIZATION_STATE_UNSPECIFIED\x10\x00\x12\x1e\n" +
+	"\x1aSPEND_AUTHORIZATION_ISSUED\x10\x01\x12 \n" +
+	"\x1cSPEND_AUTHORIZATION_ADMITTED\x10\x02\x12\x1f\n" +
+	"\x1bSPEND_AUTHORIZATION_SETTLED\x10\x03\x12&\n" +
+	"\"SPEND_AUTHORIZATION_EXPIRED_UNUSED\x10\x04\x12'\n" +
+	"#SPEND_AUTHORIZATION_OUTCOME_UNKNOWN\x10\x05\x12\"\n" +
+	"\x1eSPEND_AUTHORIZATION_SUPERSEDED\x10\x06*\xa6\x02\n" +
 	"\x16PaymentRejectionReason\x12(\n" +
 	"$PAYMENT_REJECTION_REASON_UNSPECIFIED\x10\x00\x123\n" +
 	"/PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND\x10\x01\x12)\n" +
@@ -1430,51 +2489,76 @@ func file_livepeer_payments_v1_types_proto_rawDescGZIP() []byte {
 	return file_livepeer_payments_v1_types_proto_rawDescData
 }
 
-var file_livepeer_payments_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_livepeer_payments_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
+var file_livepeer_payments_v1_types_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_livepeer_payments_v1_types_proto_msgTypes = make([]protoimpl.MessageInfo, 22)
 var file_livepeer_payments_v1_types_proto_goTypes = []any{
-	(PaymentRejectionReason)(0),             // 0: livepeer.payments.v1.PaymentRejectionReason
-	(SettlementRecord_SettlementOutcome)(0), // 1: livepeer.payments.v1.SettlementRecord.SettlementOutcome
-	(*PriceInfo)(nil),                       // 2: livepeer.payments.v1.PriceInfo
-	(*TicketParams)(nil),                    // 3: livepeer.payments.v1.TicketParams
-	(*TicketSenderParams)(nil),              // 4: livepeer.payments.v1.TicketSenderParams
-	(*TicketExpirationParams)(nil),          // 5: livepeer.payments.v1.TicketExpirationParams
-	(*Payment)(nil),                         // 6: livepeer.payments.v1.Payment
-	(*OfferingPrice)(nil),                   // 7: livepeer.payments.v1.OfferingPrice
-	(*CapabilityEntry)(nil),                 // 8: livepeer.payments.v1.CapabilityEntry
-	(*HealthRequest)(nil),                   // 9: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),                  // 10: livepeer.payments.v1.HealthResponse
-	(*BigUInt)(nil),                         // 11: livepeer.payments.v1.BigUInt
-	(*QuoteRef)(nil),                        // 12: livepeer.payments.v1.QuoteRef
-	(*AcceptedPrice)(nil),                   // 13: livepeer.payments.v1.AcceptedPrice
-	(*FundingIntent)(nil),                   // 14: livepeer.payments.v1.FundingIntent
-	(*SettlementRecord)(nil),                // 15: livepeer.payments.v1.SettlementRecord
-	(*TicketStatus)(nil),                    // 16: livepeer.payments.v1.TicketStatus
-	(*PendingRedemption)(nil),               // 17: livepeer.payments.v1.PendingRedemption
-	nil,                                     // 18: livepeer.payments.v1.SettlementRecord.BreakdownEntry
+	(SpendAuthorizationState)(0),            // 0: livepeer.payments.v1.SpendAuthorizationState
+	(PaymentRejectionReason)(0),             // 1: livepeer.payments.v1.PaymentRejectionReason
+	(SettlementRecord_SettlementOutcome)(0), // 2: livepeer.payments.v1.SettlementRecord.SettlementOutcome
+	(NonAdmissionRecord_Outcome)(0),         // 3: livepeer.payments.v1.NonAdmissionRecord.Outcome
+	(*PriceInfo)(nil),                       // 4: livepeer.payments.v1.PriceInfo
+	(*TicketParams)(nil),                    // 5: livepeer.payments.v1.TicketParams
+	(*TicketSenderParams)(nil),              // 6: livepeer.payments.v1.TicketSenderParams
+	(*TicketExpirationParams)(nil),          // 7: livepeer.payments.v1.TicketExpirationParams
+	(*Payment)(nil),                         // 8: livepeer.payments.v1.Payment
+	(*OfferingPrice)(nil),                   // 9: livepeer.payments.v1.OfferingPrice
+	(*CapabilityEntry)(nil),                 // 10: livepeer.payments.v1.CapabilityEntry
+	(*HealthRequest)(nil),                   // 11: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),                  // 12: livepeer.payments.v1.HealthResponse
+	(*BigUInt)(nil),                         // 13: livepeer.payments.v1.BigUInt
+	(*QuoteRef)(nil),                        // 14: livepeer.payments.v1.QuoteRef
+	(*AcceptedPrice)(nil),                   // 15: livepeer.payments.v1.AcceptedPrice
+	(*FundingIntent)(nil),                   // 16: livepeer.payments.v1.FundingIntent
+	(*SpendAuthorizationPayload)(nil),       // 17: livepeer.payments.v1.SpendAuthorizationPayload
+	(*SpendAuthorization)(nil),              // 18: livepeer.payments.v1.SpendAuthorization
+	(*AccountFundingIntent)(nil),            // 19: livepeer.payments.v1.AccountFundingIntent
+	(*WholesaleAccountView)(nil),            // 20: livepeer.payments.v1.WholesaleAccountView
+	(*SettlementRecord)(nil),                // 21: livepeer.payments.v1.SettlementRecord
+	(*NonAdmissionRecord)(nil),              // 22: livepeer.payments.v1.NonAdmissionRecord
+	(*TicketStatus)(nil),                    // 23: livepeer.payments.v1.TicketStatus
+	(*PendingRedemption)(nil),               // 24: livepeer.payments.v1.PendingRedemption
+	nil,                                     // 25: livepeer.payments.v1.SettlementRecord.BreakdownEntry
 }
 var file_livepeer_payments_v1_types_proto_depIdxs = []int32{
-	5,  // 0: livepeer.payments.v1.TicketParams.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
-	3,  // 1: livepeer.payments.v1.Payment.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	5,  // 2: livepeer.payments.v1.Payment.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
-	4,  // 3: livepeer.payments.v1.Payment.ticket_sender_params:type_name -> livepeer.payments.v1.TicketSenderParams
-	2,  // 4: livepeer.payments.v1.Payment.expected_price:type_name -> livepeer.payments.v1.PriceInfo
-	2,  // 5: livepeer.payments.v1.OfferingPrice.price_info:type_name -> livepeer.payments.v1.PriceInfo
-	7,  // 6: livepeer.payments.v1.CapabilityEntry.offerings:type_name -> livepeer.payments.v1.OfferingPrice
-	11, // 7: livepeer.payments.v1.AcceptedPrice.price_per_unit_wei:type_name -> livepeer.payments.v1.BigUInt
-	12, // 8: livepeer.payments.v1.AcceptedPrice.quote_ref:type_name -> livepeer.payments.v1.QuoteRef
-	11, // 9: livepeer.payments.v1.FundingIntent.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	12, // 10: livepeer.payments.v1.SettlementRecord.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
-	11, // 11: livepeer.payments.v1.SettlementRecord.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	11, // 12: livepeer.payments.v1.SettlementRecord.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	1,  // 13: livepeer.payments.v1.SettlementRecord.outcome:type_name -> livepeer.payments.v1.SettlementRecord.SettlementOutcome
-	18, // 14: livepeer.payments.v1.SettlementRecord.breakdown:type_name -> livepeer.payments.v1.SettlementRecord.BreakdownEntry
-	0,  // 15: livepeer.payments.v1.TicketStatus.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
-	16, // [16:16] is the sub-list for method output_type
-	16, // [16:16] is the sub-list for method input_type
-	16, // [16:16] is the sub-list for extension type_name
-	16, // [16:16] is the sub-list for extension extendee
-	0,  // [0:16] is the sub-list for field type_name
+	7,  // 0: livepeer.payments.v1.TicketParams.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
+	5,  // 1: livepeer.payments.v1.Payment.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	7,  // 2: livepeer.payments.v1.Payment.expiration_params:type_name -> livepeer.payments.v1.TicketExpirationParams
+	6,  // 3: livepeer.payments.v1.Payment.ticket_sender_params:type_name -> livepeer.payments.v1.TicketSenderParams
+	4,  // 4: livepeer.payments.v1.Payment.expected_price:type_name -> livepeer.payments.v1.PriceInfo
+	4,  // 5: livepeer.payments.v1.OfferingPrice.price_info:type_name -> livepeer.payments.v1.PriceInfo
+	9,  // 6: livepeer.payments.v1.CapabilityEntry.offerings:type_name -> livepeer.payments.v1.OfferingPrice
+	13, // 7: livepeer.payments.v1.AcceptedPrice.price_per_unit_wei:type_name -> livepeer.payments.v1.BigUInt
+	14, // 8: livepeer.payments.v1.AcceptedPrice.quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	13, // 9: livepeer.payments.v1.FundingIntent.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	15, // 10: livepeer.payments.v1.SpendAuthorizationPayload.accepted_price:type_name -> livepeer.payments.v1.AcceptedPrice
+	13, // 11: livepeer.payments.v1.SpendAuthorizationPayload.max_debit_wei:type_name -> livepeer.payments.v1.BigUInt
+	17, // 12: livepeer.payments.v1.SpendAuthorization.payload:type_name -> livepeer.payments.v1.SpendAuthorizationPayload
+	13, // 13: livepeer.payments.v1.AccountFundingIntent.target_available_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 14: livepeer.payments.v1.AccountFundingIntent.observed_available_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 15: livepeer.payments.v1.WholesaleAccountView.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 16: livepeer.payments.v1.WholesaleAccountView.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 17: livepeer.payments.v1.WholesaleAccountView.debited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 18: livepeer.payments.v1.WholesaleAccountView.available_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	14, // 19: livepeer.payments.v1.SettlementRecord.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	13, // 20: livepeer.payments.v1.SettlementRecord.funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 21: livepeer.payments.v1.SettlementRecord.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	2,  // 22: livepeer.payments.v1.SettlementRecord.outcome:type_name -> livepeer.payments.v1.SettlementRecord.SettlementOutcome
+	25, // 23: livepeer.payments.v1.SettlementRecord.breakdown:type_name -> livepeer.payments.v1.SettlementRecord.BreakdownEntry
+	13, // 24: livepeer.payments.v1.SettlementRecord.generation_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 25: livepeer.payments.v1.SettlementRecord.generation_funded_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 26: livepeer.payments.v1.SettlementRecord.amount_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 27: livepeer.payments.v1.SettlementRecord.authorized_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 28: livepeer.payments.v1.SettlementRecord.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 29: livepeer.payments.v1.SettlementRecord.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	13, // 30: livepeer.payments.v1.SettlementRecord.account_funding_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	14, // 31: livepeer.payments.v1.NonAdmissionRecord.accepted_quote_ref:type_name -> livepeer.payments.v1.QuoteRef
+	3,  // 32: livepeer.payments.v1.NonAdmissionRecord.outcome:type_name -> livepeer.payments.v1.NonAdmissionRecord.Outcome
+	1,  // 33: livepeer.payments.v1.TicketStatus.rejection_reason:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	34, // [34:34] is the sub-list for method output_type
+	34, // [34:34] is the sub-list for method input_type
+	34, // [34:34] is the sub-list for extension type_name
+	34, // [34:34] is the sub-list for extension extendee
+	0,  // [0:34] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_types_proto_init() }
@@ -1487,8 +2571,8 @@ func file_livepeer_payments_v1_types_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_payments_v1_types_proto_rawDesc), len(file_livepeer_payments_v1_types_proto_rawDesc)),
-			NumEnums:      2,
-			NumMessages:   17,
+			NumEnums:      4,
+			NumMessages:   22,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

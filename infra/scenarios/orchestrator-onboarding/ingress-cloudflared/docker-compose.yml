@@ -20,7 +20,7 @@
 
 services:
   cloudflared:
-    image: cloudflare/cloudflared:${CLOUDFLARED_TAG}
+    image: cloudflare/cloudflared:${CLOUDFLARED_TAG:-latest}
     container_name: cloudflared
     hostname: cloudflared
     restart: unless-stopped

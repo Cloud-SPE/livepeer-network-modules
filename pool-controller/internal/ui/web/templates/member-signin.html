@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Member sign-in — Livepeer pool</title>
+<script>
+(() => {
+  try {
+    const theme = localStorage.getItem("operator-theme");
+    if (theme === "light") {
+      document.documentElement.dataset.theme = "light";
+    }
+  } catch (_) {}
+})();
+</script>
+<link rel="stylesheet" href="/member/assets/style.css?v={{.Version}}">
+<link rel="stylesheet" href="/member/assets/pool.css?v={{.Version}}">
+<link rel="stylesheet" href="/member/assets/portal.css?v={{.Version}}">
+<script src="/member/assets/portal.js?v={{.Version}}" defer></script>
+</head>
+<body>
+<main class="auth-page">
+  <section class="auth-card auth-card-wide">
+    <p class="eyebrow">Livepeer pool</p>
+    <h1>Sign in with your wallet</h1>
+    <p class="muted">Your wallet address is your identity in the pool. Signing proves you hold it; nothing is sent on chain and no gas is spent. The pool pays earnings to the address you sign with, so sign with the address you want paid.</p>
+    {{if .Error}}<p class="message message-error">{{.Error}}</p>{{end}}
+    <div id="signinStatus" class="message" hidden></div>
+
+    <form id="signinForm" class="login-form" autocomplete="off">
+      <label for="signinAddress">Wallet address</label>
+      <input type="text" id="signinAddress" name="address" placeholder="0x…" spellcheck="false" autocomplete="off">
+      <p class="small muted">Leave blank and use <strong>Connect wallet</strong> to take the address from a browser wallet.</p>
+
+      <label for="signinDisplayName">Display name <span class="muted">(optional)</span></label>
+      <input type="text" id="signinDisplayName" name="display_name" autocomplete="off">
+
+      <label for="signinContact">Contact <span class="muted">(optional, so the operator can reach you)</span></label>
+      <input type="text" id="signinContact" name="contact" autocomplete="off">
+
+      <div class="actions">
+        <button type="button" id="signinConnect" class="primary-button">Connect wallet &amp; sign in</button>
+        <button type="button" id="signinManual" class="secondary">Sign manually instead</button>
+      </div>
+    </form>
+
+    <section id="signinManualPanel" class="manual-signin" hidden>
+      <h2>Sign the message yourself</h2>
+      <p class="small muted">For a hardware wallet or an air-gapped signer. Copy the message below, sign it as a personal message (EIP-191) with the address above, and paste the 65-byte signature back.</p>
+      <div class="copy-inline">
+        <button type="button" class="copy-button" id="signinCopyMessage">Copy message</button>
+        <span class="small muted" id="signinNonceExpiry"></span>
+      </div>
+      <pre id="signinMessage">Request a message first.</pre>
+      <label for="signinSignature">Signature</label>
+      <input type="text" id="signinSignature" placeholder="0x…" spellcheck="false" autocomplete="off">
+      <div class="actions">
+        <button type="button" id="signinRequestNonce" class="secondary">Request message</button>
+        <button type="button" id="signinVerify" class="primary-button">Verify signature</button>
+      </div>
+      <p class="small muted">A message is single-use and expires. Request a fresh one if verification fails.</p>
+    </section>
+  </section>
+</main>
+</body>
+</html>

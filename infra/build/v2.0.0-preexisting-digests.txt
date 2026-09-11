@@ -1,0 +1,8 @@
+# Digests of tztcloud/*:v2.0.0 as they existed before the 2026-08-22 republish.
+# Recorded so the overwrite is reversible: the old images still exist by digest,
+# they just stop being reachable by tag. To roll one back:
+#   docker pull <digest> && docker tag <digest> <repo>:v2.0.0 && docker push <repo>:v2.0.0
+
+tztcloud/livepeer-payment-daemon@sha256:b8e2bfc5f091277838bad52ed9e3d4aed83e9b8874aa75d8e3e2b3b6c79b4f01
+tztcloud/livepeer-protocol-daemon@sha256:c4c2f901a107cd5f53aea5a89c3070b43fcf1a67459c85bb2d9d63bf334ce1b9
+tztcloud/livepeer-service-registry-daemon@sha256:72ac2f8e533c8defce370d524801d630d3212bb2308820bff981a5acb09e5170

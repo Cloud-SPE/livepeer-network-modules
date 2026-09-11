@@ -7,3 +7,15 @@ brokers:
 
 publish:
   manifest_ttl: 24h
+  # Window assigned to a settlement key the broker announces without one.
+  # settlement_key_validity: 8760h
+
+# Settlement key delegation is discovered: the broker announces its key at
+# GET /registry/settlement-keys and the coordinator carries it into the
+# candidate. Pin a key here only for a broker that cannot announce one.
+#
+# settlement_keys:
+#   - label: pool-edge
+#     public_key: "0x04..."          # 0x04 + 128 hex
+#     not_before: 2026-09-07T00:00:00Z
+#     expires_at: 2027-09-07T00:00:00Z

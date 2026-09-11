@@ -1,441 +1,192 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
-	"errors"
+	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
-	"sync"
-	"sync/atomic"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
-	"github.com/prometheus/client_golang/prometheus/testutil"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/protobuf/proto"
 )
 
-// fakeLiveCounter is a goroutine-safe LiveCounter for middleware tests.
-type fakeLiveCounter struct {
-	v atomic.Uint64
+func stubLookup(capability, offering string) (CapabilitySpec, bool) {
+	if capability != "cap" || offering != "off" {
+		return CapabilitySpec{}, false
+	}
+	return CapabilitySpec{WorkUnit: "bytes", PricePerWorkUnitWei: big.NewInt(1), PerUnits: 1}, true
 }
 
-func (f *fakeLiveCounter) CurrentUnits() uint64 { return f.v.Load() }
-func (f *fakeLiveCounter) Add(n uint64)         { f.v.Add(n) }
+type accountPaymentClient struct {
+	*payment.Mock
+	admitted payment.AdmitAuthorizationRequest
+	settled  payment.SettleAuthorizationRequest
+}
 
-// makePaidRequest constructs a request with the standard Livepeer-* headers
-// the Payment middleware requires. workID is fixed so the daemon can
-// look up the session.
-func makePaidRequest(workID string) *http.Request {
-	r := httptest.NewRequest("POST", "/v1/cap", nil)
+func (c *accountPaymentClient) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
+	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
+}
+
+func (c *accountPaymentClient) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
+	c.admitted = req
+	return &payment.AdmitAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(900)}, Reserved: big.NewInt(100), Credited: new(big.Int)}, nil
+}
+
+func (c *accountPaymentClient) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
+	c.settled = req
+	return &payment.SettleAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(970)}, Billed: big.NewInt(30), Released: big.NewInt(70)}, nil
+}
+
+func (c *accountPaymentClient) AdvanceAuthorization(context.Context, payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
+	return nil, nil
+}
+
+func (c *accountPaymentClient) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
+	return nil, nil
+}
+func (c *accountPaymentClient) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+	return nil, nil
+}
+
+func bytes20ForBrokerTest(v byte) []byte { return bytes.Repeat([]byte{v}, 20) }
+
+func accountJobRequest(t *testing.T, body []byte) *http.Request {
+	t.Helper()
+	digest := sha256.Sum256(body)
+	p := &paymentsv1.SpendAuthorizationPayload{
+		Domain: "livepeer-spend-authorization/v1", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2),
+		ChainId: 42161, Denomination: "wei",
+		AuthorizationId: "auth-1", RequestId: "req-1", Protocol: "paid-job/v1", Capability: "cap", Offering: "off", BrokerUri: "https://broker.example",
+		AcceptedPrice: &paymentsv1.AcceptedPrice{PricePerUnitWei: &paymentsv1.BigUInt{Value: big.NewInt(1).Bytes()}, UnitsPerPrice: 1, WorkUnitName: "bytes", Capability: "cap", Offering: "off"},
+		MaxDebitWei:   &paymentsv1.BigUInt{Value: big.NewInt(100).Bytes()}, MaxTotalUnits: 100, RequestDigest: digest[:],
+	}
+	wire, err := proto.Marshal(&paymentsv1.SpendAuthorization{Payload: p})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/job", bytes.NewReader(body))
 	r.Header.Set(livepeerheader.Capability, "cap")
 	r.Header.Set(livepeerheader.Offering, "off")
-	r.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("dummy-payment")))
-	r.Header.Set(livepeerheader.SpecVersion, "0.1")
-	r.Header.Set(livepeerheader.Mode, "ws-realtime@v0")
-	// The Payment middleware reads RequestIDFromContext for work_id; the
-	// RequestID middleware would normally set this. Inline the same
-	// behavior for the test path.
-	ctx := context.WithValue(r.Context(), requestIDKey, workID)
-	return r.WithContext(ctx)
+	r.Header.Set(livepeerheader.Protocol, "paid-job/v1")
+	r.Header.Set(livepeerheader.Authorization, base64.StdEncoding.EncodeToString(wire))
+	return r.WithContext(context.WithValue(r.Context(), requestIDKey, "req-1"))
 }
 
-// stubLookup always returns a canned spec for any (capability, offering).
-func stubLookup(cap, off string) (CapabilitySpec, bool) {
-	return CapabilitySpec{
-		WorkUnit:            "bytes",
-		PricePerWorkUnitWei: big.NewInt(1),
-	}, true
-}
-
-type stubReceiptSink struct {
-	items []receipts.WorkReceipt
-	err   error
-}
-
-func (s *stubReceiptSink) UpsertWorkReceipt(_ context.Context, receipt receipts.WorkReceipt) error {
-	s.items = append(s.items, receipt)
-	return s.err
-}
-
-type invalidRecipientRandClient struct {
-	*payment.Mock
-}
-
-func (c *invalidRecipientRandClient) ProcessPayment(_ context.Context, req payment.ProcessPaymentRequest) (*payment.ProcessPaymentResult, error) {
-	if req.WorkID == "" {
-		return nil, errors.New("work_id is empty")
-	}
-	return &payment.ProcessPaymentResult{
-		Sender:            []byte("01234567890123456789"),
-		CreditedEV:        new(big.Int),
-		Balance:           new(big.Int),
-		TicketsRejected:   1,
-		DominantRejection: payment.PaymentRejectionReasonInvalidRecipientRand,
-		TicketStatus: []payment.TicketStatus{{
-			SenderNonce:     1,
-			RejectionReason: payment.PaymentRejectionReasonInvalidRecipientRand,
-			CreditedEV:      new(big.Int),
-		}},
-	}, nil
-}
-
-// TestPayment_TickerDisabledFallback documents the locked decision #6:
-// `--interim-debit-interval=0` reverts to the v0.2 single-debit path.
-// No SufficientBalance is invoked; one DebitBalance(seq=1) is issued at
-// handler completion.
-func TestPayment_TickerDisabledFallback(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-
-	mw := Payment(mock, stubLookup, InterimDebitConfig{
-		Interval: 0, // disabled
-	}, nil)
-
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set(livepeerheader.WorkUnits, "42")
+func TestPaymentAccountAuthorizationReservesAndSettlesActual(t *testing.T) {
+	client := &accountPaymentClient{Mock: payment.NewMock()}
+	var settlement *paymentsv1.SettlementRecord
+	mw := Payment(client, stubLookup, nil, func(in *paymentsv1.SettlementRecord) (string, error) {
+		settlement = proto.Clone(in).(*paymentsv1.SettlementRecord)
+		return "signed-settlement", nil
+	}, "https://broker.example/")
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got, _ := io.ReadAll(r.Body)
+		if string(got) != `{"prompt":"hello"}` {
+			t.Fatalf("body changed: %q", got)
+		}
+		w.Header().Set(livepeerheader.WorkUnits, "30")
 		w.WriteHeader(http.StatusOK)
 	}))
-
-	req := makePaidRequest("wid-disabled")
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
+	h.ServeHTTP(rec, accountJobRequest(t, []byte(`{"prompt":"hello"}`)))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	sessions := mock.Sessions()
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(sessions))
+	if len(client.admitted.PaymentBytes) != 0 {
+		t.Fatal("unexpected top-up payment")
 	}
-	s := sessions[0]
-	if !s.Closed {
-		t.Errorf("session should be closed at end of request")
+	if client.settled.AuthorizationID != "auth-1" || client.settled.ActualUnits != 30 {
+		t.Fatalf("settled=%+v", client.settled)
 	}
-	if len(s.Debits) != 1 {
-		t.Errorf("expected single debit (v0.2 path), got %d: %v", len(s.Debits), s.Debits)
+	if rec.Header().Get(livepeerheader.Settlement) == "" {
+		t.Fatal("missing settlement")
 	}
-	if s.Debits[0] != 42 {
-		t.Errorf("debit units: got %d, want 42", s.Debits[0])
+	if settlement == nil || new(big.Int).SetBytes(settlement.GetFundedValueWei().GetValue()).Sign() != 0 || new(big.Int).SetBytes(settlement.GetReservedValueWei().GetValue()).Int64() != 100 || new(big.Int).SetBytes(settlement.GetBilledValueWei().GetValue()).Int64() != 30 || new(big.Int).SetBytes(settlement.GetReleasedValueWei().GetValue()).Int64() != 70 {
+		t.Fatalf("account settlement conflated funding/reservation/debit: %+v", settlement)
 	}
 }
 
-// TestPayment_TickerHappyPath drives the ticker with a LiveCounter that
-// the handler increments over multiple ticks, then closes. Plan 0015
-// §3.1 lifecycle: ≥2 interim debits + a final flush that completes
-// the session.
-func TestPayment_TickerHappyPath(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
+func TestPaymentAccountAuthorizationRejectsAlteredBodyBeforeAdmission(t *testing.T) {
+	client := &accountPaymentClient{Mock: payment.NewMock()}
+	r := accountJobRequest(t, []byte("original"))
+	r.Body = io.NopCloser(strings.NewReader("altered"))
+	rec := httptest.NewRecorder()
+	Payment(client, stubLookup, nil, nil, "https://broker.example")(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("backend ran") })).ServeHTTP(rec, r)
+	if rec.Code != http.StatusUnauthorized || len(client.admitted.AuthorizationBytes) != 0 {
+		t.Fatalf("status=%d admitted=%d", rec.Code, len(client.admitted.AuthorizationBytes))
+	}
+}
 
-	mw := Payment(mock, stubLookup, InterimDebitConfig{
-		Interval:       30 * time.Millisecond,
-		MinRunwayUnits: 0, // disable SufficientBalance for this fixture
-	}, nil)
-
-	lc := &fakeLiveCounter{}
-	handlerStart := make(chan struct{})
-	handlerDone := make(chan struct{})
-
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := SessionStateFromContext(r.Context())
-		if state == nil {
-			t.Errorf("SessionState missing from request context")
-			return
-		}
-		state.SetLiveCounter(lc)
-
-		close(handlerStart)
-		// Drive the counter across at least 4 tick intervals.
-		for i := 0; i < 4; i++ {
-			select {
-			case <-r.Context().Done():
-				return
-			case <-time.After(35 * time.Millisecond):
-			}
-			lc.Add(50) // 50 units per slice
-		}
-		close(handlerDone)
+func TestPaymentAccountAuthorizationNeverBillsPastSignedCap(t *testing.T) {
+	client := &accountPaymentClient{Mock: payment.NewMock()}
+	var settlement *paymentsv1.SettlementRecord
+	mw := Payment(client, stubLookup, nil, func(in *paymentsv1.SettlementRecord) (string, error) {
+		settlement = proto.Clone(in).(*paymentsv1.SettlementRecord)
+		return "signed", nil
+	}, "https://broker.example")
+	h := mw(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(livepeerheader.WorkUnits, "130")
 		w.WriteHeader(http.StatusOK)
 	}))
-
-	req := makePaidRequest("wid-happy")
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	<-handlerStart
-	<-handlerDone
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", rec.Code)
+	h.ServeHTTP(rec, accountJobRequest(t, []byte(`{"prompt":"cap"}`)))
+	if client.settled.ActualUnits != 100 {
+		t.Fatalf("receiver asked to debit %d units past a 100-unit authorization", client.settled.ActualUnits)
 	}
-	sessions := mock.Sessions()
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(sessions))
-	}
-	s := sessions[0]
-	if !s.Closed {
-		t.Errorf("session should be closed")
-	}
-	if len(s.Debits) < 2 {
-		t.Errorf("expected ≥2 debits (interim + final), got %d: %v", len(s.Debits), s.Debits)
-	}
-	// Sum of debits must equal final LiveCounter value (200).
-	var sum int64
-	for _, d := range s.Debits {
-		sum += d
-	}
-	if sum != 200 {
-		t.Errorf("sum of debits: got %d, want 200 (final LiveCounter value); debits=%v", sum, s.Debits)
+	if settlement == nil || settlement.GetActualUnits() != 130 || settlement.GetBilledUnits() != 100 || settlement.GetOutcome() != paymentsv1.SettlementRecord_STOPPED_AT_BUDGET {
+		t.Fatalf("cap settlement=%+v", settlement)
 	}
 }
 
-// TestPayment_InsufficientBalanceTermination drives the ticker against
-// a pre-loaded session whose price-times-min-runway exceeds balance.
-// The middleware MUST cancel the handler context and exit. Plan 0015
-// §6.2 termination semantics.
-func TestPayment_InsufficientBalanceTermination(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-
-	mw := Payment(mock, stubLookup, InterimDebitConfig{
-		Interval:            20 * time.Millisecond,
-		MinRunwayUnits:      100,
-		GraceOnInsufficient: 0,
-	}, nil)
-
-	lc := &fakeLiveCounter{}
-	handlerCtxObserved := make(chan struct{})
-	var handlerCancelObserved atomic.Bool
-	var wg sync.WaitGroup
-
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := SessionStateFromContext(r.Context())
-		state.SetLiveCounter(lc)
-		// Don't credit balance; mock starts at 0 → SufficientBalance
-		// (price=1, min=100) returns false on first tick.
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-r.Context().Done()
-			handlerCancelObserved.Store(true)
-			close(handlerCtxObserved)
-		}()
-		// Block until ctx cancels (i.e. ticker terminated us).
-		select {
-		case <-r.Context().Done():
-		case <-time.After(2 * time.Second):
-			t.Errorf("handler not terminated within 2s; ticker did not cancel context")
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-insuff")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	wg.Wait()
-	if !handlerCancelObserved.Load() {
-		t.Fatalf("handler did not observe context cancellation; ticker termination broken")
+func TestValidateCallerProof(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
 	}
-	select {
-	case <-handlerCtxObserved:
-	default:
-		t.Fatal("handler-side cancellation channel never closed")
+	auth := []byte("single-purpose-authorization")
+	digest := crypto.Keccak256(append([]byte("livepeer-invocation-proof/v1\x00"), auth...))
+	prefixed := crypto.Keccak256([]byte(fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(digest))), digest)
+	sig, err := crypto.Sign(prefixed, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig[64] += 27
+	proof := base64.StdEncoding.EncodeToString(sig)
+	if err := ValidateCallerProof(auth, crypto.FromECDSAPub(&key.PublicKey), proof); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateCallerProof(append(auth, 'x'), crypto.FromECDSAPub(&key.PublicKey), proof); err == nil {
+		t.Fatal("altered authorization accepted caller proof")
+	}
+	sig[64] -= 27
+	if err := ValidateCallerProof(auth, crypto.FromECDSAPub(&key.PublicKey), base64.StdEncoding.EncodeToString(sig)); err == nil {
+		t.Fatal("non-canonical recovery id accepted caller proof")
 	}
 }
 
-// TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate verifies
-// that when the session has enough balance, the ticker keeps running
-// and does not cancel the handler.
-func TestPayment_InsufficientBalanceWithRunwayDoesNotTerminate(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-
-	mw := Payment(mock, stubLookup, InterimDebitConfig{
-		Interval:       20 * time.Millisecond,
-		MinRunwayUnits: 10, // price=1 × 10 = 10 wei runway
-	}, nil)
-
-	lc := &fakeLiveCounter{}
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := SessionStateFromContext(r.Context())
-		state.SetLiveCounter(lc)
-		// Seed sufficient balance (1000 wei covers 10 × 1 wei runway).
-		if err := mock.CreditBalance(RequestIDFromContext(r.Context()), big.NewInt(1000)); err != nil {
-			t.Errorf("CreditBalance: %v", err)
-		}
-		// Run for a few ticks; do nothing; expect the ticker to keep
-		// the handler context alive.
-		select {
-		case <-r.Context().Done():
-			t.Errorf("context cancelled despite sufficient runway: %v", r.Context().Err())
-		case <-time.After(80 * time.Millisecond):
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-suff")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status: got %d, want 200", rec.Code)
-	}
-}
-
-// TestPayment_NoLiveCounterSkipsTicks documents that without a published
-// LiveCounter (HTTP-family modes), the ticker fires no debits even
-// when enabled. The post-handler path falls through to the v0.2
-// single-debit using the Livepeer-Work-Units header.
-func TestPayment_NoLiveCounterSkipsTicks(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-	mw := Payment(mock, stubLookup, InterimDebitConfig{
-		Interval:       10 * time.Millisecond,
-		MinRunwayUnits: 0,
-	}, nil)
-
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Do NOT set LiveCounter. Sleep long enough for ≥3 ticks.
-		time.Sleep(50 * time.Millisecond)
-		w.Header().Set(livepeerheader.WorkUnits, "7")
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-no-live")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	sessions := mock.Sessions()
-	if len(sessions) != 1 {
-		t.Fatalf("expected 1 session, got %d", len(sessions))
-	}
-	s := sessions[0]
-	if len(s.Debits) != 1 {
-		t.Errorf("expected exactly 1 debit (no interim), got %d: %v", len(s.Debits), s.Debits)
-	}
-	if s.Debits[0] != 7 {
-		t.Errorf("debit units: got %d, want 7", s.Debits[0])
-	}
-}
-
-func TestPayment_InvalidRecipientRandReturnsPaymentInvalid(t *testing.T) {
-	t.Parallel()
-
-	client := &invalidRecipientRandClient{Mock: payment.NewMock()}
-	mw := Payment(client, stubLookup, InterimDebitConfig{Interval: 0}, nil)
-
+func TestPaymentRejectsPaymentOnlyBeforeProcessingOrWork(t *testing.T) {
+	client := &accountPaymentClient{Mock: payment.NewMock()}
 	called := false
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-invalid-rand")
+	req := httptest.NewRequest(http.MethodPost, "/v1/job", strings.NewReader(`{"prompt":"hello"}`))
+	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString([]byte("funding-ticket")))
 	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if called {
-		t.Fatal("handler should not run when ticket params are invalidated")
+	Payment(client, stubLookup, nil, nil, "https://broker.example")(
+		http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }),
+	).ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized || rec.Header().Get(livepeerheader.Error) != livepeerheader.ErrAuthorizationRequired {
+		t.Fatalf("status=%d error=%q body=%s", rec.Code, rec.Header().Get(livepeerheader.Error), rec.Body.String())
 	}
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("status: got %d, want 401; body=%s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get(livepeerheader.Error); got != livepeerheader.ErrPaymentInvalid {
-		t.Fatalf("Livepeer-Error = %q; want %q", got, livepeerheader.ErrPaymentInvalid)
-	}
-	if body := rec.Body.String(); body == "" || !contains(body, "INVALID_RECIPIENT_RAND") {
-		t.Fatalf("body = %q; want INVALID_RECIPIENT_RAND marker", body)
-	}
-}
-
-func contains(s, needle string) bool {
-	return len(needle) == 0 || (len(s) >= len(needle) && func() bool {
-		for i := 0; i+len(needle) <= len(s); i++ {
-			if s[i:i+len(needle)] == needle {
-				return true
-			}
-		}
-		return false
-	}())
-}
-
-func TestPayment_EmitsFinalReceiptWhenMetaPresent(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-	sink := &stubReceiptSink{}
-	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
-
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := SessionStateFromContext(r.Context())
-		state.SetReceiptMeta(ReceiptMeta{
-			WorkID:           "wid-receipt",
-			RequestID:        "req-receipt",
-			CapabilityID:     "cap",
-			OfferingID:       "off",
-			MemberEthAddress: "0xabc",
-			BackendID:        "backend-a",
-		})
-		w.Header().Set(livepeerheader.WorkUnits, "42")
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-receipt")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if len(sink.items) != 1 {
-		t.Fatalf("receipt count = %d, want 1", len(sink.items))
-	}
-	got := sink.items[0]
-	if got.ID != "wid-receipt" || got.Status != "final" || got.ActualUnits != 42 {
-		t.Fatalf("receipt = %#v", got)
-	}
-	if got.GatewayRevenueWei != "42" {
-		t.Fatalf("gateway revenue = %q, want 42", got.GatewayRevenueWei)
-	}
-	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "success"))
-	if after != before+1 {
-		t.Fatalf("final receipt emit delta = %v; want 1", after-before)
-	}
-}
-
-func TestPayment_EmitsFinalReceiptErrorMetricWhenSinkFails(t *testing.T) {
-	t.Parallel()
-	mock := payment.NewMock()
-	sink := &stubReceiptSink{err: errors.New("boom")}
-	before := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
-
-	mw := Payment(mock, stubLookup, InterimDebitConfig{Interval: 0}, sink)
-	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := SessionStateFromContext(r.Context())
-		state.SetReceiptMeta(ReceiptMeta{
-			WorkID:           "wid-receipt-error",
-			RequestID:        "req-receipt-error",
-			CapabilityID:     "cap",
-			OfferingID:       "off",
-			MemberEthAddress: "0xabc",
-			BackendID:        "backend-a",
-		})
-		w.Header().Set(livepeerheader.WorkUnits, "42")
-		w.WriteHeader(http.StatusOK)
-	}))
-
-	req := makePaidRequest("wid-receipt-error")
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if len(sink.items) != 1 {
-		t.Fatalf("receipt count = %d, want 1", len(sink.items))
-	}
-	after := testutil.ToFloat64(observability.TestWorkReceiptEmitCounter("final", "error"))
-	if after != before+1 {
-		t.Fatalf("final receipt error emit delta = %v; want 1", after-before)
+	if called || len(client.admitted.AuthorizationBytes) != 0 {
+		t.Fatal("payment-only request reached admission or workload execution")
 	}
 }

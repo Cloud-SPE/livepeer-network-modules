@@ -1,7 +1,10 @@
 # capability-broker operations
 
-Observability assets for the livepeer-capability-broker. The full metric
-catalog is documented in [`../operator-runbook.md` §2.8](../operator-runbook.md).
+Observability assets for the livepeer-capability-broker. The protocol-engine
+metric catalog is documented in
+[`../operator-runbook.md` §5](../operator-runbook.md), and the registry,
+selection, and Pool-snapshot families are listed in
+[`../../README.md`](../../README.md).
 
 ## Enabling metrics
 

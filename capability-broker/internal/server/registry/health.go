@@ -13,22 +13,8 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/selection"
 )
 
-type MetadataStatusSource interface {
-	StatusFor(capabilityID, offeringID string) (MetadataStatus, bool)
-}
-
 type PoolStatusSource interface {
 	StatusFor(backendID, capabilityID, offeringID string) poolsnapshot.Status
-}
-
-type MetadataStatus struct {
-	Provider            string
-	Applicable          bool
-	LastAttemptAt       time.Time
-	LastSuccessAt       time.Time
-	LastError           string
-	LastResult          string
-	ConsecutiveFailures int
 }
 
 type healthResponse struct {
@@ -47,6 +33,7 @@ type healthCapabilityStatus struct {
 	StaleAfter           time.Time            `json:"stale_after,omitempty"`
 	ConsecutiveSuccesses int                  `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int                  `json:"consecutive_failures,omitempty"`
+	LastDispatchedAt     time.Time            `json:"last_dispatched_at,omitempty"`
 	Backends             []backendStatus      `json:"backends,omitempty"`
 	Pool                 *poolAggregateStatus `json:"pool,omitempty"`
 	Metadata             *metadataStatus      `json:"metadata,omitempty"`
@@ -61,10 +48,13 @@ type backendStatus struct {
 	StaleAfter           time.Time     `json:"stale_after,omitempty"`
 	ConsecutiveSuccesses int           `json:"consecutive_successes,omitempty"`
 	ConsecutiveFailures  int           `json:"consecutive_failures,omitempty"`
-	SelectionEligible    bool          `json:"selection_eligible"`
-	SelectionWeight      int           `json:"selection_weight,omitempty"`
-	SelectionReason      string        `json:"selection_reason,omitempty"`
-	Pool                 *poolStatus   `json:"pool,omitempty"`
+	// LastDispatchedAt is informational: when this backend last did
+	// work. It does not age the verdict (probed_at is the read time).
+	LastDispatchedAt  time.Time   `json:"last_dispatched_at,omitempty"`
+	SelectionEligible bool        `json:"selection_eligible"`
+	SelectionWeight   int         `json:"selection_weight,omitempty"`
+	SelectionReason   string      `json:"selection_reason,omitempty"`
+	Pool              *poolStatus `json:"pool,omitempty"`
 }
 
 type metadataStatus struct {
@@ -160,15 +150,10 @@ type poolAggregateStatus struct {
 	TopExclusionReasons                   map[string]int `json:"top_exclusion_reasons,omitempty"`
 }
 
-// HealthHandler returns the broker's normalized live-health snapshot.
-func HealthHandler(mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		WriteHealthResponse(w, mgr, metadata, pool)
-	}
-}
-
-func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata MetadataStatusSource, pool PoolStatusSource) {
-	snap := mgr.Snapshot()
+// WriteHealthResponse renders the broker's normalized live-health
+// document. It takes the verdict rather than producing it: the caller
+// owns where health comes from, and this owns the wire shape.
+func WriteHealthResponse(w http.ResponseWriter, snap health.Response, pool PoolStatusSource) {
 	statuses := make(map[string]string, len(snap.Capabilities))
 	grouped := make(map[string]*healthCapabilityStatus, len(snap.Capabilities))
 	out := healthResponse{
@@ -191,30 +176,15 @@ func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata Me
 				Backends:   make([]backendStatus, 0, 1),
 			}
 			entry = grouped[key]
-			if st, ok := metadata.StatusFor(cap.ID, cap.OfferingID); ok {
-				lastSuccessAgeSeconds := 0.0
-				if st.LastSuccessAt.IsZero() {
-					lastSuccessAgeSeconds = -1
-				} else {
-					lastSuccessAgeSeconds = out.GeneratedAt.Sub(st.LastSuccessAt).Seconds()
-				}
-				entry.Metadata = &metadataStatus{
-					Provider:              st.Provider,
-					Applicable:            st.Applicable,
-					LastAttemptAt:         st.LastAttemptAt,
-					LastSuccessAt:         st.LastSuccessAt,
-					LastSuccessAgeSeconds: lastSuccessAgeSeconds,
-					LastError:             st.LastError,
-					LastResult:            st.LastResult,
-					ConsecutiveFailures:   st.ConsecutiveFailures,
-				}
-			}
 		}
 		var poolStatusValue *poolsnapshot.Status
 		if pool != nil {
 			if ps := pool.StatusFor(cap.BackendID, cap.ID, cap.OfferingID); ps.Configured {
 				poolStatusValue = &ps
 			}
+		}
+		if cap.LastDispatchedAt.After(entry.LastDispatchedAt) {
+			entry.LastDispatchedAt = cap.LastDispatchedAt
 		}
 		decision := selection.DecisionFor(cap, poolStatusValue)
 		backend := backendStatus{
@@ -226,6 +196,7 @@ func WriteHealthResponse(w http.ResponseWriter, mgr *health.Manager, metadata Me
 			StaleAfter:           cap.StaleAfter,
 			ConsecutiveSuccesses: cap.ConsecutiveSuccesses,
 			ConsecutiveFailures:  cap.ConsecutiveFailures,
+			LastDispatchedAt:     cap.LastDispatchedAt,
 			SelectionEligible:    decision.Eligible,
 			SelectionWeight:      decision.Weight,
 			SelectionReason:      decision.Reason,

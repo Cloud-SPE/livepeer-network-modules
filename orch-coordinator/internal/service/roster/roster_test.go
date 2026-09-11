@@ -11,15 +11,14 @@ import (
 func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	now := time.Now().UTC()
 	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{{
-		CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+		CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+		Job:      &types.JobAxes{"transports": []any{"unary"}},
 		WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 		WorkerURL: "https://w",
 	}}}
 	snap := scrape.Snapshot{
-		WindowStart:          now.Add(-30 * time.Second),
-		WindowEnd:            now,
-		MetadataWarningAfter: 30 * time.Second,
-		MetadataStaleAfter:   time.Minute,
+		WindowStart: now.Add(-30 * time.Second),
+		WindowEnd:   now,
 		Brokers: []scrape.BrokerStatus{
 			{
 				Name:      "b1",
@@ -32,12 +31,6 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 						Status:     "ready",
 						Reason:     "probe_ok",
 						StaleAfter: now.Add(time.Minute),
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "enriched",
-							LastSuccessAt:         now.Add(-10 * time.Second),
-							LastSuccessAgeSeconds: 10,
-						},
 					},
 				},
 			},
@@ -53,25 +46,19 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 						Status:     "degraded",
 						Reason:     "timeout",
 						StaleAfter: now.Add(time.Minute),
-						Metadata: &types.BrokerHealthMetadata{
-							Applicable:            true,
-							LastResult:            "models_probe_failed",
-							LastSuccessAt:         now.Add(-2 * time.Minute),
-							LastSuccessAgeSeconds: 120,
-							ConsecutiveFailures:   2,
-							LastError:             "probe failed",
-						},
 					},
 				},
 			},
 		},
 		SourceTuples: []types.SourceTuple{
 			{BrokerName: "b1", Offering: types.BrokerOffering{
-				CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			}},
 			{BrokerName: "b2", Offering: types.BrokerOffering{
-				CapabilityID: "cap", OfferingID: "off", InteractionMode: "m@v1",
+				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
+				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			}},
 		},
@@ -89,11 +76,13 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	if got := v.Rows[0].Brokers[0].LiveStatus; got != "ready" {
 		t.Fatalf("live status = %q, want ready", got)
 	}
-	if got := v.Rows[0].Brokers[0].MetadataState; got != types.MetadataStateOK {
-		t.Fatalf("metadata state = %q, want ok", got)
+	// The second broker reports the same tuple degraded, which is what a
+	// roster is for: one row, one cell per broker, disagreements visible.
+	if got := v.Rows[0].Brokers[1].LiveStatus; got != "degraded" {
+		t.Fatalf("second broker live status = %q, want degraded", got)
 	}
-	if got := v.Rows[0].Brokers[1].MetadataState; got != types.MetadataStateStale {
-		t.Fatalf("metadata state = %q, want stale", got)
+	if got := v.Rows[0].Brokers[1].LiveReason; got != "timeout" {
+		t.Fatalf("second broker live reason = %q, want timeout", got)
 	}
 	if v.Rows[0].Drift != "added" {
 		t.Fatalf("drift: %s", v.Rows[0].Drift)
@@ -102,12 +91,14 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 
 func TestBuildView_DriftCountsSurface(t *testing.T) {
 	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{
-		{CapabilityID: "a", OfferingID: "1", InteractionMode: "m@v1",
+		{CapabilityID: "a", OfferingID: "1", Protocol: "paid-job/v1",
+			Job:      &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			WorkerURL: "https://w"},
 	}}
 	pub := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{
-		{CapabilityID: "a", OfferingID: "1", InteractionMode: "m@v1",
+		{CapabilityID: "a", OfferingID: "1", Protocol: "paid-job/v1",
+			Job:      &types.JobAxes{"transports": []any{"unary"}},
 			WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "200",
 			WorkerURL: "https://w"},
 	}}
@@ -127,6 +118,17 @@ func TestApply_FilterBySubstring(t *testing.T) {
 	}}
 	got := v.Apply(Filter{CapabilitySubstring: "openai"})
 	if len(got.Rows) != 1 || got.Rows[0].CapabilityID != "openai:foo" {
+		t.Fatalf("got %+v", got.Rows)
+	}
+}
+
+func TestApply_FilterByProtocol(t *testing.T) {
+	v := &View{Rows: []Row{
+		{CapabilityID: "a", Protocol: "paid-job/v1"},
+		{CapabilityID: "b", Protocol: "paid-session/v1"},
+	}}
+	got := v.Apply(Filter{Protocol: "paid-session/v1"})
+	if len(got.Rows) != 1 || got.Rows[0].CapabilityID != "b" {
 		t.Fatalf("got %+v", got.Rows)
 	}
 }

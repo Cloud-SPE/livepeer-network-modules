@@ -64,3 +64,22 @@ func (c *DevClock) Tick(n int64) {
 		c.round++
 	}
 }
+
+// AdvanceRounds moves the clock forward by whole rounds, keeping the L1
+// block consistent with the ~100-block rounds Tick models.
+//
+// Exists so a live conformance run can exercise anything gated on round
+// advancement — above all the encumbrance release rule, where a consumer
+// waits for the current round to pass an envelope's expiry. On a real
+// chain that is hours per round, so without this the rule can only be
+// reasoned about and never demonstrated.
+func (c *DevClock) AdvanceRounds(n int64) int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if n < 1 {
+		return c.round
+	}
+	c.round += n
+	c.l1Block.Add(c.l1Block, big.NewInt(100*n))
+	return c.round
+}

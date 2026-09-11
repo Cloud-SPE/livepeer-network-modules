@@ -34,7 +34,7 @@ flowchart LR
     subgraph hot["Hot zone (public)"]
         direction TB
         OC["orch-coordinator<br/>(no keys, no daemon sockets)"]
-        Broker["Capability Broker<br/>(no keys)"]
+        Broker["Capability Broker<br/>(delegated settlement key only)"]
         WPD["payment-daemon receiver<br/>(hot signer wallet only)"]
     end
 
@@ -48,7 +48,7 @@ flowchart LR
     SOC -.->|"signed manifest<br/>(out-of-band)"| OC
     PRD -.->|"initializeRound, reward,<br/>transcoder, transferBond,<br/>withdrawFees, treasury vote<br/>(signed by orch key on the daemon)"| chain
 
-    Broker -.->|"GET /registry/offerings"| OC
+    Broker -.->|"GET /registry/offerings,<br/>/registry/health,<br/>/registry/settlement-keys"| OC
     OC --> SREG
     WPD --> TB
 
@@ -62,6 +62,7 @@ Identity-bearing keys in the system, each with a tightly-scoped role:
 | **Cold manifest key** | HSM / firewalled `secure-orch`, held by `secure-orch-console` | manifest canonical bytes only | any on-chain transaction |
 | **Orchestrator signing key** | `protocol-daemon` keystore (`--keystore-path`) | protocol-daemon txs: `initializeRound`, `reward`/`rewardWithHint`, `transcoder` (reward/fee cut), `transferBond`, `withdrawFees`, treasury `castVote` | manifests |
 | **Ticket signer wallet** | receiver `payment-daemon` on worker-orch | ticket-redemption gas txs | manifests; protocol-daemon txs |
+| **Delegated settlement key** | `capability-broker` host (`identity.settlement_key_file`) | settlement records (`Livepeer-Settlement`), and its own announcement at `GET /registry/settlement-keys` | manifests; any on-chain transaction. Trusted only while the cold-signed manifest lists it in `settlement_keys[]`; compromise costs settlement attribution until the cold key drops it |
 | **Operator console bearer** | secure-orch-console (LAN auth) | nothing on-chain — gates access to the sign UI and issues session-authenticated gRPC requests to the daemon | anything cryptographic |
 
 **Why the orchestrator key is daemon-controlled, not cold.** The
@@ -116,7 +117,8 @@ That's a strong claim, and the protocol leans on it heavily:
 That's why the signature payload is the manifest's **canonical bytes** —
 deterministic serialization — not the raw HTTP body. Any change anywhere in
 the canonical bytes invalidates the signature, including changes to the
-declared price, the declared backend URL, or the declared interaction mode.
+declared price, the declared backend URL, or the declared protocol and its
+declared axes.
 
 ## Double verification
 
@@ -192,6 +194,18 @@ cold-signed is treated as observation, not attestation.
 
 ## Sign-cycle invariants
 
+How a settlement key gets into a manifest, because it is the one piece of
+hot-zone key material the cold key vouches for: the broker announces the
+key at `GET /registry/settlement-keys`, signed by the key itself and bound
+to the orch address and the broker's `external_base_url`; the coordinator
+verifies that proof on scrape and merges the key into the candidate
+(config-pinned keys first, then proven broker keys, then keys the live
+manifest still delegates inside their window); `secure-orch-console`
+grades any change to `settlement_keys[]` critical and holds it for a
+human, showing per broker the command to read the announcement over a
+path the coordinator does not control; the cold key signs. A compromised
+coordinator can propose a key; it cannot get one signed unseen.
+
 These hold for every published manifest, by construction:
 
 1. **The cold key signed it.** The receiver-side `payment-daemon` and every
@@ -212,16 +226,34 @@ These hold for every published manifest, by construction:
    benign changes within explicit operator-authored bounds (price delta
    percentage, worker-URL domain allowlist, tuple removal), rate-limited
    per hour.
-4. **There is no unbounded automated sign path.** The cold key signs
+4. **A runner can never change what is sold.** Runners declare what they
+   *are* and the operator declares what it *costs*: an attach document
+   carries no price, no capacity, and no offering id, and the broker
+   refuses any field it does not know. Runner-declared facts reach the
+   cold-key-signed manifest exactly once per offer — when the first
+   certified runner freezes them, and the operator's signature is the
+   acceptance. A runner that later disagrees with that frozen shape
+   becomes ineligible for the offer; it does not mutate it. A stolen
+   attach credential therefore buys the ability to serve work as that
+   host, gated by certification, crediting the enrollment's payout
+   address — not the ability to alter the manifest (plan 0043).
+
+5. **There is no unbounded automated sign path.** The cold key signs
    without an operator only inside a policy envelope the operator
    authored and the audit log records: content-identical renewals
    always; benign content changes only within explicit bounds (price
    delta, domain allowlist, rate limit); everything else is held for a
    discrete operator action. Identity (`eth_address`) and `spec_version`
    changes are never auto-signed — that dial does not exist in the
-   policy schema. (Amended by plan 0042; the original invariant read
-   "there is no automated sign path".)
-5. **Revocation is supersession.** There is no separate revoke step — the
+   policy schema. `eth_address` is refused outright: a signing key signs
+   for exactly one orchestrator, so a changed address is somebody else's
+   manifest. `spec_version` is *held*, not refused, and signing one takes
+   a second gesture — typing the version being moved to — because it
+   changes the contract every consumer reads the manifest under and must
+   not ride along inside a routine signature. (Amended by plan 0042 and
+   plan 0043 §3.7; the original invariant read "there is no automated
+   sign path".)
+6. **Revocation is supersession.** There is no separate revoke step — the
    operator signs a new manifest that omits the no-longer-offered
    capability, and resolvers pick it up on the next round refresh.
 

@@ -18,8 +18,11 @@ only secure-orch produces signatures.
 - **Inbound:** operator-chosen. Loopback-only remains the recommended
   posture for cold-key hosts, but the binary now accepts any explicit
   `host:port` bind instead of forcing `127.0.0.1`.
-- **Outbound:** none. The console only reads / writes its own local
-  filesystem.
+- **Outbound:** none in the hand-carry flow — the console only reads /
+  writes its own local filesystem and the local `protocol-daemon` unix
+  socket. `--agent` (plan 0042) adds outbound-only HTTP to the
+  coordinator (candidate pull, signed-manifest push, publish confirm)
+  and the optional alert webhook. It adds no inbound listener.
 - **Manifest transport:** HTTP-only via the web UI. Operator uploads
   candidate manifests through a multipart form; signed envelopes are
   returned as download attachments and mirrored to
@@ -46,8 +49,12 @@ The operator-driven cycle (plan 0019 §7) is the only path that uses the
    returns it to the operator as a download.
 6. Operator uploads the signed envelope to the coordinator.
 
-The console itself runs no scheduler and the cold key signs nothing but
-manifests. It does, however, act as a **remote control** for the local
+The cold key signs nothing but manifests. The console runs no scheduler
+unless `--agent` is set; that flag starts the plan 0042 poll loop
+(`--agent-poll-interval`), which pulls candidates, auto-signs only what
+the sign policy classifies as `renewal` / `benign`, and holds the rest
+for the operator-confirm gesture above. It also acts as a
+**remote control** for the local
 `protocol-daemon`: the Protocol-actions page issues session-gated gRPC
 requests (set cut/share, transfer-bond, withdraw-fees, treasury vote,
 operational-config edits) over the daemon's unix socket. Those on-chain

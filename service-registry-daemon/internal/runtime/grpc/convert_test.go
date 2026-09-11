@@ -370,3 +370,115 @@ func TestNodesFromProto_ManifestFields(t *testing.T) {
 		t.Fatalf("extra: %+v", string(out[0].Extra))
 	}
 }
+
+// The estimator has to survive every hop between the signed manifest and
+// the consumer, and it previously did not: it reached the route struct
+// and died at the gRPC boundary, because the proto message had no field
+// for it. A consumer that cannot read it cannot reserve funds for a
+// multipart upload, so it guesses — and a guessed reservation and the
+// seller's bill are two different numbers.
+//
+// This pins the whole projection rather than each hop, because every hop
+// individually looked fine while the chain was broken.
+func TestSelectedRouteCarriesEstimatorOntoTheWire(t *testing.T) {
+	est := &types.Estimator{
+		ID:        "multipart-audio-duration/v1",
+		Rounding:  "ceil-to-whole-seconds",
+		Exactness: "exact-or-reject",
+		Package:   "example.invalid/some-client-lib", // optional field; pass-through only
+		Fixtures:  "livepeer-network-protocol/extractors/fixtures/multipart-audio-duration-v1",
+	}
+	in := types.ResolvedNode{
+		URL:          "https://worker.example.com",
+		OperatorAddr: "0xabcdef0000000000000000000000000000000000",
+		Capabilities: []types.Capability{{
+			Name:              "openai:audio-transcriptions",
+			WorkUnit:          "seconds",
+			WorkUnitEstimator: est,
+			Offerings:         []types.Offering{{ID: "default", PricePerWorkUnitWei: "100"}},
+		}},
+	}
+
+	route, err := selectedRouteFromResolvedNode(in, selection.Filter{
+		Capability: "openai:audio-transcriptions",
+		Offering:   "default",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if route.WorkUnitEstimator == nil {
+		t.Fatal("estimator dropped between resolved node and route")
+	}
+
+	wire := selectedRouteToProto(route)
+	got := wire.GetWorkUnitEstimator()
+	if got == nil {
+		t.Fatal("estimator dropped at the gRPC boundary")
+	}
+	if got.GetId() != est.ID {
+		t.Errorf("id = %q, want %q", got.GetId(), est.ID)
+	}
+	if got.GetRounding() != est.Rounding {
+		t.Errorf("rounding = %q, want %q", got.GetRounding(), est.Rounding)
+	}
+	if got.GetExactness() != est.Exactness {
+		t.Errorf("exactness = %q, want %q", got.GetExactness(), est.Exactness)
+	}
+	if got.GetPackage() != est.Package {
+		t.Errorf("package = %q, want %q", got.GetPackage(), est.Package)
+	}
+	if got.GetFixtures() != est.Fixtures {
+		t.Errorf("fixtures = %q, want %q", got.GetFixtures(), est.Fixtures)
+	}
+}
+
+// Most capabilities have no estimator, and a nil one must stay nil
+// rather than become an empty block a consumer would read as "an
+// estimator I do not implement" and refuse the route over.
+func TestSelectedRouteWithoutEstimatorStaysAbsent(t *testing.T) {
+	in := types.ResolvedNode{
+		URL:          "https://worker.example.com",
+		OperatorAddr: "0xabcdef0000000000000000000000000000000000",
+		Capabilities: []types.Capability{{
+			Name:      "openai:/v1/chat/completions",
+			WorkUnit:  "token",
+			Offerings: []types.Offering{{ID: "gpt-oss-20b", PricePerWorkUnitWei: "1000"}},
+		}},
+	}
+	route, err := selectedRouteFromResolvedNode(in, selection.Filter{
+		Capability: "openai:/v1/chat/completions",
+		Offering:   "gpt-oss-20b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := selectedRouteToProto(route).GetWorkUnitEstimator(); got != nil {
+		t.Fatalf("absent estimator materialized on the wire: %+v", got)
+	}
+}
+
+// The node-listing path round-trips through proto too, and dropped the
+// estimator in exactly the same way.
+func TestCapabilityEstimatorSurvivesProtoRoundTrip(t *testing.T) {
+	in := types.Capability{
+		Name:     "openai:audio-transcriptions",
+		WorkUnit: "seconds",
+		WorkUnitEstimator: &types.Estimator{
+			ID:        "multipart-audio-duration/v1",
+			Rounding:  "ceil-to-whole-seconds",
+			Exactness: "exact-or-reject",
+		},
+	}
+	got := capabilityFromProto(capabilityToProto(in))
+	if got.WorkUnitEstimator == nil {
+		t.Fatal("estimator lost in the capability proto round trip")
+	}
+	if got.WorkUnitEstimator.ID != in.WorkUnitEstimator.ID ||
+		got.WorkUnitEstimator.Rounding != in.WorkUnitEstimator.Rounding ||
+		got.WorkUnitEstimator.Exactness != in.WorkUnitEstimator.Exactness {
+		t.Fatalf("estimator drift: %+v", got.WorkUnitEstimator)
+	}
+	if capabilityFromProto(capabilityToProto(types.Capability{Name: "x"})).WorkUnitEstimator != nil {
+		t.Fatal("absent estimator materialized in the round trip")
+	}
+}

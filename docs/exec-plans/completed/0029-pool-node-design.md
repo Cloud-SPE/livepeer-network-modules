@@ -1,3 +1,10 @@
+> **Superseded by plan 0044** ([0044-zero-touch-pool-onboarding.md](../active/0044-zero-touch-pool-onboarding.md)).
+> The pool node architecture landed, but the member and assignment model described here was replaced by templates, placement and the trust ladder.
+>
+> Kept as provenance: this is what was decided and shipped at the time,
+> and the reasoning is still worth reading. It is not a description of
+> the system today. Nothing below has been edited.
+
 # Plan 0029 — Pool node design
 
 **Status:** completed — the Pool node architecture from this plan is now

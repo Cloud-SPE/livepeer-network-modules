@@ -17,8 +17,7 @@ func validPolicyJSON() string {
     "worker_url_domain_allowlist": ["workers.example-orch.net"]
   },
   "rate_limit": {"max_auto_signs_per_hour": 4, "on_breach": "pause"},
-  "stability_window_seconds": 300,
-  "renewal_threshold_fraction": 0.3333
+  "stability_window_seconds": 300
 }`
 }
 
@@ -63,8 +62,6 @@ func TestParse_FailsClosed(t *testing.T) {
 		{"negative pct", mutate(`"price_delta_max_pct": 10`, `"price_delta_max_pct": -1`)},
 		{"zero rate limit", mutate(`"max_auto_signs_per_hour": 4`, `"max_auto_signs_per_hour": 0`)},
 		{"unknown breach behavior", mutate(`"on_breach": "pause"`, `"on_breach": "throttle"`)},
-		{"fraction zero", mutate(`"renewal_threshold_fraction": 0.3333`, `"renewal_threshold_fraction": 0`)},
-		{"fraction one", mutate(`"renewal_threshold_fraction": 0.3333`, `"renewal_threshold_fraction": 1`)},
 		{"negative stability window", mutate(`"stability_window_seconds": 300`, `"stability_window_seconds": -1`)},
 		{"allowlist wildcard", mutate(`"workers.example-orch.net"`, `"*.example-orch.net"`)},
 		{"allowlist scheme", mutate(`"workers.example-orch.net"`, `"https://workers.example-orch.net"`)},

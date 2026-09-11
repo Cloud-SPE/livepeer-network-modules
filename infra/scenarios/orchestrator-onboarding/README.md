@@ -43,7 +43,8 @@ roles are single-host.
 
 - Linux hosts with Docker Engine and `docker compose` v2.
 - An on-chain orchestrator address (`ORCH_ADDRESS`) and its keystore.
-- One Arbitrum RPC endpoint (`ETH_URLS`) for chain reads/writes.
+- One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
+  primary first). Every host uses the same list.
 - Funded hot wallet keys for ticket redemption on every broker box.
 - One domain you control, with DNS managed somewhere (Cloudflare,
   Route 53, etc.). You'll create one record per public-facing host.
@@ -70,7 +71,7 @@ for the full walkthrough. Short form:
 ```sh
 cp infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env.example \
    infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env
-# Set ORCH_ADDRESS, ETH_URLS, SECURE_ORCH_ADMIN_TOKENS, keystore paths
+# Set CHAIN_RPC_URLS, ORCH_ADDRESS, SECURE_ORCH_ADMIN_TOKENS
 docker compose \
   -f infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/docker-compose.yml \
   --env-file infra/scenarios/orchestrator-onboarding/secure-orch-control-plane/.env \
@@ -125,8 +126,9 @@ the **Ingress** step below.
 Run **one broker per data center / home setup**. Each broker box has its
 own:
 
-- `host-config.yaml` describing which capabilities it advertises and
-  where the backing workloads live
+- `host-config.yaml` describing which **offers** it sells — capability,
+  price, capacity, and which attached runners each offer is for. Where the
+  workloads live is not in it: the runners say that themselves.
 - hot-wallet keystore at `/opt/livepeer/payment-keystore.json` (**not**
   the cold orch key — separate, funded with ETH for ticket-redemption gas)
 - public hostname matching the `base_url` you listed for it in your
@@ -138,8 +140,19 @@ own:
 /opt/livepeer/
 ├── payment-keystore.json
 ├── payment-keystore-password
-└── host-config.yaml             # capability mix for THIS broker box
+├── broker-settlement.key        # hot key that signs settlement records
+└── host-config.yaml             # the offers THIS broker box sells
 ```
+
+**Settlement signing.** Each broker signs the settlement records a
+clearinghouse verifies with a hot key the cold key delegates. Mint it
+with `livepeer-capability-broker settlement-key generate --out
+/opt/livepeer/broker-settlement.key` and point
+`identity.settlement_key_file` at it. The broker announces the public
+half at `/registry/settlement-keys`; the Orch Coordinator picks it up
+on scrape and the delegation lands in the next manifest you sign. You
+never copy the key by hand. See the capability-broker README,
+"Settlement signing key".
 
 **Capability mix.** What each broker advertises is up to you — it varies
 by hardware. Reference host-configs live under
@@ -147,35 +160,35 @@ by hardware. Reference host-configs live under
 
 | Variant                                              | Status      | Capability                                                          |
 | ---------------------------------------------------- | ----------- | ------------------------------------------------------------------- |
-| [`openai-chat.example.yaml`](./capability-broker/host-configs/openai-chat.example.yaml)   | Stable      | `openai:chat-completions` (vLLM, stream + reqresp paired offerings) |
+| [`openai.example.yaml`](./capability-broker/host-configs/openai.example.yaml)   | Stable      | The OpenAI runner family: `openai:chat-completions`, `openai:embeddings`, `openai:audio-transcriptions`, `openai:audio-translations`, `openai:audio-speech`, `openai:images-generations`, `text:rerank` — one offer each, delete what you do not run |
+| [`video-transcode.example.yaml`](./capability-broker/host-configs/video-transcode.example.yaml) | Stable      | `video:transcode.vod`, `video:transcode.abr` (paid-job), `video:transcode.live` (paid-session) |
 
 The backend workloads (vLLM, external APIs, local media services, etc.)
 live alongside the broker on the same Docker network, OR on separate
-boxes the broker proxies to. Either way, the broker reaches them via the
-`backend.url` field in `host-config.yaml`.
+boxes. Either way the broker never dials them: each host runs an agent
+that **attaches outbound** to the broker with an enrolled credential, and
+the broker sends work back down that connection. No inbound port, no DNS
+entry, and no backend URL in your config.
 
-**Work-unit extractors.** The example host-configs demonstrate multiple
-extraction patterns, one per `extractor.type`:
+**Work-unit extractors.** The runner names the extractor it is metered by,
+because it is the only party that knows what its responses carry —
+`openai-usage` to read `total_tokens` from an OpenAI usage block,
+`request-formula` to count something on the inbound request, and so on.
+You choose the price; the runner supplies the unit that price is counted
+in. An extractor the broker does not implement is rejected when the runner
+attaches, with the field and both sides named.
 
-- `response-header` — backend reports work units in a response header
-  (for example, seconds of audio)
-- `request-formula` with a JSONPath expression — count something on the
-  inbound request
-- `openai-usage` — read `total_tokens` straight from the OpenAI usage
-  block (vLLM chat)
-
-Pick whichever your backend can support; mix freely.
-
-**Health probes.** Each capability also declares a `health.probe` block.
-The broker probes the backend on cadence and exposes the result on
-`GET /registry/health` — gateways consult that surface before routing
-paid traffic and skip offerings that are `unreachable`, `degraded`, or
-`draining`. When a backend dies, the route disappears from gateway
-selection without forcing a fresh sign cycle on your manifest. The
-example host-configs ship probes that fit each backend
-(`http-openai-model-ready` for vLLM, `http-status` against `/healthz`
-for the backend). See the capability-broker scenario README for
-the full probe-type table and
+**Certification, not probes.** The broker does not poll your backends. An
+offer's `certification:` steps decide whether a matched runner may serve it
+at all: `readiness` runs the recipe *the runner declared* (for vLLM that is
+`http-openai-model-ready` against `/v1/models`), then `request` and `usage`
+prove it actually serves and meters paid work. After that, an offer is
+available exactly when a certified runner's attach tunnel is up — reported
+on `GET /registry/health`, which gateways consult before routing paid
+traffic and which skips offerings that are `unreachable`, `degraded`, or
+`draining`. A runner that drops disappears from gateway selection without
+forcing a fresh sign cycle on your manifest. See the capability-broker
+scenario README and
 [`docs/design-docs/backend-health.md`](../../../docs/design-docs/backend-health.md)
 for the three-layer model (manifest / live / failure-rate).
 
@@ -184,13 +197,13 @@ for the three-layer model (manifest / live / failure-rate).
 repeated on every broker host:
 
 ```sh
-sudo cp infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml \
+sudo cp infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai.example.yaml \
         /opt/livepeer/host-config.yaml
 sudo $EDITOR /opt/livepeer/host-config.yaml             # set orch_eth_address + backend urls
 
 cp infra/scenarios/orchestrator-onboarding/capability-broker/.env.example \
    infra/scenarios/orchestrator-onboarding/capability-broker/.env
-# Set ORCH_ADDRESS, CHAIN_RPC, BROKER_HOST (per-box hostname)
+# Set CHAIN_RPC_URLS, ORCH_ADDRESS, BROKER_ADMIN_TOKEN, BROKER_HOST (per-box hostname)
 docker compose \
   -f infra/scenarios/orchestrator-onboarding/capability-broker/docker-compose.yml \
   --env-file infra/scenarios/orchestrator-onboarding/capability-broker/.env \
@@ -271,9 +284,13 @@ fronted by an ingress (Steps 3 + 4):
    in Step 1. The console runs on the cold-key host's loopback or
    private LAN — reach it over SSH.
 2. Build a manifest candidate from your current `coordinator-config.yaml`
-   on the **Orch Coordinator** host. Submit it to the console for
-   signing. The console signs with the cold key and returns the signed
-   blob.
+   on the **Orch Coordinator** host. It carries the settlement keys your
+   brokers announced (roster → Settlement delegation, each `pending`).
+   Submit it to the console for signing. The console grades a delegation
+   change **critical** and holds it: verify each listed key against the
+   broker that holds it with the command the review page prints per
+   broker (`curl <broker>/registry/settlement-keys`), then sign. The
+   console signs with the cold key and returns the signed blob.
 3. Push the signed blob to the coordinator's admin API (`:8080`) using
    one of the `ORCH_COORDINATOR_ADMIN_TOKENS` you generated in Step 2.
 4. Verify the public endpoint serves it:
@@ -289,8 +306,14 @@ fronted by an ingress (Steps 3 + 4):
 ## Verifying end-to-end
 
 ```sh
-# Manifest URL serves your signed manifest
-curl -s https://coordinator.<your-domain>/.well-known/livepeer-registry.json | jq '.brokers'
+# Manifest URL serves your signed manifest: which brokers it sells through,
+# and which settlement keys it delegates
+curl -s https://coordinator.<your-domain>/.well-known/livepeer-registry.json \
+  | jq '{brokers: [.manifest.capabilities[].worker_url] | unique, settlement_keys: .manifest.settlement_keys}'
+
+# Each broker announces the settlement key it signs with; the public_key
+# must appear in the manifest's settlement_keys above
+curl -s https://broker-a.<your-domain>/registry/settlement-keys | jq '.keys[].statement'
 
 # Each broker process is up
 curl -sf https://broker-a.<your-domain>/healthz

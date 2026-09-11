@@ -18,6 +18,11 @@ type fakeEntry struct {
 	offerings *types.BrokerOfferings
 	health    *types.BrokerHealth
 	err       error
+	// The settlement-keys fixture has its own error so a test can make
+	// one endpoint fail without the others following.
+	settlementKeys    *types.BrokerSettlementKeys
+	settlementKeysErr error
+	settlementKeysSet bool
 }
 
 // NewFake returns an empty FakeClient. Caller must Set() each baseURL.
@@ -65,4 +70,30 @@ func (f *FakeClient) FetchHealth(ctx context.Context, baseURL string) (*types.Br
 		return &types.BrokerHealth{}, nil
 	}
 	return nil, ErrBrokerUnreachable
+}
+
+// SetSettlementKeys installs a settlement-keys fixture for the given
+// baseURL. Unset means the broker predates the endpoint.
+func (f *FakeClient) SetSettlementKeys(baseURL string, out *types.BrokerSettlementKeys, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	ent := f.results[baseURL]
+	ent.settlementKeys = out
+	ent.settlementKeysErr = err
+	ent.settlementKeysSet = true
+	f.results[baseURL] = ent
+}
+
+// FetchSettlementKeys satisfies the Client interface.
+func (f *FakeClient) FetchSettlementKeys(ctx context.Context, baseURL string) (*types.BrokerSettlementKeys, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.results[baseURL]
+	if !ok {
+		return nil, ErrBrokerUnreachable
+	}
+	if !r.settlementKeysSet {
+		return nil, ErrNotSupported
+	}
+	return r.settlementKeys, r.settlementKeysErr
 }

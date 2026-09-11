@@ -1,0 +1,9 @@
+[
+  { "name": "ready", "type": "readiness" },
+  { "name": "open", "type": "request", "timeout_ms": 20000,
+    "config": { "session_params": { "room_name": "cert-{{run.id}}" },
+                "expect_descriptor_schema": "sfu-room/v1",
+                "assert": [ "$.join_url" ],
+                "hold_ms": 5000 } },
+  { "name": "usage", "type": "usage", "config": { "window_ms": 5000 } }
+]

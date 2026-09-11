@@ -7,7 +7,6 @@ GO_LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/livepeer-service-registry-daemon ./cmd/livepeer-service-registry-daemon
-	go build -o bin/livepeer-registry-refresh ./cmd/livepeer-registry-refresh
 
 test:
 	go test -race ./...

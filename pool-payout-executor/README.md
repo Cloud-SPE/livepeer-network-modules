@@ -21,11 +21,30 @@ transfers from a dedicated hot wallet and writes back `submitted`, `paid`, or
 geth-compatible `keystore.json` plus password file configured in the executor
 YAML.
 
+Every transfer is a chain-commons **transaction intent**, keyed by the
+controller's payout intent id and persisted in `executor.intent_store_path`
+(default: `payout-intents.db` next to `state_path`). The intent processor
+owns the wallet's nonce, re-signs a transaction that sits unmined past
+`replace_after_seconds` with bumped gas (up to `max_replacements` times), and
+reports `paid` only after `confirmation_blocks`. Because the intent id is
+stable, re-running a batch, restarting mid-broadcast, or a controller write
+that failed after the transaction went out all resolve to the one transaction
+already sent — never a second payment.
+
+A `submitted` payout the executor has no intent for (one sent by a previous
+version, or by another executor host that has since retired) is **adopted**
+on the next confirm pass from the controller's `tx_hash` and `external_ref`
+(`nonce-N`), then tracked to confirmation like any other. If the controller
+recorded no nonce and no endpoint knows the transaction, the payout is left
+in `submitted` with a `pending_confirmation` result carrying the reason, for
+the controller's stale-submitted alerting to surface.
+
 A live Arbitrum dust payout has been validated end to end against this path.
 
 `send-native-batch` supports `--dry-run` for operator preview and refuses to
 rebroadcast intents that already carry `external_ref` or `tx_hash` settlement
-metadata.
+metadata. A dry-run confirm reads receipts straight from the chain and writes
+nothing to the intent store.
 
 When broadcasting a real exported batch, the executor now claims those intents
 from `pool-controller` with a bounded lease before submitting them. That lease

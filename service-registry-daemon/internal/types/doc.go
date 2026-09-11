@@ -5,6 +5,6 @@
 // need for canonical-bytes hashing and signature recovery.
 //
 // The wire-format guarantees of the manifest (JSON canonicalization,
-// signature digest) live here. See docs/design-docs/manifest-schema.md
-// and docs/design-docs/signature-scheme.md.
+// signature digest) live here. See ../livepeer-network-protocol/manifest/schema.json
+// and references/archived/references/archived/signature-scheme.md.
 package types

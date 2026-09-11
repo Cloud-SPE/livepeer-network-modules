@@ -70,12 +70,20 @@ matching coordinator timeline section during the hand-carry cycle.
    Header summary surfaces `publication_seq` monotonicity and
    `orch.eth_address` stability; per-tuple diff highlights
    `price_per_unit_wei` / `worker_url` changes.
-5. Operator types the last 4 hex chars of the signer eth address into
+5. If the review flags **settlement delegation changed**, verify each
+   listed key against the broker that holds it before going further.
+   The page prints one command per broker in the candidate:
+   `curl -s <worker_url>/registry/settlement-keys | jq '.keys[].statement.public_key'`.
+   Run it from your laptop, not from the coordinator: the point is a
+   path the coordinator does not control. A key the candidate delegates
+   that no broker announces is either pinned in coordinator-config on
+   purpose or should not be signed.
+6. Operator types the last 4 hex chars of the signer eth address into
    the confirm input and submits the sign form.
-6. Console signs the canonical bytes, atomically updates
+7. Console signs the canonical bytes, atomically updates
    `last-signed.json`, and streams `signed.json` back as a download
    attachment.
-7. Operator uploads `signed.json` to the coordinator's web UI;
+8. Operator uploads `signed.json` to the coordinator's web UI;
    coordinator double-verifies, then publishes at
    `/.well-known/livepeer-registry.json`.
 
@@ -134,10 +142,39 @@ Candidate classes and dispositions:
 
 | Class | Meaning | Phase 1 | Phase 2 |
 |---|---|---|---|
-| `renewal` | content identical, remaining validity below threshold | auto-sign | auto-sign |
+| `renewal` | content identical (tuples *and* `settlement_keys`), remaining validity below the coordinator's published threshold | auto-sign | auto-sign |
 | `benign` | every change within `benign_bounds` | hold + `would_auto_sign` shadow audit | auto-sign |
-| `critical` | any change beyond the bounds | hold + alert | hold + alert |
-| `forbidden` | `eth_address` or `spec_version` changed | refuse + alert | refuse + alert |
+| `critical` | any change beyond the bounds, **including a `spec_version` change and any `settlement_keys` change** (a delegation is never benign: no policy dial makes it auto-sign) | hold + alert | hold + alert |
+| `forbidden` | `eth_address` changed | refuse + alert | refuse + alert |
+
+`spec_version` moved from `forbidden` to `critical` (plan 0043 §3.7).
+The version has one source now — the protocol module's `VERSION`, which
+the broker stamps and the coordinator imports — so it changes when the
+operator upgrades, which is a real thing they do. Refusing it outright
+meant an upgrade could never be signed at all. Signing one requires a
+second gesture: **type the new version string** into the sign form,
+alongside the usual last-4 of the signer address. `eth_address` stays
+forbidden, because a signing key signs for exactly one orchestrator.
+
+The renewal threshold is no longer a console-side setting. The
+coordinator publishes the effective value in each candidate's
+`metadata.json` as `renewal_threshold_seconds`, and the agent reads it
+from there; a candidate without it falls back to the coordinator's own
+`ttl/3` default. The old `renewal_threshold_fraction` policy field is
+removed — it had to be kept equal to the coordinator's flag by hand, and
+when the two drifted, renewals arrived before the console considered
+them due and sat until they expired.
+
+### Clearing a rate-limit pause
+
+The agent latches auto-signing when it exceeds
+`rate_limit.max_auto_signs_per_hour`, rather than throttling: a burst
+usually means something upstream is republishing, and signing slower
+would hide it. Candidates still reach the held queue; nothing signs
+itself. After looking at why it latched, clear it from the Manifests
+page — the gesture is audited with the actor and forgets the window, so
+the next breach latches on fresh evidence. Restarting the console is no
+longer the only way out.
 
 ### Burn-in procedure (phase 1 → phase 2)
 

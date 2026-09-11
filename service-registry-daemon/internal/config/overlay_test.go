@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -32,7 +33,6 @@ overlay:
             offerings:
               - id: text-embedding-3-small
                 price_per_work_unit_wei: "100"
-                warm: true
         tier_allowed: [prepaid]
   - eth_address: "0xfedcba0000000000000000000000000000000000"
     enabled: false
@@ -117,5 +117,79 @@ func TestEmptyOverlay_NilSafe(t *testing.T) {
 	var o *Overlay
 	if _, ok := o.FindByAddress("0xabcdef0000000000000000000000000000000000"); ok {
 		t.Fatal("nil overlay should report not-found, not panic")
+	}
+}
+
+// `warm` was removed from the manifest schema in the v3.0.1 reset
+// (exec-plan 0004), but the overlay's parser kept accepting it and threw
+// it away. An operator who declared it got silence: valid config, no
+// effect, no warning. Strict parsing now says so.
+func TestParseOverlayYAML_RejectsRemovedWarmField(t *testing.T) {
+	const y = `
+overlay:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    pin:
+      - id: node-1
+        url: "https://node1.example"
+        capabilities:
+          - name: "openai:/v1/embeddings"
+            work_unit: token
+            offerings:
+              - id: text-embedding-3-small
+                price_per_work_unit_wei: "100"
+                warm: true
+`
+	if _, err := ParseOverlayYAML([]byte(y)); err == nil {
+		t.Fatal("expected an error for the removed `warm` field; accepting and discarding it " +
+			"is how an operator ends up believing a knob works")
+	}
+}
+
+// The declared compatibility axes live in capability `extra`
+// (offering-axes.md). A pin that drops it projects a route a consumer
+// can see the price of and still cannot tell whether it can speak to.
+func TestParseOverlayYAML_CarriesCapabilityExtra(t *testing.T) {
+	const y = `
+overlay:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    pin:
+      - id: node-1
+        url: "https://node1.example"
+        capabilities:
+          - name: "openai:/v1/chat/completions"
+            protocol: "paid-job/v1"
+            work_unit: token
+            extra:
+              openai:
+                model: gpt-oss-20b
+              transports: [unary, stream]
+            offerings:
+              - id: default
+                price_per_work_unit_wei: "100"
+                per_units: 1000
+`
+	o, err := ParseOverlayYAML([]byte(y))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(o.Entries) != 1 || len(o.Entries[0].Pin) != 1 {
+		t.Fatalf("unexpected overlay shape: %+v", o.Entries)
+	}
+	caps := o.Entries[0].Pin[0].Capabilities
+	if len(caps) != 1 {
+		t.Fatalf("want 1 capability, got %d", len(caps))
+	}
+	if len(caps[0].Extra) == 0 {
+		t.Fatal("capability extra was dropped; the declared axes never reach a consumer")
+	}
+	var got map[string]any
+	if err := json.Unmarshal(caps[0].Extra, &got); err != nil {
+		t.Fatalf("extra is not valid JSON: %v", err)
+	}
+	if _, ok := got["openai"]; !ok {
+		t.Fatalf("extra lost its contents: %s", caps[0].Extra)
+	}
+	if _, ok := got["transports"]; !ok {
+		t.Fatalf("extra lost its contents: %s", caps[0].Extra)
 	}
 }

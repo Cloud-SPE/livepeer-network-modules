@@ -66,7 +66,7 @@ groups:
             --max-stale (default 1h) start returning `cache_stale_failing`.
 
             Likely causes: chain RPC endpoint down, network partition,
-            wrong --chain-rpc URL, rate-limit exhaustion at the RPC
+            wrong --chain-rpc-urls URL, rate-limit exhaustion at the RPC
             provider.
 
       - alert: RegistryDaemonDown
@@ -129,7 +129,7 @@ groups:
             ServiceRegistry.getServiceURI calls are slow at the tail. The
             daemon's cache absorbs steady-state load, but new /
             cache-miss resolves block on this. Investigate the configured
-            --chain-rpc endpoint.
+            --chain-rpc-urls endpoint.
 
       - alert: RegistryResolveLatencyHigh
         expr: |

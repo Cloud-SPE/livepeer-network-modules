@@ -1,57 +1,45 @@
 package middleware
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"fmt"
+	"io"
 	"log"
 	"math/big"
 	"net/http"
 	"strconv"
-	"sync"
+	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
+	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
-// CapabilitySpec is what the payment middleware needs to pass to the
-// daemon's OpenSession: the work-unit identifier and the wei price per
-// work unit. Both come from the broker's host-config capabilities
-// list.
+// CapabilitySpec is the price curve an authorization must bind exactly.
 type CapabilitySpec struct {
 	WorkUnit            string
 	PricePerWorkUnitWei *big.Int
+	// PerUnits is the denominator the price is quoted over
+	// (offering-axes.md §6). 0 means 1.
+	PerUnits uint64
 }
 
 // CapabilityLookup resolves a (capability_id, offering_id) pair to its
 // pricing metadata. The broker wires `s.lookup` into this; the
 // middleware uses it without depending on internal/config.
 type CapabilityLookup func(capability, offering string) (CapabilitySpec, bool)
-
-// InterimDebitConfig governs the long-running session ticker per plan
-// 0015 §7. Zero values are safe defaults: an empty config is equivalent
-// to interim-debit disabled (v0.2 single-debit fall-through).
-type InterimDebitConfig struct {
-	// Interval is the tick cadence. 0 disables the ticker entirely.
-	// Default 30s; recommended floor in production is 1s (the broker
-	// logs WARN below 1s outside of test environments).
-	Interval time.Duration
-	// MinRunwayUnits is the minimum required runway passed to
-	// SufficientBalance per tick. 60 is the recommended default for
-	// `seconds-elapsed` workloads at the 30s tick cadence.
-	MinRunwayUnits uint64
-	// GraceOnInsufficient is the duration the middleware waits between
-	// observing `sufficient=false` and terminating the handler. Zero
-	// (the default) means hard-terminate immediately. Reserved for the
-	// future mid-session ticket top-up plan; v0.1 ships with the flag
-	// wired and the default zero (per plan 0015 §11 decision 3).
-	GraceOnInsufficient time.Duration
-}
 
 // SessionState is the per-request handle the dispatch layer uses to
 // publish a LiveCounter back to the payment middleware. The middleware
@@ -62,9 +50,8 @@ type InterimDebitConfig struct {
 // SessionState is intentionally goroutine-safe: the ticker reads
 // LiveCounter() concurrently with dispatch's SetLiveCounter call.
 type SessionState struct {
-	live       atomic.Pointer[liveCounterHolder]
-	meta       atomic.Pointer[receiptMetaHolder]
-	settlement atomic.Pointer[SettlementInputs]
+	live atomic.Pointer[liveCounterHolder]
+	meta atomic.Pointer[receiptMetaHolder]
 }
 
 type liveCounterHolder struct {
@@ -129,31 +116,6 @@ func (s *SessionState) ReceiptMeta() (ReceiptMeta, bool) {
 	return ReceiptMeta{}, false
 }
 
-// SetSettlementInputs publishes the inputs needed to build a
-// SettlementRecord later. Long-lived session drivers (RTMP,
-// session-control) snapshot these inputs onto their per-session
-// records during Serve so they can emit settlement at session-close
-// time, after the per-request payment middleware has long since
-// returned.
-func (s *SessionState) SetSettlementInputs(in SettlementInputs) {
-	if s == nil {
-		return
-	}
-	s.settlement.Store(&in)
-}
-
-// SettlementInputs returns the inputs published by the payment
-// middleware, or (zero, false) if absent.
-func (s *SessionState) SettlementInputs() (SettlementInputs, bool) {
-	if s == nil {
-		return SettlementInputs{}, false
-	}
-	if p := s.settlement.Load(); p != nil {
-		return *p, true
-	}
-	return SettlementInputs{}, false
-}
-
 type sessionStateKey struct{}
 
 // SessionStateFromContext returns the SessionState attached by the
@@ -167,419 +129,239 @@ func SessionStateFromContext(ctx context.Context) *SessionState {
 	return nil
 }
 
-// Payment is the payment-lifecycle middleware:
+// Payment enforces authorization-backed account admission around one job.
+// An optional payment credits account shortfall inside AdmitAuthorization;
+// payment bytes never provide workload authority.
 //
-//	OpenSession(work_id, capability, offering, price, work_unit)
-//	  → ProcessPayment(payment_bytes, work_id)
-//	  → handler.Serve  (parallel: interim DebitBalance + SufficientBalance ticker)
-//	  → final DebitBalance(sender, work_id, work_units, debit_seq=N+1)
-//	  → CloseSession(sender, work_id)
-//
-// The payee-side work_id is derived from the payment's
-// ticket_params.recipient_rand_hash when available. That aligns the
-// broker's session lifecycle with the receiver-issued TicketParams used
-// on the sender side. Legacy mock/stub payments fall back to the
-// inbound request id so existing unit tests and smoke paths keep
-// working.
-//
-// Decode/cross-check failures map to:
-//   - missing/malformed Livepeer-Payment header → 401 + payment_invalid
-//   - capability not found in host-config       → 404 + capability_not_served
-//   - offering not found under capability       → 404 + offering_not_served
-//   - daemon rejects (mismatch / bad sender)    → 401 + payment_invalid
-func Payment(client payment.Client, lookup CapabilityLookup, idc InterimDebitConfig, receiptSink receipts.Client) Middleware {
-	// Production-safety warning per plan 0015 §9.1: tick intervals
-	// below 1s are intended for conformance fixtures only.
-	if idc.Interval > 0 && idc.Interval < time.Second {
-		log.Printf("warning: --interim-debit-interval=%s is below the 1s production floor; "+
-			"this is intended for conformance / test environments only", idc.Interval)
+// SettlementEncoder renders a settlement record for the wire. Injected
+// so the middleware does not reach for the server's signing key, and so
+// a test can assert on the record without a key at all.
+type SettlementEncoder func(*paymentsv1.SettlementRecord) (string, error)
+
+func encodeSettlementRecord(record *paymentsv1.SettlementRecord) (string, error) {
+	if record == nil {
+		return "", errors.New("settlement record is nil")
+	}
+	raw, err := proto.Marshal(record)
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(raw), nil
+}
+
+func Payment(client payment.Client, lookup CapabilityLookup, receiptSink receipts.Client, encode SettlementEncoder, brokerURI ...string) Middleware {
+	if encode == nil {
+		encode = encodeSettlementRecord
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			paymentHeader := r.Header.Get(livepeerheader.Payment)
-			if paymentHeader == "" {
-				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-					"missing Livepeer-Payment header")
+			if r.Header.Get(livepeerheader.Authorization) == "" {
+				livepeerheader.WriteError(w, http.StatusUnauthorized,
+					livepeerheader.ErrAuthorizationRequired,
+					"missing required header: "+livepeerheader.Authorization)
 				return
 			}
-			paymentBytes, err := base64.StdEncoding.DecodeString(paymentHeader)
-			if err != nil {
-				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-					"Livepeer-Payment is not valid base64: "+err.Error())
-				return
+			uri := ""
+			if len(brokerURI) > 0 {
+				uri = brokerURI[0]
 			}
-
-			capability := r.Header.Get(livepeerheader.Capability)
-			offering := r.Header.Get(livepeerheader.Offering)
-			spec, ok := lookup(capability, offering)
-			if !ok {
-				livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
-					"capability "+capability+"/"+offering+" is not served by this broker")
-				return
-			}
-			if err := validateExpectedPriceForRequest(paymentBytes, capability, offering, spec); err != nil {
-				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch,
-					"expected price mismatch: "+err.Error())
-				return
-			}
-
-			workID, ok := DerivePayeeWorkID(paymentBytes)
-			if !ok {
-				workID = RequestIDFromContext(r.Context())
-				if workID == "" {
-					// RequestID middleware always sets one; defense in depth.
-					livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
-						"missing request id (RequestID middleware not wired)")
-					return
-				}
-			}
-
-			ctx := r.Context()
-
-			// 1. OpenSession. Idempotent: a retry with the same work_id
-			//    returns OUTCOME_ALREADY_OPEN.
-			if _, err := client.OpenSession(ctx, payment.OpenSessionRequest{
-				WorkID:              workID,
-				Capability:          capability,
-				Offering:            offering,
-				PricePerWorkUnitWei: spec.PricePerWorkUnitWei,
-				WorkUnit:            spec.WorkUnit,
-			}); err != nil {
-				livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
-					"open session: "+err.Error())
-				return
-			}
-
-			// 2. ProcessPayment. Daemon decodes wire bytes, seals
-			//    sender, credits EV.
-			result, err := client.ProcessPayment(ctx, payment.ProcessPaymentRequest{
-				WorkID:       workID,
-				PaymentBytes: paymentBytes,
-			})
-			if err != nil {
-				code, errCode := mapClientErr(err)
-				livepeerheader.WriteError(w, code, errCode, "process payment: "+err.Error())
-				return
-			}
-
-			// Always close the session, even on early-return paths below.
-			defer func() { _ = client.CloseSession(ctx, result.Sender, workID) }()
-
-			if result.TicketsRejected > 0 && result.DominantRejection == payment.PaymentRejectionReasonInvalidRecipientRand {
-				livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid,
-					"process payment: INVALID_RECIPIENT_RAND")
-				return
-			}
-
-			// 3. Set up interim-debit ticker. The dispatch layer publishes
-			//    the LiveCounter via the SessionState we attach to the
-			//    request context; the ticker polls it on each tick.
-			//
-			//    When idc.Interval == 0 (locked decision #6) or the
-			//    driver does not support interim debit (LiveCounter never
-			//    set), the ticker is a no-op and the post-handler path
-			//    falls through to the v0.2 single-debit flow.
-			state := &SessionState{}
-			ctx = context.WithValue(ctx, sessionStateKey{}, state)
-			state.SetReceiptMeta(ReceiptMeta{
-				WorkID:       workID,
-				RoundID:      DerivePaymentRoundID(paymentBytes),
-				RequestID:    RequestIDFromContext(ctx),
-				CapabilityID: capability,
-				OfferingID:   offering,
-			})
-			state.SetSettlementInputs(SettlementInputs{
-				PaymentBytes:   paymentBytes,
-				FundedValueWei: result.CreditedEV,
-				WorkUnit:       spec.WorkUnit,
-			})
-			handlerCtx, cancelHandler := context.WithCancel(ctx)
-			defer cancelHandler()
-
-			rec := &responseRecorder{ResponseWriter: w}
-			rec.Header().Add("Trailer", livepeerheader.Settlement)
-
-			tickerDone := make(chan struct{})
-			tickerStop := make(chan struct{})
-			var (
-				tickerSeq           atomic.Uint64 // last successfully-sent debit_seq; final flush uses N+1
-				tickerLastTickTotal atomic.Uint64 // cumulative units already debited
-				terminationReason   atomic.Pointer[string]
-			)
-
-			if idc.Interval > 0 {
-				go runInterimDebitTicker(handlerCtx, tickerStop, tickerDone, interimDebitArgs{
-					client:         client,
-					sender:         result.Sender,
-					workID:         workID,
-					interval:       idc.Interval,
-					minRunwayUnits: idc.MinRunwayUnits,
-					graceOnInsuff:  idc.GraceOnInsufficient,
-					state:          state,
-					seq:            &tickerSeq,
-					lastTickTotal:  &tickerLastTickTotal,
-					cancelHandler:  cancelHandler,
-					terminated:     &terminationReason,
-				})
-			} else {
-				// Interim debit disabled — close immediately so the
-				// final-flush path doesn't wait on a no-op channel.
-				close(tickerDone)
-				close(tickerStop)
-			}
-
-			next.ServeHTTP(rec, r.WithContext(handlerCtx))
-
-			// 4. Stop the ticker (idempotent if already disabled), wait
-			//    for it to drain, then perform the final flush. Plan
-			//    0015 §3.3: the final DebitBalance is issued by the main
-			//    middleware path, not the ticker, so there is no race
-			//    between a late tick and the close.
-			if idc.Interval > 0 {
-				select {
-				case <-tickerStop:
-					// already closed (e.g. by the ticker on insufficient_balance)
-				default:
-					close(tickerStop)
-				}
-				<-tickerDone
-			}
-
-			// Read actual work units. Same trailer-fallback logic as v0.1:
-			// for http-stream@v0 the value lands in resp.Header() AFTER
-			// the body, so we re-read post-handler.
-			actual := rec.workUnits
-			if actual == 0 {
-				if h := rec.Header().Get(livepeerheader.WorkUnits); h != "" {
-					if n, err := strconv.ParseUint(h, 10, 64); err == nil {
-						actual = n
-					}
-				}
-			}
-
-			// For long-running sessions the LiveCounter is the canonical
-			// running view; prefer its end-of-session reading over the
-			// (often absent) Livepeer-Work-Units header.
-			if lc := state.LiveCounter(); lc != nil {
-				if liveTotal := lc.CurrentUnits(); liveTotal > actual {
-					actual = liveTotal
-				}
-			}
-
-			// 5. Final DebitBalance.
-			//    - Single-debit path (idc.Interval == 0 or no interim
-			//      ticks fired): debit_seq=1, work_units=actual.
-			//    - Interim-debit path: debit_seq=N+1,
-			//      work_units = actual - lastTickTotal.
-			lastTotal := tickerLastTickTotal.Load()
-			lastSeq := tickerSeq.Load()
-			var finalSeq uint64 = 1
-			var finalUnits uint64 = actual
-			if lastSeq > 0 {
-				finalSeq = lastSeq + 1
-				if actual > lastTotal {
-					finalUnits = actual - lastTotal
-				} else {
-					finalUnits = 0
-				}
-			}
-			if finalUnits > 0 {
-				_, _ = client.DebitBalance(ctx, payment.DebitBalanceRequest{
-					Sender:    result.Sender,
-					WorkID:    workID,
-					WorkUnits: int64(finalUnits),
-					DebitSeq:  finalSeq,
-				})
-			}
-
-			// 6. If the ticker terminated the session for insufficient
-			//    balance, record the cause for any post-mortem
-			//    observability. Trailer-style Livepeer-Error emission is
-			//    a future plan-0015 follow-up; the v0.1 cut logs at WARN.
-			var terminationReasonValue string
-			if reason := terminationReason.Load(); reason != nil {
-				terminationReasonValue = *reason
-				log.Printf("warning: interim-debit terminated work_id=%s reason=%s", workID, terminationReasonValue)
-			}
-
-			if receiptSink != nil && actual > 0 {
-				if meta, ok := state.ReceiptMeta(); ok {
-					revenue := metaGatewayRevenue(meta, spec, actual)
-					if err := receiptSink.UpsertWorkReceipt(ctx, receipts.WorkReceipt{
-						ID:                   meta.WorkID,
-						RoundID:              meta.RoundID,
-						RequestID:            meta.RequestID,
-						CapabilityID:         meta.CapabilityID,
-						OfferingID:           meta.OfferingID,
-						MemberEthAddress:     meta.MemberEthAddress,
-						BackendID:            meta.BackendID,
-						HostEnrollmentID:     meta.HostEnrollmentID,
-						HardwareUnitID:       meta.HardwareUnitID,
-						GPUUUID:              meta.GPUUUID,
-						TemplateID:           meta.TemplateID,
-						ExpectedMaxUnits:     meta.ExpectedMaxUnits,
-						ActualUnits:          actual,
-						AcceptedWorkUnits:    actual,
-						GatewayRevenueWei:    revenue,
-						AttributedRevenueWei: revenue,
-						Status:               "final",
-					}); err != nil {
-						observability.RecordWorkReceiptEmit("final", "error")
-						log.Printf("warning: work receipt final emit failed work_id=%s: %v", meta.WorkID, err)
-					} else {
-						observability.RecordWorkReceiptEmit("final", "success")
-					}
-				}
-			}
-
-			if settlement := buildSettlementRecord(paymentBytes, result.CreditedEV, actual, spec.WorkUnit, terminationReasonValue); settlement != nil {
-				if encoded, err := encodeSettlementRecord(settlement); err == nil {
-					rec.Header().Set(livepeerheader.Settlement, encoded)
-				} else {
-					log.Printf("warning: settlement encode failed work_id=%s: %v", workID, err)
-				}
-			}
+			handleAccountAuthorizedJob(w, r, next, client, lookup, receiptSink, encode, uri)
+			return
 		})
 	}
 }
 
-func metaGatewayRevenue(meta ReceiptMeta, spec CapabilitySpec, actual uint64) string {
-	if spec.PricePerWorkUnitWei == nil || actual == 0 {
-		return ""
+// handleAccountAuthorizedJob is the paid-job path. Admission
+// reserves the full payer-authorized maximum atomically; settlement debits the
+// measured units and returns the remainder to the stable payer-payee account.
+func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next http.Handler, client payment.Client, lookup CapabilityLookup, receiptSink receipts.Client, encode SettlementEncoder, brokerURI string) {
+	account, ok := client.(payment.AccountClient)
+	if !ok {
+		livepeerheader.WriteError(w, http.StatusHTTPVersionNotSupported, livepeerheader.ErrProtocolUnsupported, "payment daemon does not support wholesale account authorizations")
+		return
 	}
-	total := new(big.Int).Mul(spec.PricePerWorkUnitWei, new(big.Int).SetUint64(actual))
-	return total.String()
-}
-
-// interimDebitArgs is the parameter bundle for the ticker goroutine.
-type interimDebitArgs struct {
-	client         payment.Client
-	sender         []byte
-	workID         string
-	interval       time.Duration
-	minRunwayUnits uint64
-	graceOnInsuff  time.Duration
-	state          *SessionState
-	seq            *atomic.Uint64
-	lastTickTotal  *atomic.Uint64
-	cancelHandler  context.CancelFunc
-	terminated     *atomic.Pointer[string]
-}
-
-// runInterimDebitTicker is the per-session goroutine that issues
-// DebitBalance + SufficientBalance on each tick. Plan 0015 §3.
-//
-// Lifecycle:
-//   - On every tick (post-LiveCounter publication): compute delta,
-//     DebitBalance with the next debit_seq; SufficientBalance check.
-//   - If SufficientBalance returns false: optionally wait
-//     graceOnInsufficient, cancel the handler context, exit.
-//   - On stop or ctx cancellation: exit immediately. The main
-//     middleware path performs the final flush; the ticker does not.
-func runInterimDebitTicker(ctx context.Context, stop <-chan struct{}, done chan<- struct{}, a interimDebitArgs) {
-	defer close(done)
-	t := time.NewTicker(a.interval)
-	defer t.Stop()
-	var pendingSeq uint64
-	var pendingMu sync.Mutex
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-stop:
-			return
-		case <-t.C:
-		}
-
-		// Skip ticks that fire before the dispatch layer publishes a
-		// LiveCounter; happens when the driver has no interim view
-		// (HTTP family) — the no-op tick keeps fixed cost trivial.
-		lc := a.state.LiveCounter()
-		if lc == nil {
-			continue
-		}
-
-		current := lc.CurrentUnits()
-		last := a.lastTickTotal.Load()
-		delta := uint64(0)
-		if current > last {
-			delta = current - last
-		}
-
-		// Debit the delta if non-zero. Reuse the pending seq on retry;
-		// move forward only on a non-error reply (plan 0015 §5.3).
-		if delta > 0 {
-			pendingMu.Lock()
-			if pendingSeq == 0 {
-				pendingSeq = a.seq.Load() + 1
-			}
-			seq := pendingSeq
-			pendingMu.Unlock()
-			if _, err := a.client.DebitBalance(ctx, payment.DebitBalanceRequest{
-				Sender:    a.sender,
-				WorkID:    a.workID,
-				WorkUnits: int64(delta),
-				DebitSeq:  seq,
-			}); err != nil {
-				// Retry with same seq next tick. Don't advance.
-				log.Printf("warning: interim DebitBalance work_id=%s seq=%d delta=%d failed: %v (will retry)",
-					a.workID, seq, delta, err)
-				continue
-			}
-			pendingMu.Lock()
-			a.seq.Store(seq)
-			a.lastTickTotal.Store(last + delta)
-			pendingSeq = 0
-			pendingMu.Unlock()
-		}
-
-		// SufficientBalance runway check. Plan 0015 §6.3 ships with
-		// "every tick" frequency for v0.1.
-		if a.minRunwayUnits == 0 {
-			continue
-		}
-		res, err := a.client.SufficientBalance(ctx, payment.SufficientBalanceRequest{
-			Sender:       a.sender,
-			WorkID:       a.workID,
-			MinWorkUnits: int64(a.minRunwayUnits),
-		})
+	authBytes, err := base64.StdEncoding.DecodeString(r.Header.Get(livepeerheader.Authorization))
+	if err != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Authorization is not valid base64: "+err.Error())
+		return
+	}
+	var auth paymentsv1.SpendAuthorization
+	if err := proto.Unmarshal(authBytes, &auth); err != nil || auth.GetPayload() == nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Authorization is malformed")
+		return
+	}
+	p := auth.GetPayload()
+	capability, offering, protocol, requestID := r.Header.Get(livepeerheader.Capability), r.Header.Get(livepeerheader.Offering), r.Header.Get(livepeerheader.Protocol), RequestIDFromContext(r.Context())
+	spec, found := lookup(capability, offering)
+	if !found {
+		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed, "capability "+capability+"/"+offering+" is not served by this broker")
+		return
+	}
+	if p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetAuthorizationId() == "" || p.GetSessionId() != "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetRequestId() != requestID || p.GetProtocol() != protocol || protocol != "paid-job/v1" || p.GetCapability() != capability || p.GetOffering() != offering {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization identity or route does not match this job")
+		return
+	}
+	if p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization chain or denomination is invalid")
+		return
+	}
+	if brokerURI == "" || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(brokerURI, "/") {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization broker_uri does not match this broker")
+		return
+	}
+	price := p.GetAcceptedPrice()
+	wantPer := spec.PerUnits
+	if wantPer == 0 {
+		wantPer = 1
+	}
+	if price == nil || price.GetCapability() != capability || price.GetOffering() != offering || price.GetWorkUnitName() != spec.WorkUnit || price.GetUnitsPerPrice() != wantPer || spec.PricePerWorkUnitWei == nil || new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()).Cmp(spec.PricePerWorkUnitWei) != 0 {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization price does not match the broker offer")
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, (64<<20)+1))
+	if err != nil || len(body) > 64<<20 {
+		livepeerheader.WriteBadRequest(w, "request body cannot be committed")
+		return
+	}
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	digest := sha256.Sum256(body)
+	if len(p.GetRequestDigest()) != sha256.Size || !bytes.Equal(p.GetRequestDigest(), digest[:]) {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization request_digest does not match the exact request body")
+		return
+	}
+	if err := ValidateCallerProof(authBytes, p.GetCallerPublicKey(), r.Header.Get(livepeerheader.CallerProof)); err != nil {
+		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, err.Error())
+		return
+	}
+	var topup []byte
+	if h := r.Header.Get(livepeerheader.Payment); h != "" {
+		topup, err = base64.StdEncoding.DecodeString(h)
 		if err != nil {
-			log.Printf("warning: SufficientBalance work_id=%s failed: %v (will retry)",
-				a.workID, err)
-			continue
-		}
-		if !res.Sufficient {
-			if a.graceOnInsuff > 0 {
-				select {
-				case <-ctx.Done():
-					return
-				case <-stop:
-					return
-				case <-time.After(a.graceOnInsuff):
-				}
-				// Re-check after grace.
-				res2, err := a.client.SufficientBalance(ctx, payment.SufficientBalanceRequest{
-					Sender:       a.sender,
-					WorkID:       a.workID,
-					MinWorkUnits: int64(a.minRunwayUnits),
-				})
-				if err == nil && res2 != nil && res2.Sufficient {
-					continue
-				}
-			}
-			reason := livepeerheader.ErrInsufficientBalance
-			a.terminated.Store(&reason)
-			log.Printf("warning: terminating session work_id=%s reason=%s", a.workID, reason)
-			a.cancelHandler()
+			livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid, "Livepeer-Payment is not valid base64: "+err.Error())
 			return
 		}
 	}
+	admitted, err := account.AdmitAuthorization(r.Context(), payment.AdmitAuthorizationRequest{AuthorizationBytes: authBytes, PaymentBytes: topup, Reservation: new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue())})
+	if err != nil {
+		code, errCode := mapClientErr(err)
+		if status.Code(err) == codes.FailedPrecondition {
+			code, errCode = http.StatusPaymentRequired, livepeerheader.ErrInsufficientBalance
+		}
+		livepeerheader.WriteError(w, code, errCode, "admit authorization: "+err.Error())
+		return
+	}
+	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) {
+		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, "payment daemon returned an invalid account admission")
+		return
+	}
+	state := &SessionState{}
+	state.SetReceiptMeta(ReceiptMeta{WorkID: p.GetAuthorizationId(), RequestID: requestID, CapabilityID: capability, OfferingID: offering, ExpectedMaxUnits: p.GetMaxTotalUnits()})
+	ctx := context.WithValue(r.Context(), sessionStateKey{}, state)
+	rec := &responseRecorder{ResponseWriter: w}
+	rec.deferResponse()
+	defer rec.commit()
+	next.ServeHTTP(rec, r.WithContext(ctx))
+	actual := rec.workUnits
+	if h := rec.Header().Get(livepeerheader.WorkUnits); actual == 0 && h != "" {
+		actual, _ = strconv.ParseUint(h, 10, 64)
+	}
+	if lc := state.LiveCounter(); lc != nil && lc.CurrentUnits() > actual {
+		actual = lc.CurrentUnits()
+	}
+	billable := actual
+	if billable > p.GetMaxTotalUnits() {
+		billable = p.GetMaxTotalUnits()
+	}
+	settled, settleErr := account.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: p.GetPayer(), AuthorizationID: p.GetAuthorizationId(), ActualUnits: billable, SettlementSeq: 1})
+	if settleErr == nil && (settled == nil || settled.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil) {
+		settleErr = errors.New("payment daemon returned invalid authorization settlement state")
+	}
+	if settleErr != nil {
+		log.Printf("ERROR: authorization settlement FAILED authorization_id=%s units=%d: %v", p.GetAuthorizationId(), actual, settleErr)
+		if slot := PendingDebitSlotFrom(r.Context()); slot != nil {
+			slot.Set(&PendingDebit{AuthorizationBytes: authBytes, Sender: append([]byte(nil), p.GetPayer()...), WorkID: p.GetAuthorizationId(), DebitSeq: 1, ActualUnits: billable, MeasuredUnits: actual, WorkUnitName: spec.WorkUnit, JobID: rec.Header().Get(livepeerheader.JobID), RequestID: requestID, ReservedValueWei: admitted.Reserved, AccountFundingWei: admitted.Credited, AccountVersion: admitted.Account.Version})
+		}
+		rec.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+		rec.Header().Set(livepeerheader.WorkUnits, "0")
+		return
+	}
+	rec.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(actual, 10))
+	settlement := BuildAuthorizationSettlement(p, admitted.Reserved, settled.Billed, settled.Released, admitted.Credited, settled.Account.Version, actual, billable, rec.Header().Get(livepeerheader.JobID))
+	if encoded, err := encode(settlement); err == nil {
+		rec.Header().Set(livepeerheader.Settlement, encoded)
+	} else {
+		log.Printf("warning: authorization settlement encode failed: %v", err)
+	}
+	if receiptSink != nil && actual > 0 {
+		revenue := settled.Billed.String()
+		_ = receiptSink.UpsertWorkReceipt(ctx, receipts.WorkReceipt{ID: p.GetAuthorizationId(), RequestID: requestID, CapabilityID: capability, OfferingID: offering, ExpectedMaxUnits: p.GetMaxTotalUnits(), ActualUnits: actual, AcceptedWorkUnits: actual, GatewayRevenueWei: revenue, AttributedRevenueWei: revenue, Status: "final"})
+	}
 }
 
-// mapClientErr translates daemon-side rejection into broker-facing
-// error codes. v0.2: any RPC error from the daemon is treated as
-// `payment_invalid`; defense-in-depth for bad inputs and chain
-// failures alike.
+// ValidateCallerProof checks the optional delegated caller binding. The proof
+// is a base64 65-byte secp256k1 EIP-191 signature over
+// keccak256("livepeer-invocation-proof/v1\x00" || authorization_bytes).
+// An empty caller key deliberately selects exact-scope bearer semantics.
+func ValidateCallerProof(authorizationBytes, callerPublicKey []byte, encoded string) error {
+	if len(callerPublicKey) == 0 {
+		if encoded != "" {
+			return errors.New("caller proof supplied but authorization has no caller_public_key")
+		}
+		return nil
+	}
+	if encoded == "" {
+		return errors.New("missing Livepeer-Caller-Proof")
+	}
+	sig, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil || len(sig) != crypto.SignatureLength || (sig[64] != 27 && sig[64] != 28) {
+		return errors.New("Livepeer-Caller-Proof is malformed")
+	}
+	sig = append([]byte(nil), sig...)
+	sig[64] -= 27
+	digest := crypto.Keccak256(append([]byte("livepeer-invocation-proof/v1\x00"), authorizationBytes...))
+	prefixed := crypto.Keccak256([]byte(fmt.Sprintf("\x19Ethereum Signed Message:\n%d", len(digest))), digest)
+	pub, err := crypto.SigToPub(prefixed, sig)
+	if err != nil {
+		return errors.New("Livepeer-Caller-Proof signature is invalid")
+	}
+	got := crypto.FromECDSAPub(pub)
+	want := callerPublicKey
+	if len(want) == 33 {
+		parsed, err := crypto.DecompressPubkey(want)
+		if err != nil {
+			return errors.New("caller_public_key is invalid")
+		}
+		want = crypto.FromECDSAPub(parsed)
+	}
+	if !bytes.Equal(got, want) {
+		return errors.New("Livepeer-Caller-Proof does not match caller_public_key")
+	}
+	return nil
+}
+
+func BuildAuthorizationSettlement(p *paymentsv1.SpendAuthorizationPayload, reserved, billed, released, accountFunding *big.Int, accountVersion, actual, billedUnits uint64, jobID string) *paymentsv1.SettlementRecord {
+	if reserved == nil {
+		reserved = new(big.Int)
+	}
+	if billed == nil {
+		billed = new(big.Int)
+	}
+	if released == nil {
+		released = new(big.Int)
+	}
+	if accountFunding == nil {
+		accountFunding = new(big.Int)
+	}
+	outcome := paymentsv1.SettlementRecord_EXACT
+	if accountFunding.Sign() > 0 {
+		outcome = paymentsv1.SettlementRecord_TOPPED_UP
+	}
+	if actual > billedUnits {
+		outcome = paymentsv1.SettlementRecord_STOPPED_AT_BUDGET
+	}
+	return &paymentsv1.SettlementRecord{JobId: jobID, WorkId: p.GetAuthorizationId(), RequestId: p.GetRequestId(), IssuedAt: time.Now().UTC().Format(time.RFC3339Nano), AcceptedQuoteRef: p.GetAcceptedPrice().GetQuoteRef(), WorkUnitName: p.GetAcceptedPrice().GetWorkUnitName(), EstimatedUnits: p.GetMaxTotalUnits(), ActualUnits: actual, BilledUnits: billedUnits, DebitedUnits: billedUnits, FundedValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, BilledValueWei: &paymentsv1.BigUInt{Value: billed.Bytes()}, Outcome: outcome, AuthorizationId: p.GetAuthorizationId(), AuthorizedValueWei: p.GetMaxDebitWei(), ReservedValueWei: &paymentsv1.BigUInt{Value: reserved.Bytes()}, ReleasedValueWei: &paymentsv1.BigUInt{Value: released.Bytes()}, AccountFundingValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, AccountVersion: accountVersion}
+}
+
 func mapClientErr(err error) (int, string) {
 	if errors.Is(err, errors.ErrUnsupported) {
 		return http.StatusInternalServerError, livepeerheader.ErrInternalError

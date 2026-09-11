@@ -3,6 +3,10 @@ ARG GO_VERSION=1.25.7
 FROM golang:${GO_VERSION} AS base
 WORKDIR /src
 
+# chain-commons is consumed via a relative replace (../chain-commons), so the
+# sibling module must be visible to the builder. Build context is the
+# monorepo root (see infra/scripts/build-images.sh).
+COPY chain-commons/ ./chain-commons/
 COPY pool-payout-executor/go.mod pool-payout-executor/go.sum ./pool-payout-executor/
 WORKDIR /src/pool-payout-executor
 RUN go mod download

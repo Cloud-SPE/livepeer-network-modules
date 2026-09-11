@@ -2,8 +2,10 @@
 # one OpenAI-compatible chat-completions capability backed by vLLM.
 #
 # Pair this with:
-#   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai-chat.example.yaml
-# and a reachable vLLM deployment behind the broker's `backend.url`.
+#   infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai.example.yaml
+# and a vLLM deployment whose host runs an agent that attaches outbound to
+# the broker and declares that model. The broker never dials it, so the vLLM
+# box needs no inbound reachability.
 #
 # Replace `orch_eth_address` with the real orchestrator identity whose manifest
 # will be signed on secure-orch. Replace the broker `base_url` with the broker's
@@ -19,3 +21,8 @@ brokers:
 
 publish:
   manifest_ttl: 24h
+  # Window assigned to a settlement key a broker announces without one
+  # (default one year). Keys are discovered from each broker's
+  # GET /registry/settlement-keys; pin one under a top-level
+  # `settlement_keys:` only for a broker that cannot announce it.
+  # settlement_key_validity: 8760h

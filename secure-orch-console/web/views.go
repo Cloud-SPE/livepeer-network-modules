@@ -79,16 +79,19 @@ type manifestsPageView struct {
 	HasLastSigned     bool
 	LastSignedSummary envelopeSummary
 	Held              *heldItemView
-	Candidate         *candidateView
-	CandidateError    string
-	ReviewState       string
-	ReviewTitle       string
-	ReviewMessage     string
-	CycleStage        string
-	CycleTitle        string
-	CycleNote         string
-	CycleEvents       []cycleEventView
-	ReconcileSteps    []checkpointStepView
+	// AutoSignPaused reports a latched rate-limit pause, so the operator
+	// can see WHY nothing is auto-signing and clear it after looking.
+	AutoSignPaused bool
+	Candidate      *candidateView
+	CandidateError string
+	ReviewState    string
+	ReviewTitle    string
+	ReviewMessage  string
+	CycleStage     string
+	CycleTitle     string
+	CycleNote      string
+	CycleEvents    []cycleEventView
+	ReconcileSteps []checkpointStepView
 }
 
 type auditPageView struct {

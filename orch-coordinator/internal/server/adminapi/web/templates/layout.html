@@ -49,6 +49,13 @@
       <a href="/audit" class="sidebar-item {{if eq .ActivePage "audit"}}active{{end}}">Audit trail</a>
       <a href="/candidate.tar.gz" class="sidebar-item">Download candidate</a>
     </nav>
+    <div class="sidebar-section">Runners</div>
+    <nav class="sidebar-nav" aria-label="runner and offer pages">
+      <a href="/runners" class="sidebar-item {{if eq .ActivePage "runners"}}active{{end}}">Runners</a>
+      <a href="/offers" class="sidebar-item {{if eq .ActivePage "offers"}}active{{end}}">Offers</a>
+      <a href="/certification" class="sidebar-item {{if eq .ActivePage "certification"}}active{{end}}">Certification</a>
+      <a href="/enroll" class="sidebar-item {{if eq .ActivePage "enroll"}}active{{end}}">Enroll host</a>
+    </nav>
     <section class="sidebar-note">
       <h2>Publish path</h2>
       <p>Build on the LAN, carry to secure-orch for signing, then upload the signed manifest here.</p>

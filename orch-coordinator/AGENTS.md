@@ -1,7 +1,8 @@
 # AGENTS.md
 
 This is `orch-coordinator/` — the operator's LAN-side process that scrapes
-capability-broker `/registry/offerings`, builds candidate manifests, hosts the
+capability-broker `/registry/offerings`, `/registry/health` and
+`/registry/settlement-keys`, builds candidate manifests, hosts the
 candidate for the operator to hand-carry to `secure-orch-console`, receives the
 cold-key-signed manifest back, atomic-swap publishes at
 `/.well-known/livepeer-registry.json`, and exposes the capability-as-roster UX.
@@ -19,7 +20,7 @@ manifests via HTTP POST and verifies them; if the signature recovers anything
 other than the configured `eth_address`, the upload is rejected. There is no
 warm-key path here. Cite: plan 0018 §1 + core belief #4.
 
-## Two listeners, two postures
+## Three listeners, three postures
 
 - `--listen=:8080` — operator UX (web UI + JSON API + signed-manifest upload).
   LAN-bound by intent; the coordinator runs on the operator's LAN and the
@@ -72,13 +73,14 @@ internal/
   config/                       — coordinator-config.yaml grammar + validation
   types/                        — decoded broker offerings, candidate, signed manifest
   providers/
-    brokerclient/               — HTTP GET /registry/offerings (real + dev fake)
+    brokerclient/               — HTTP GET /registry/{offerings,health,settlement-keys} (real + dev fake)
   repo/
     candidates/                 — filesystem snapshots (history, pruned by count)
     audit/                      — BoltDB publish + upload events
     published/                  — single live-manifest file
   service/
     scrape/                     — poll loop, freshness, dedup, last-good fallback
+    settlementkeys/             — verify broker key announcements, first-seen ledger, merge into the candidate
     candidate/                  — JCS-canonical bytes from scrape cache
     diff/                       — candidate-vs-published structural diff
     roster/                     — roster row materialization

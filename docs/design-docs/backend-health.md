@@ -96,19 +96,42 @@ backends right now?
 
 ```json
 {
+  "broker_status": "ready",
+  "generated_at": "2026-09-08T12:00:00Z",
   "capabilities": [
     {
       "id": "openai:chat-completions",
       "offering_id": "tier-a",
       "status": "ready",
-      "last_probe_ms": 1450,
-      "backend": "reachable"
+      "reason": "certified",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z",
+      "last_dispatched_at": "2026-09-08T11:41:07Z",
+      "backends": [
+        {
+          "backend_id": "ai2-rig|qwen-chat",
+          "status": "ready",
+          "reason": "certified",
+          "probe_type": "attach",
+          "probed_at": "2026-09-08T12:00:00Z",
+          "stale_after": "2026-09-08T12:00:30Z",
+          "consecutive_successes": 1,
+          "last_dispatched_at": "2026-09-08T11:41:07Z",
+          "selection_eligible": true,
+          "selection_weight": 110,
+          "selection_reason": "eligible"
+        }
+      ]
     },
     {
-      "id": "video:live.rtmp",
+      "id": "video:transcode.live",
       "offering_id": "default",
-      "status": "draining",
-      "reason": "operator_marked_drain"
+      "status": "unreachable",
+      "reason": "no_eligible_runner",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z"
     }
   ]
 }
@@ -121,8 +144,12 @@ health surface."
 
 In practice:
 
-- each tuple in `host-config.yaml` may choose a broker-side probe recipe
-- the probe recipe may be shallow or specialized depending on workload
+- the **runner declares its own readiness recipe** in its attach document
+  (`readiness{type, path, config}`), because the runner is the only party
+  that knows what ready means for it — model loaded, GPU free, queue
+  depth. An operator-authored HTTP-status recipe approximates a fact the
+  runner has exactly.
+- the recipe may be shallow or specialized depending on workload
 - the broker maps the result onto generic outward states:
   `ready`, `draining`, `degraded`, `unreachable`, `stale`
 
@@ -138,8 +165,16 @@ Examples of legitimate specialized checks:
 The coordinator, resolver, and gateways should not need to understand
 those semantics. They consume only the broker's normalized result.
 
-**Freshness budget:** seconds. Backend reachability is probed on cadence
-(periodic + on-demand) and cached briefly.
+**Freshness budget:** seconds — but not because anything is polled. A
+runner's reachability is whether its attach tunnel is up, and its fitness
+for an offer is what certification decided; both are read live on every
+request to `/registry/health`. The freshness budget is a statement about
+how long a *reader* may cache the answer, not about a probe interval.
+Concretely: `probed_at` is always the time of the read and `stale_after` is
+always `probed_at` + 30 s. A reader MUST NOT age the verdict against
+anything else — in particular not against `last_dispatched_at`, which
+reports when the runner last did work and is informational only. An idle
+runner is not a failing one; the tunnel being up is the current evidence.
 
 **Who consumes it:**
 
@@ -167,10 +202,16 @@ a green `/healthz`.
 This stack is expected to serve capabilities with different definitions
 of "ready". The extensibility point belongs in the broker:
 
-- **operator-facing choice:** `host-config.yaml` selects the probe recipe
-  and thresholds per tuple
+- **runner-facing declaration:** the attach document names the probe
+  recipe (`http-status`, `http-jsonpath`, `http-openai-model-ready`,
+  `tcp-connect`) and its parameters
+  ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md) §3.2)
+- **operator-facing choice:** the offer's `certification` steps decide
+  how much readiness is *enough* — attempts, interval, consecutive
+  successes — without restating the recipe
 - **core-module implementation:** capability-broker ships the probe
-  recipe library and executes probes on cadence
+  recipe library and runs a recipe when it certifies a runner — never on a
+  background cadence against a configured URL
 - **cross-stack contract:** `/registry/health` exposes only normalized
   status, freshness, and reason
 

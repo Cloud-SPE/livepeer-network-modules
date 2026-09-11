@@ -38,12 +38,23 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 
 ```
 cmd/livepeer-payment-daemon/   — entrypoint (flag parsing + boot)
+cmd/payout-sim/                — offline payout/pricing simulator
 internal/
-  proto/livepeer/payments/v1/  — generated gRPC bindings (committed)
   server/                      — grpc.Server lifecycle + listener
-  service/                     — PayerDaemon / PayeeDaemon / PayeeAdmin RPC implementation
+  service/                     — PayerDaemon / PayeeDaemon / PayeeAdmin RPC
+                                 implementation, plus escrow + settlement
   store/                       — BoltDB session ledger
+  providers/                   — chain, keystore, devbroker, metrics adapters
+  types/                       — shared payment domain values
+  payoutsim/                   — simulator engine behind cmd/payout-sim
+  compat/                      — go-livepeer wire-compat round-trip fixture
+lint/no-secrets-in-logs/       — custom analyzer (see lint/README.md)
 ```
+
+The generated gRPC bindings are **not** vendored here — they live in
+[`../livepeer-network-protocol/proto-go/livepeer/payments/v1/`](../livepeer-network-protocol/proto-go/livepeer/payments/v1/)
+and are pulled in via a `replace` directive in `go.mod`. `make proto`
+regenerates them into that directory.
 
 ## Code-of-conduct
 

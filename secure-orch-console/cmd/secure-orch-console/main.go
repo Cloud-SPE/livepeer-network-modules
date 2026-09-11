@@ -140,6 +140,7 @@ func run(args []string) error {
 			return err
 		}
 		srv.SetMetricsHandler(ag.Metrics().Handler())
+		srv.SetAgentControls(ag)
 		go ag.Run(ctx)
 		logger.Info("agent loop started", "coordinator", cfg.CoordinatorURL, "policy", *agentPolicyPath)
 	}

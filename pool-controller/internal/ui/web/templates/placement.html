@@ -1,0 +1,51 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Deterministic placement</p>
+  <h1>Placement</h1>
+  <p class="muted">What policy wants each GPU to run, computed from declared facts — the enabled catalog, per-pool overrides, member opt-outs, and the hardware inventory. Nothing here is applied until you apply it. The rejections are the useful half: they are the answer to "why is that card idle".</p>
+</section>
+
+<section>
+  <h2>Plan snapshot</h2>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">GPUs judged</p>
+      <p class="metric-value"><span id="plDecisionCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Placements wanted</p>
+      <p class="metric-value"><span id="plPlacedCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Rejections</p>
+      <p class="metric-value"><span id="plRejectedCount">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Pending changes</p>
+      <p class="metric-value"><span id="plChangeCount">—</span></p>
+    </article>
+  </div>
+  <p class="small muted">Generated <span id="plGeneratedAt">—</span>. Recomputed on every refresh; the plan is never stored.</p>
+</section>
+
+<section>
+  <h2>Templates this pool has not enabled</h2>
+  <p class="muted">Pool-wide, not a property of any one card. A template listed here is placed nowhere because the pool never adopted or enabled it — enable it on the Offers page rather than looking for a hardware fault.</p>
+  <div id="placementNotEnabled" class="badges"></div>
+</section>
+
+<section>
+  <h2>Pending changes</h2>
+  <p class="muted">What applying this plan would do. A <code>create</code> starts a new assignment, a <code>role_change</code> moves an existing one between primary and secondary, and a <code>drain</code> stops sending new work while in-flight requests finish — assignments are drained, never deleted, so retirement happens when the drain completes.</p>
+  <div class="actions">
+    <button id="placementApply">Apply plan</button>
+  </div>
+  <div id="placementChanges" class="card-list"></div>
+</section>
+
+<section>
+  <h2>Per-GPU decisions</h2>
+  <p class="muted">One card per hardware unit: what it was placed on and why, and every template it was refused for, with the reason code and its detail.</p>
+  <div id="placementDecisions" class="card-list"></div>
+</section>
+{{end}}

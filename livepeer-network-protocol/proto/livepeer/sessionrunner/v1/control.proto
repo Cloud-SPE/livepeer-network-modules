@@ -36,8 +36,8 @@ service SessionRunnerControl {
   // `runnerreport` extractor (plan 0012-followup §8).
   // The runner is the gRPC server; the broker initiates the call
   // and reads the server-stream of monotonic deltas. Each delta
-  // accumulates into a per-session atomic.Uint64 the interim-debit
-  // ticker polls.
+  // accumulates into the per-session cumulative usage watermark used by
+  // authorization-backed account advances.
   rpc ReportWorkUnits(WorkUnitReportRequest) returns (stream WorkUnitReport);
 
   // Shutdown asks the runner to drain gracefully. The broker waits

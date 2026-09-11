@@ -139,11 +139,6 @@ linters:
           - errcheck
           - forbidigo
           - contextcheck
-      - path: cmd/livepeer-registry-refresh/
-        linters:
-          - errcheck
-          - forbidigo
-          - gosec
 
       # lint/ tools: WalkDir + os.ReadFile patterns; these tools run
       # against the operator's tree, not chain-untrusted input. The

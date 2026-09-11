@@ -274,10 +274,10 @@ single change hits — one critical change holds the whole candidate.
 
 | Class | Triggers | Phase-1 disposition | Phase-2 disposition |
 |---|---|---|---|
-| `renewal` | content identical; window/seq advance; remaining validity < threshold | **auto-sign** | auto-sign |
+| `renewal` | content identical (tuples and `settlement_keys`); window/seq advance; remaining validity < threshold | **auto-sign** | auto-sign |
 | `benign` | tuple removed; `price_per_unit_wei` decrease; price change within ±`price_delta_max_pct`; `worker_url` change within `worker_url_domain_allowlist` | hold **+ `would_auto_sign` shadow audit** | **auto-sign** |
-| `critical` | new `(capability_id, offering_id)` tuple; price increase beyond bound; `worker_url` outside allowlist; any `extra`/`constraints` change; `interaction_mode` or `work_unit` change | hold + alert | hold + alert |
-| `forbidden` | `orch.eth_address` change; `spec_version` change | refuse + alert (never held as signable; the candidate is rejected outright) | same |
+| `critical` | new `(capability_id, offering_id)` tuple; price increase beyond bound; `worker_url` outside allowlist; any `extra`/`constraints` change; `protocol`/axes or `work_unit` change; `spec_version` change (moved from forbidden, plan 0043 §3.7); any `settlement_keys` add/remove/window change | hold + alert | hold + alert |
+| `forbidden` | `orch.eth_address` change | refuse + alert (never held as signable; the candidate is rejected outright) | same |
 
 Policy file (`/etc/secure-orch/sign-policy.json`, strict JSON, schema
 shipped in-repo, hash recorded in audit on every load):

@@ -78,6 +78,13 @@ func standWithAdmin(t *testing.T, token string) (pb.PayeeDaemonClient, pb.PayeeA
 	}
 	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil, nil)
+	// Bind before starting the goroutine. Serve binds on the far side of
+	// the `go`, so "the goroutine started" and "the socket exists" are
+	// different moments, and under parallel load the first RPC lost that
+	// race and dialled a socket that was not there yet.
+	if err := srv.Listen(); err != nil {
+		t.Fatalf("listen: %v", err)
+	}
 	go func() { _ = srv.Serve() }()
 
 	conn, err := grpc.NewClient("unix://"+sockPath, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -470,4 +477,80 @@ func TestResetSession_RotatesStableSessionAndDropsNonceLedger(t *testing.T) {
 
 func hexString(b []byte) string {
 	return fmt.Sprintf("%x", b)
+}
+
+// A payment to a rotated-away session must be refused, in band.
+//
+// ResetSession closes the old session and drops its index so the next
+// params issuance mints a fresh work_id. A payer that hasn't yet learned
+// of the rotation keeps paying the old one, and until the guard existed
+// those payments were accepted: tickets were validated, WINNERS WERE
+// QUEUED FOR REDEMPTION, and the EV landed on a session whose every
+// debit fails with ErrClosed. Real ETH in, no work ever billable out.
+//
+// The refusal has to arrive as a successful response carrying
+// tickets_rejected and INVALID_RECIPIENT_RAND — that is the signal the
+// broker rebinds on. A gRPC error reads as a generic failure and strands
+// the payer on the dead identity.
+func TestProcessPaymentRefusesRotatedAwaySession(t *testing.T) {
+	payee, admin, st, cleanup := standWithAdmin(t, "secret-token")
+	defer cleanup()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	mdCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer secret-token"))
+
+	sender := bytes20(0x01)
+	paramsReq := &pb.GetTicketParamsRequest{
+		Sender: sender, Recipient: bytes20(0xaa), FaceValue: big.NewInt(1234).Bytes(),
+		Capability: "video:transcode.abr", Offering: "default",
+	}
+	first, err := payee.GetTicketParams(ctx, paramsReq)
+	if err != nil {
+		t.Fatalf("GetTicketParams: %v", err)
+	}
+	workID := hexString(first.GetTicketParams().GetRecipientRandHash())
+	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+		WorkId: workID, Capability: "video:transcode.abr", Offering: "default",
+		PricePerWorkUnitWei: big.NewInt(100).Bytes(), PerUnits: 1000, WorkUnit: "token",
+	}); err != nil {
+		t.Fatalf("OpenSession: %v", err)
+	}
+	if _, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{
+		Sender: sender, Recipient: bytes20(0xaa),
+		Capability: "video:transcode.abr", Offering: "default",
+	}); err != nil {
+		t.Fatalf("ResetSession: %v", err)
+	}
+
+	before, err := st.Get(sender, workID)
+	if err != nil {
+		t.Fatalf("load closed session: %v", err)
+	}
+	resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		WorkId: workID, PaymentBytes: stubPayment(t, sender),
+	})
+	if err != nil {
+		t.Fatalf("ProcessPayment on a closed session = %v; it must refuse in band so the "+
+			"broker sees the rotation signal, not a generic error", err)
+	}
+	if ev := new(big.Int).SetBytes(resp.GetCreditedEv()); ev.Sign() != 0 {
+		t.Fatalf("credited %s to a rotated-away session; a closed session takes no more money", ev)
+	}
+	if resp.GetWinnersQueued() != 0 {
+		t.Fatalf("queued %d winners for redemption on a closed session", resp.GetWinnersQueued())
+	}
+	after, err := st.Get(sender, workID)
+	if err != nil {
+		t.Fatalf("reload closed session: %v", err)
+	}
+	if after.BalanceWei != before.BalanceWei {
+		t.Fatalf("balance moved %s -> %s on a closed session", before.BalanceWei, after.BalanceWei)
+	}
+	if resp.GetTicketsRejected() == 0 {
+		t.Fatal("tickets_rejected is 0; the broker reads that as accepted and never rebinds")
+	}
+	if got := resp.GetDominantRejection(); got != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
+		t.Fatalf("dominant rejection = %v; want INVALID_RECIPIENT_RAND", got)
+	}
 }

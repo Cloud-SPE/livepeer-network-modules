@@ -41,11 +41,12 @@ src/
   billing/       Wallet, reservations, top-ups
   billing/stripe/ StripeClient interface, checkout, webhook handler
   middleware/    Fastify pre-handlers (auth, rate-limit, wallet-reserve)
+  payment/       Stripe checkout + webhook entrypoints
   admin/         Operator basic-auth admin engine
   db/            drizzle pgSchema('app'), migrate.ts, pool.ts
   repo/          drizzle queries (customers, api_keys, reservations, …)
-  service/       authenticate, pricing (RateCardResolver iface), admin engine
-  config/        Zod env schemas
+  routes/        customer self-service Fastify routes
+  registry/      service-registry hooks (placeholder)
   testing/       Wallet fakes, Stripe stub, test pool factories
 migrations/      drizzle SQL (numbered 0000..NNNN)
 frontend/        pnpm sub-workspace (shared/admin/portal UI packages)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,9 @@ import (
 // only identifies the source envelope contract.
 const CoordinatorSignatureAlg = "secp256k1"
 
+// settlementKeyRE matches an uncompressed secp256k1 public key in hex.
+var settlementKeyRE = regexp.MustCompile(`^0x[0-9a-f]{130}$`)
+
 // CoordinatorSignedManifest is the compatibility envelope currently
 // published by orch-coordinator.
 type CoordinatorSignedManifest struct {
@@ -24,12 +28,26 @@ type CoordinatorSignedManifest struct {
 }
 
 type CoordinatorManifestPayload struct {
-	SpecVersion    string                  `json:"spec_version"`
-	PublicationSeq uint64                  `json:"publication_seq"`
-	IssuedAt       time.Time               `json:"issued_at"`
-	ExpiresAt      time.Time               `json:"expires_at"`
-	Orch           CoordinatorOrch         `json:"orch"`
-	Capabilities   []CoordinatorCapability `json:"capabilities"`
+	SpecVersion    string          `json:"spec_version"`
+	PublicationSeq uint64          `json:"publication_seq"`
+	IssuedAt       time.Time       `json:"issued_at"`
+	ExpiresAt      time.Time       `json:"expires_at"`
+	Orch           CoordinatorOrch `json:"orch"`
+	// SettlementKeys are hot keys the cold key delegates settlement
+	// signing to. A broker is network-exposed and must never hold the
+	// key that anchors the operator's on-chain identity.
+	SettlementKeys []CoordinatorSettlementKey `json:"settlement_keys,omitempty"`
+	Capabilities   []CoordinatorCapability    `json:"capabilities"`
+}
+
+// CoordinatorSettlementKey is one delegated settlement-signing key.
+// Consumers accept a settlement signed by any key whose window contains
+// the record's issued_at; an outgoing key stays listed until its
+// expires_at so a record signed just before a rotation still verifies.
+type CoordinatorSettlementKey struct {
+	PublicKey string    `json:"public_key"`
+	NotBefore time.Time `json:"not_before"`
+	ExpiresAt time.Time `json:"expires_at"`
 }
 
 type CoordinatorOrch struct {
@@ -37,19 +55,57 @@ type CoordinatorOrch struct {
 	ServiceURI string `json:"service_uri,omitempty"`
 }
 
+// CoordinatorCapability is one capability tuple of the coordinator
+// envelope.
+//
+// Protocol replaces the removed interaction-mode field (manifest spec
+// 1.0.0; see livepeer-network-protocol/protocols/offering-axes.md). The
+// declared axes ride alongside it in exactly one of Job (paid-job/*) or
+// Session (paid-session/*).
+//
+// Job and Session are deliberately json.RawMessage: per the "Who
+// consumes what" table in offering-axes.md, the registry/resolver layer
+// gates on *nothing* here — it is pure pass-through. Keeping the bytes
+// verbatim means a new axis (or a whole new protocol) needs no change in
+// this daemon, and nothing downstream sees a value this layer reshaped.
 type CoordinatorCapability struct {
 	CapabilityID    string              `json:"capability_id"`
 	OfferingID      string              `json:"offering_id"`
-	InteractionMode string              `json:"interaction_mode"`
+	Protocol        string              `json:"protocol"`
+	Job             json.RawMessage     `json:"job,omitempty"`
+	Session         json.RawMessage     `json:"session,omitempty"`
 	WorkUnit        CoordinatorWorkUnit `json:"work_unit"`
 	PricePerUnitWei string              `json:"price_per_unit_wei"`
-	WorkerURL       string              `json:"worker_url"`
-	Extra           map[string]any      `json:"extra,omitempty"`
-	Constraints     map[string]any      `json:"constraints,omitempty"`
+	// PerUnits is the price denominator (offering-axes.md §6). Absent
+	// means 1. The envelope decoder rejects unknown fields, so this must
+	// exist here for a manifest that declares it to parse at all.
+	PerUnits    uint64         `json:"per_units,omitempty"`
+	WorkerURL   string         `json:"worker_url"`
+	Extra       map[string]any `json:"extra,omitempty"`
+	Constraints map[string]any `json:"constraints,omitempty"`
 }
 
 type CoordinatorWorkUnit struct {
 	Name string `json:"name"`
+	// Estimator, when present, is how a CLIENT computes a funding
+	// ceiling before the work runs.
+	//
+	// Carried through rather than dropped. Extractors are otherwise
+	// seller-side detail that no counterparty gates on, and this type
+	// modelled work_unit as just a name on that basis — but a caller
+	// funding a multipart upload cannot derive a ceiling from the
+	// request the way a JSON workload can, so for those offerings the
+	// measurement has to reach it.
+	Estimator *CoordinatorEstimator `json:"estimator,omitempty"`
+}
+
+// CoordinatorEstimator mirrors the manifest's estimator block.
+type CoordinatorEstimator struct {
+	ID        string `json:"id"`
+	Rounding  string `json:"rounding"`
+	Exactness string `json:"exactness"`
+	Package   string `json:"package,omitempty"`
+	Fixtures  string `json:"fixtures,omitempty"`
 }
 
 type CoordinatorEnvelopeSignature struct {
@@ -95,6 +151,20 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 	if sm.Manifest.ExpiresAt.IsZero() {
 		return NewValidation(ErrParse, "manifest.expires_at", "missing")
 	}
+	for i, k := range sm.Manifest.SettlementKeys {
+		if !settlementKeyRE.MatchString(k.PublicKey) {
+			return NewValidation(ErrParse, fmt.Sprintf("manifest.settlement_keys[%d].public_key", i),
+				"must be 0x-prefixed 130-hex (uncompressed secp256k1)")
+		}
+		if k.NotBefore.IsZero() || k.ExpiresAt.IsZero() {
+			return NewValidation(ErrParse, fmt.Sprintf("manifest.settlement_keys[%d]", i),
+				"not_before and expires_at are required")
+		}
+		if !k.ExpiresAt.After(k.NotBefore) {
+			return NewValidation(ErrParse, fmt.Sprintf("manifest.settlement_keys[%d]", i),
+				"expires_at must be after not_before")
+		}
+	}
 	for i, c := range sm.Manifest.Capabilities {
 		if c.CapabilityID == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].capability_id", i), "missing")
@@ -102,8 +172,24 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 		if c.OfferingID == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].offering_id", i), "missing")
 		}
-		if c.InteractionMode == "" {
-			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].interaction_mode", i), "missing")
+		// Presence only. The protocol tag's grammar, the job/session
+		// axes, and the protocol↔axes pairing are all gated by the
+		// consumers that actually speak them (clearinghouse, gateway,
+		// broker) — never here. See offering-axes.md §4.
+		if c.Protocol == "" {
+			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].protocol", i), "missing")
+		}
+		// The declaration is authoritative and `extra` is opaque
+		// operator metadata. A tuple that puts a declaration key in
+		// extra is either confused or trying to make a consumer read a
+		// different protocol than the one it signed; either way the
+		// manifest is refused rather than silently corrected.
+		for _, reserved := range []string{"protocol", "job", "session"} {
+			if _, clash := c.Extra[reserved]; clash {
+				return NewValidation(ErrParse,
+					fmt.Sprintf("manifest.capabilities[%d].extra.%s", i, reserved),
+					"reserved: the signed declaration owns this key")
+			}
 		}
 		if c.WorkUnit.Name == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].work_unit.name", i), "missing")
@@ -191,10 +277,12 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		extra string
 	}
 	type capBuilder struct {
-		name     string
-		workUnit string
-		extra    json.RawMessage
-		offers   []Offering
+		name      string
+		protocol  string
+		workUnit  string
+		estimator *Estimator
+		extra     json.RawMessage
+		offers    []Offering
 	}
 	type nodeBuilder struct {
 		url   string
@@ -215,9 +303,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 			urls = append(urls, tuple.WorkerURL)
 		}
 		extraMap := cloneJSONMap(tuple.Extra)
-		if _, exists := extraMap["interaction_mode"]; !exists {
-			extraMap["interaction_mode"] = tuple.InteractionMode
-		}
+		mirrorDeclaration(extraMap, tuple)
 		extraRaw, err := marshalRawObject(extraMap)
 		if err != nil {
 			return nil, err
@@ -229,9 +315,11 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		cb, ok := nb.caps[key]
 		if !ok {
 			cb = &capBuilder{
-				name:     tuple.CapabilityID,
-				workUnit: tuple.WorkUnit.Name,
-				extra:    extraRaw,
+				name:      tuple.CapabilityID,
+				protocol:  tuple.Protocol,
+				workUnit:  tuple.WorkUnit.Name,
+				estimator: cloneEstimator(tuple.WorkUnit.Estimator),
+				extra:     extraRaw,
 			}
 			nb.caps[key] = cb
 			nb.order = append(nb.order, key)
@@ -243,6 +331,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		cb.offers = append(cb.offers, Offering{
 			ID:                  tuple.OfferingID,
 			PricePerWorkUnitWei: tuple.PricePerUnitWei,
+			PerUnits:            tuple.PerUnits,
 			Constraints:         constraintsRaw,
 		})
 	}
@@ -267,10 +356,12 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 				return string(cb.offers[i].Constraints) < string(cb.offers[j].Constraints)
 			})
 			caps = append(caps, Capability{
-				Name:      cb.name,
-				WorkUnit:  cb.workUnit,
-				Offerings: cb.offers,
-				Extra:     cb.extra,
+				Name:              cb.name,
+				Protocol:          cb.protocol,
+				WorkUnit:          cb.workUnit,
+				WorkUnitEstimator: cb.estimator,
+				Offerings:         cb.offers,
+				Extra:             cb.extra,
 			})
 		}
 		out = append(out, Node{
@@ -280,16 +371,59 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		})
 	}
 
+	keys := make([]SettlementKey, 0, len(sm.Manifest.SettlementKeys))
+	for _, k := range sm.Manifest.SettlementKeys {
+		keys = append(keys, SettlementKey(k))
+	}
+	// Newest first, so a consumer taking the head gets the signer for
+	// records emitted now.
+	sort.Slice(keys, func(i, j int) bool { return keys[i].NotBefore.After(keys[j].NotBefore) })
+
 	return &Manifest{
-		SchemaVersion: sm.Manifest.SpecVersion,
-		EthAddress:    sm.Manifest.Orch.EthAddress,
-		IssuedAt:      sm.Manifest.IssuedAt,
-		Nodes:         out,
+		SchemaVersion:  sm.Manifest.SpecVersion,
+		EthAddress:     sm.Manifest.Orch.EthAddress,
+		IssuedAt:       sm.Manifest.IssuedAt,
+		Nodes:          out,
+		SettlementKeys: keys,
 		Signature: Signature{
 			Alg:   sm.Signature.Algorithm,
 			Value: sm.Signature.Value,
 		},
 	}, nil
+}
+
+// mirrorDeclaration copies the tuple's declared axes into the projected
+// capability's opaque extra block, and its protocol alongside them.
+//
+// The node-oriented projection (Node → Capability → Offering) predates
+// the manifest's capability-tuple shape, and the gRPC surface carries a
+// capability's axes solely as extra_json. Mirroring here is what keeps
+// the declaration reaching consumers at all: gateways select routes on
+// session.descriptor_schema and job.transports, so dropping the axes
+// while forwarding the rest would silently break route selection.
+//
+// The signed tuple WINS every collision. An operator that publishes its
+// own "protocol", "job" or "session" key in extra has its value
+// overwritten here, and DecodeCoordinatorEnvelope rejects the manifest
+// outright — see validateCoordinatorEnvelope. The precedence used to run
+// the other way, so an orch could publish extra.protocol = "paid-job/v1"
+// on a paid-session offering and every downstream consumer that gates on
+// protocol would believe it.
+//
+// The axes stay raw bytes: this layer gates on nothing inside them, and
+// a typed mirror would silently drop any axis a later spec minor adds.
+func mirrorDeclaration(extra map[string]any, tuple CoordinatorCapability) {
+	extra["protocol"] = tuple.Protocol
+	if len(tuple.Job) > 0 {
+		extra["job"] = tuple.Job
+	} else {
+		delete(extra, "job")
+	}
+	if len(tuple.Session) > 0 {
+		extra["session"] = tuple.Session
+	} else {
+		delete(extra, "session")
+	}
 }
 
 func cloneJSONMap(in map[string]any) map[string]any {
@@ -312,4 +446,19 @@ func marshalRawObject(v map[string]any) (json.RawMessage, error) {
 		return nil, fmt.Errorf("marshal opaque object: %w", err)
 	}
 	return json.RawMessage(b), nil
+}
+
+// cloneEstimator copies the estimator so a caller cannot mutate the
+// projected view through the envelope it came from.
+func cloneEstimator(in *CoordinatorEstimator) *Estimator {
+	if in == nil {
+		return nil
+	}
+	return &Estimator{
+		ID:        in.ID,
+		Rounding:  in.Rounding,
+		Exactness: in.Exactness,
+		Package:   in.Package,
+		Fixtures:  in.Fixtures,
+	}
 }

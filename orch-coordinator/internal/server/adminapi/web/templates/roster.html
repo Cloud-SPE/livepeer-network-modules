@@ -27,21 +27,30 @@
     {{range .BrokerStatus}}
       <li class="broker-{{.Freshness}}" id="broker-{{anchorID .Name}}">
         <strong>{{.Name}}</strong> — scrape={{.Freshness}} live={{.LiveStatus}} ({{.BaseURL}})
-        {{if gt .MetadataApplicableTuples 0}}
-        <span> · metadata={{.MetadataApplicableTuples}} tuple(s)</span>
-        {{if gt .MetadataUnhealthyTuples 0}}<span class="err"> · unhealthy={{.MetadataUnhealthyTuples}}</span>{{end}}
-        {{if gt .MetadataStaleTuples 0}}<span class="err"> · stale={{.MetadataStaleTuples}}</span>{{end}}
-        <span> · max_age={{printf "%.0fs" .MetadataWorstAgeSeconds}}</span>
-        {{end}}
         {{if .LastError}}<span class="err">{{.LastError}}</span>{{end}}
         {{if .HealthError}}<span class="err">{{.HealthError}}</span>{{end}}
       </li>
     {{end}}
     </ul>
   </details>
+  <details class="brokers" id="settlement-keys" open>
+    <summary>Settlement delegation — {{len .SettlementKeys}} key(s)</summary>
+    <p class="muted">Keys brokers announce at <code>/registry/settlement-keys</code>, proven by signature, and where each stands. The cold key delegates them when it signs the candidate.</p>
+    <ul>
+    {{range .SettlementKeys}}
+      <li class="settlement-{{.State}}">
+        {{if .Broker}}<strong>{{.Broker}}</strong>{{else}}<strong>(not announced by any broker)</strong>{{end}}
+        — <span class="badge settlement-{{.State}}">{{.State}}</span>
+        {{if .PublicKey}}<code title="{{.PublicKey}}">{{.Fingerprint}}</code>{{end}}
+        {{if not .NotBefore.IsZero}}<span class="muted">{{.NotBefore.Format "2006-01-02"}} &rarr; {{.ExpiresAt.Format "2006-01-02"}}</span>{{end}}
+        {{if .Reason}}<span class="err">{{.Reason}}</span>{{end}}
+      </li>
+    {{end}}
+    </ul>
+  </details>
   <form method="get" class="filters">
     <input type="text" name="q" value="{{.Filter.CapabilitySubstring}}" placeholder="capability substring">
-    <input type="text" name="mode" value="{{.Filter.Mode}}" placeholder="interaction_mode">
+    <input type="text" name="protocol" value="{{.Filter.Protocol}}" placeholder="protocol">
     <input type="text" name="broker" value="{{.Filter.BrokerName}}" placeholder="broker name">
     <select name="drift">
       <option value="">any drift</option>
@@ -133,6 +142,8 @@
 {{if .ReconcileSteps}}
 <section>
   <h2>Cross-surface checklist</h2>
+  <p class="muted">{{if eq .CycleFrame "published"}}Tracking publication {{.CycleSeq}}, the live manifest. The current candidate ({{.CandidateSeq}}) is a no-op successor built after that publish; there is nothing to carry.{{else}}Tracking candidate {{.CycleSeq}}.{{end}}</p>
+  {{if .ChecklistHint}}<p class="muted">{{.ChecklistHint}}</p>{{end}}
   <div class="checklist">
     {{range .ReconcileSteps}}
     <article class="checklist-item">
@@ -153,7 +164,7 @@
     <thead>
       <tr>
         <th>capability_id / offering_id</th>
-        <th>mode</th>
+        <th>protocol</th>
         <th>price (wei)</th>
         <th>broker(s)</th>
         <th>worker_url</th>
@@ -165,16 +176,12 @@
     {{range .Rows}}
       <tr class="drift-{{.Drift}}" id="row-{{anchorID .CapabilityID .OfferingID}}">
         <td><strong>{{.CapabilityID}}</strong><br><small>{{.OfferingID}}</small><br><a href="/diff#diff-row-{{anchorID .CapabilityID .OfferingID}}" class="inline-link">Open in diff</a></td>
-        <td>{{.InteractionMode}}</td>
+        <td>{{.Protocol}}</td>
         <td>{{.PriceWei}}{{if and (ne .OldPriceWei "") (ne .OldPriceWei .PriceWei)}}<br><small class="was">was {{.OldPriceWei}}</small>{{end}}</td>
         <td>
           {{range .Brokers}}
-            <span class="broker-cell broker-{{.Freshness}}" title="{{if .MetadataError}}{{.MetadataError}}{{else if .LiveReason}}{{.LiveReason}}{{end}}">
+            <span class="broker-cell broker-{{.Freshness}}" title="{{.LiveReason}}">
               {{.Name}}{{if .LiveStatus}} · {{.LiveStatus}}{{end}}{{if .HealthStale}} · stale{{end}}
-              {{if .MetadataState}} · meta={{.MetadataState}}{{end}}
-              {{if .MetadataResult}}/{{.MetadataResult}}{{end}}
-              {{if gt .MetadataFailures 0}} · fail={{.MetadataFailures}}{{end}}
-              {{if ge .MetadataAgeSeconds 0.0}} · age={{printf "%.0fs" .MetadataAgeSeconds}}{{end}}
             </span>
           {{end}}
         </td>

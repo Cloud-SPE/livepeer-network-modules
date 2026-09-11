@@ -36,6 +36,12 @@ type TicketParams struct {
 	Seed              []byte
 	ExpirationBlock   *big.Int
 	ExpirationParams  *TicketExpirationParams
+	// HighestSeenNonce is the largest sender nonce the PAYEE has already
+	// recorded against this rand, when it reported one. A sender resumes
+	// above it, so a lost local counter heals on the next quote instead
+	// of replaying into rejections it cannot tell from duplicates.
+	HighestSeenNonce uint32
+	HasSeenNonces    bool
 }
 
 // TicketExpirationParams pins the protocol round + block hash a ticket
@@ -93,6 +99,20 @@ func EV(faceValue, winProb *big.Int) *big.Rat {
 	num := new(big.Rat).SetInt(new(big.Int).Mul(faceValue, winProb))
 	den := new(big.Rat).SetInt(MaxWinProb)
 	return new(big.Rat).Quo(num, den)
+}
+
+// CreditedEV is the integer wei a payee credits for ONE ticket:
+// floor(face_value x win_prob / MaxWinProb).
+//
+// This is the number that matters, and it is not EV() rounded. EV()
+// returns the exact rational; the receiver floors it per ticket before
+// crediting, so a sender that sized a batch from the rational would
+// promise a total the ledger never credits. Both sides call this.
+func CreditedEV(faceValue, winProb *big.Int) *big.Int {
+	if faceValue == nil || winProb == nil {
+		return big.NewInt(0)
+	}
+	return new(big.Int).Quo(new(big.Int).Mul(faceValue, winProb), MaxWinProb)
 }
 
 // ToWirePayment converts an in-process TicketBatch into a wire

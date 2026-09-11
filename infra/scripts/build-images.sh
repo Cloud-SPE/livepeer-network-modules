@@ -8,9 +8,17 @@
 #
 # Env:
 #   REGISTRY  default: tztcloud
-#   TAG       default: v1.4.1
+#   TAG       default: v2.0.0
 #   VERSION   default: derived from git tag/sha for binary build metadata
 #   PUSH      set to 1 to docker push after each build
+#
+# Pushing is held to a stricter standard than building. A local build can be
+# thrown away; a pushed tag is what somebody else deploys. So PUSH=1 refuses a
+# dirty tree — an image built from uncommitted work cannot be rebuilt from any
+# commit, and the moment you need that is the moment you least want to be
+# guessing — and it prints the digest of everything it pushed. Pin the digest,
+# not the tag: TAG defaults to a constant, so `v2.0.0` means "whatever was
+# pushed last", while a digest means one specific image forever.
 #
 # Notes:
 #   - Run from the monorepo root.
@@ -27,15 +35,24 @@ if [[ -f "$VERSION_ENV_FILE" ]]; then
 fi
 
 REGISTRY="${REGISTRY:-tztcloud}"
-TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v1.4.1}}"
+TAG="${TAG:-${IMAGE_TAG_DEFAULT:-v2.0.0}}"
 PUSH="${PUSH:-0}"
 DEFAULT_VERSION="$(VERSION_PREFIX="${TAG}" FALLBACK_VERSION="${TAG}" ./infra/build/git-version.sh)"
 VERSION="${VERSION:-${DEFAULT_VERSION}}"
+
+# A dirty tree is fine to build from and not fine to publish from.
+if [[ "${PUSH:-0}" == "1" && "$VERSION" == *-dirty ]]; then
+  printf '\033[1;31m[fail]\033[0m refusing to push: working tree has uncommitted changes\n' >&2
+  printf '       version would be %s, which no commit can reproduce.\n' "$VERSION" >&2
+  git status --short >&2
+  exit 1
+fi
 
 # ---- helpers --------------------------------------------------------------
 
 step=0
 total=0
+declare -a PUSHED_DIGESTS=()
 
 GLOBAL_BUILD_ARGS=(
   "--build-arg=REGISTRY=${REGISTRY}"
@@ -64,7 +81,8 @@ is_pushable_image() {
     livepeer-pool-member-agent|\
     livepeer-pool-reconciler|\
     livepeer-pool-payout-executor|\
-    livepeer-secure-orch-console)
+    livepeer-secure-orch-console|\
+    livepeer-conformance)
       return 0
       ;;
     *)
@@ -88,7 +106,6 @@ declare -a IMAGES=(
   "livepeer-pool-payout-executor|.|pool-payout-executor/Dockerfile||"
   "livepeer-secure-orch-console|.|secure-orch-console/Dockerfile||"
   "livepeer-conformance|.|livepeer-network-protocol/conformance/Dockerfile||"
-  "livepeer-conformance-session-runner|.|livepeer-network-protocol/conformance/runner/session-runner-stub/Dockerfile||"
 )
 
 # ---- filter ---------------------------------------------------------------
@@ -143,8 +160,18 @@ for entry in "${SELECTED[@]}"; do
     fi
     log "[$step/$total] pushing $full_tag"
     docker push "$full_tag" || fail "push failed for $full_tag"
+    digest="$(docker inspect --format '{{if .RepoDigests}}{{index .RepoDigests 0}}{{end}}' "$full_tag" 2>/dev/null || true)"
+    PUSHED_DIGESTS+=("${name}|${digest:-$full_tag (digest unavailable)}")
     ok "[$step/$total] pushed $full_tag"
   fi
 done
 
 ok "all $total image(s) built (registry=${REGISTRY} tag=${TAG})"
+
+if [[ "$PUSH" == "1" && ${#PUSHED_DIGESTS[@]} -gt 0 ]]; then
+  echo
+  echo "Pin these digests in the deployment — a tag can be moved, a digest cannot:"
+  for entry in "${PUSHED_DIGESTS[@]}"; do
+    printf '  %-34s %s\n' "${entry%%|*}" "${entry#*|}"
+  done
+fi

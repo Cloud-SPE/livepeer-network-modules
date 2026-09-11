@@ -30,6 +30,9 @@ import (
 var (
 	ErrBrokerUnreachable = errors.New("brokerclient: unreachable or transient HTTP failure")
 	ErrBrokerSchema      = errors.New("brokerclient: schema-invalid response")
+	// ErrNotSupported is a broker that answers 404 on an endpoint this
+	// coordinator knows: an older build. Reported, never fatal.
+	ErrNotSupported = errors.New("brokerclient: endpoint not supported by this broker")
 )
 
 // Client is the brokerclient interface. Real impl is HTTPClient; tests
@@ -37,6 +40,9 @@ var (
 type Client interface {
 	FetchOfferings(ctx context.Context, baseURL string) (*types.BrokerOfferings, error)
 	FetchHealth(ctx context.Context, baseURL string) (*types.BrokerHealth, error)
+	// FetchSettlementKeys reads GET /registry/settlement-keys
+	// (broker-admin §7.1). ErrNotSupported when the broker predates it.
+	FetchSettlementKeys(ctx context.Context, baseURL string) (*types.BrokerSettlementKeys, error)
 }
 
 // HTTPClient is the production brokerclient.
@@ -118,6 +124,42 @@ func (c *HTTPClient) FetchHealth(ctx context.Context, baseURL string) (*types.Br
 	}
 
 	var out types.BrokerHealth
+	dec := json.NewDecoder(strings.NewReader(string(body)))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&out); err != nil {
+		return nil, fmt.Errorf("%w: decode: %v", ErrBrokerSchema, err)
+	}
+	return &out, nil
+}
+
+// FetchSettlementKeys issues `GET <baseURL>/registry/settlement-keys`.
+func (c *HTTPClient) FetchSettlementKeys(ctx context.Context, baseURL string) (*types.BrokerSettlementKeys, error) {
+	url := strings.TrimRight(baseURL, "/") + "/registry/settlement-keys"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: build request: %v", ErrBrokerUnreachable, err)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrBrokerUnreachable, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("%w: read body: %v", ErrBrokerUnreachable, err)
+	}
+	switch {
+	case resp.StatusCode >= 500:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrBrokerUnreachable, resp.StatusCode)
+	case resp.StatusCode == http.StatusNotFound:
+		return nil, ErrNotSupported
+	case resp.StatusCode != http.StatusOK:
+		return nil, fmt.Errorf("%w: HTTP %d", ErrBrokerSchema, resp.StatusCode)
+	}
+
+	var out types.BrokerSettlementKeys
 	dec := json.NewDecoder(strings.NewReader(string(body)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&out); err != nil {

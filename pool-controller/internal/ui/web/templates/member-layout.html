@@ -1,0 +1,70 @@
+{{define "layout"}}<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{.Title}} — Livepeer pool member</title>
+<script>
+(() => {
+  try {
+    const theme = localStorage.getItem("operator-theme");
+    if (theme === "light") {
+      document.documentElement.dataset.theme = "light";
+    }
+  } catch (_) {}
+})();
+</script>
+<link rel="stylesheet" href="/member/assets/style.css?v={{.Version}}">
+<link rel="stylesheet" href="/member/assets/pool.css?v={{.Version}}">
+<link rel="stylesheet" href="/member/assets/portal.css?v={{.Version}}">
+<script src="/member/assets/app.js?v={{.Version}}" defer></script>
+<script src="/member/assets/portal.js?v={{.Version}}" defer></script>
+</head>
+<body>
+<div class="shell">
+  <header class="shell-topbar">
+    <div class="row">
+      <button type="button" class="hamburger" data-sidebar-toggle aria-label="Toggle navigation">
+        <span></span><span></span><span></span>
+      </button>
+      <a href="/member" class="brand">pool member</a>
+    </div>
+    <div class="row shell-meta">
+      <button id="refresh" type="button">Refresh</button>
+      <button type="button" class="theme-toggle" data-theme-toggle aria-label="Switch color theme">Light mode</button>
+      {{if .MemberAddress}}
+      <span class="identity-chip">wallet <code>{{.MemberAddress}}</code></span>
+      {{end}}
+      <form method="post" action="/member/logout" class="logout" data-member-logout>
+        <button type="submit" class="ghost-button">Sign out</button>
+      </form>
+    </div>
+  </header>
+
+  <div class="shell-sidebar-backdrop" data-sidebar-backdrop hidden></div>
+  <aside class="shell-sidebar" data-sidebar>
+    <div class="sidebar-section">Your participation</div>
+    <nav class="sidebar-nav" aria-label="member portal pages">
+      <a href="/member" class="sidebar-item {{if eq .ActivePage "start"}}active{{end}}">Get started</a>
+      <a href="/member/hosts" class="sidebar-item {{if eq .ActivePage "hosts"}}active{{end}}">Hosts</a>
+      <a href="/member/earnings" class="sidebar-item {{if eq .ActivePage "earnings"}}active{{end}}">Earnings</a>
+      <a href="/member/settings" class="sidebar-item {{if eq .ActivePage "settings"}}active{{end}}">Settings</a>
+    </nav>
+    <section class="sidebar-note">
+      <h2>What you can see</h2>
+      <p>Only your own wallet, hosts, GPUs, placements and payments. The portal shows no pool-wide figure and no comparison with other members, by design.</p>
+    </section>
+  </aside>
+
+  <main class="shell-content">
+    <div id="status" class="message" hidden></div>
+    {{block "content" .}}{{end}}
+    <footer class="page-footer">
+      <span>{{.Version}}</span>
+      <span class="muted">Your own data only — this portal has no operator surface and no pool-wide figure.</span>
+    </footer>
+  </main>
+</div>
+</body>
+</html>
+{{end}}

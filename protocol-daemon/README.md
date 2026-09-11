@@ -50,7 +50,7 @@ export LIVEPEER_KEYSTORE_PASSWORD="$(cat /etc/livepeer/ks-password)"
   --mode=both \
   --socket=/var/run/livepeer-protocol-daemon.sock \
   --store-path=/var/lib/livepeer/protocol-state.db \
-  --eth-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
+  --chain-rpc-urls=https://arb1.arbitrum.io/rpc,https://arbitrum.publicnode.com \
   --keystore-path=/etc/livepeer/keystore.json \
   --controller-address=0xD8E8328501E9645d16Cf49539efC04f734606ee4 \
   --orch-address=0x<your-cold-orch> \
@@ -107,7 +107,7 @@ The layering is enforced by the per-module `lint/layer-check/`. `internal/servic
   `ServiceRegistry` / `AIServiceRegistry` pointers; in this rewrite those pointers should
   reference the coordinator-hosted manifest URL.
 - **Pool-hint cache.** Walking the transcoder pool linked list is multiple `eth_call`s. Cached by round in BoltDB; same-round invocations after the first are a fast path.
-- **Multi-RPC by default.** `--eth-urls` accepts a comma-separated list; `chain-commons.providers.rpc.multi` does primary/backup failover with circuit breakers.
+- **Multi-RPC by default.** `--chain-rpc-urls` takes a comma-separated list, primary first; `chain-commons.providers.rpc.multi` does primary/backup failover with circuit breakers.
 - **Preflight at startup.** Chain-id verification, Controller resolution + `CodeAt` checks for `RoundsManager` and `BondingManager`, keystore decryption, min-balance gate. A misconfigured daemon fails loudly before the gRPC socket opens.
 - **Off-by-default Prometheus.** `--metrics-listen=:9094` (recommended port) opts in. Metrics use the `livepeer_protocol_*` namespace.
 - **75% per-package coverage gate.** Enforced via `lint/coverage-gate/` (matches `payment-daemon`).
@@ -123,8 +123,11 @@ service ProtocolDaemon {
   rpc ForceInitializeRound(Empty) returns (ForceOutcome);
   rpc ForceRewardCall(Empty) returns (ForceOutcome);
   rpc SetServiceURI(SetServiceURIRequest) returns (TxIntentRef);
+  rpc SetAIServiceURI(SetAIServiceURIRequest) returns (TxIntentRef);
   rpc GetOnChainServiceURI(Empty) returns (OnChainServiceURIStatus);
+  rpc GetOnChainAIServiceURI(Empty) returns (OnChainAIServiceURIStatus);
   rpc IsRegistered(Empty) returns (RegistrationStatus);
+  rpc IsAIRegistered(Empty) returns (AIRegistrationStatus);
   rpc GetWalletBalance(Empty) returns (WalletBalanceStatus);
   rpc GetTxIntent(TxIntentRef) returns (TxIntentSnapshot);
   rpc StreamRoundEvents(Empty) returns (stream RoundEvent);
@@ -149,7 +152,8 @@ operator runbook.
 Mode-specific RPCs (`GetRoundStatus`, `ForceInitializeRound`) and
 (`GetRewardStatus`, `ForceRewardCall`) return `Unimplemented` when
 called on the wrong mode. The proto file at
-`proto/livepeer/protocol/v1/protocol.proto` is the canonical source.
+`proto-contracts/livepeer/protocol/v1/protocol.proto` (sibling module) is
+the canonical source.
 
 ## Build & test
 

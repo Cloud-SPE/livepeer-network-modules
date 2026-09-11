@@ -21,8 +21,8 @@ services:
     # through the `ingress` network instead. Admin + metrics stay on
     # loopback for local debugging.
     ports:
-      - "${COORDINATOR_ADMIN_BIND}:${COORDINATOR_LISTEN_PORT}:8080"
-      - "${COORDINATOR_METRICS_BIND}:${COORDINATOR_METRICS_PORT}:9091"
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
     networks:
       - default
       - ingress
@@ -32,7 +32,7 @@ services:
 
       - "traefik.http.routers.orch-registry.entrypoints=websecure"
       - "traefik.http.routers.orch-registry.service=orch-registry"
-      - "traefik.http.routers.orch-registry.tls.certresolver=${TRAEFIK_CERTRESOLVER}"
+      - "traefik.http.routers.orch-registry.tls.certresolver=${TRAEFIK_CERTRESOLVER:-cloudflare}"
       - "traefik.http.routers.orch-registry.rule=Host(`${COORDINATOR_HOST:?set COORDINATOR_HOST to the public hostname for this coordinator}`) && PathPrefix(`/.well-known/livepeer-registry.json`)"
       - "traefik.http.services.orch-registry.loadbalancer.server.port=8081"
       - "traefik.http.services.orch-registry.loadbalancer.passhostheader=true"

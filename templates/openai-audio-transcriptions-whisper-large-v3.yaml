@@ -1,0 +1,141 @@
+# Batch audio transcription — whisper-large-v3, as run on the operator's
+# "ai-rig-broker".
+#
+# The catalog's plain speech-to-text: no diarization, no live session, the
+# cheapest transcription the pool sells and the one it can stack onto a busy
+# card.
+
+id: openai-audio-transcriptions-whisper-large-v3
+capability: openai:audio-transcriptions
+offering_id: whisper-large-v3
+protocol: paid-job/v1
+display_name: Audio transcription (whisper-large-v3)
+description: >-
+  OpenAI-compatible audio transcription over a multipart upload. Metered in
+  seconds of input audio, so the bill is fixed by the file the caller sent and
+  does not move with how fast or slow the runner is.
+
+# The operator's real rate: 45 Gwei per audio second. That is ~$0.0047 per
+# audio minute at the 2026-06-15 ETH basis, about 11% above the
+# `whisper-large-v3` row of
+# docs/references/2026-06-15-openai-compatible-market-pricing.md (40592888126
+# wei/s, a 30% discount to OpenAI's $0.006/min) — so the operator took the same
+# anchor and kept a little more margin. That is a coherent decision, which is
+# why it is carried as written rather than snapped to the reference.
+#
+# Do not re-anchor this to a realtime price: the reference is explicit that
+# batch and realtime transcription are different products at very different
+# rates, and this catalog sells both (see nemo-meeting-stream).
+price_default: { amount_wei: "45000000000", per_units: 1 }
+
+# The rig pinned no concurrency for Whisper. Two in flight is pool policy,
+# chosen for the stacking role below: when this template rides as a secondary
+# its whole justification is that it does not disturb the primary, and
+# concurrency is the knob that would.
+capacity: { max_in_flight: 2, queue_limit: 2 }
+
+extra:
+  provider: whisper
+  # The upstream weights, which the served identity does not carry: several
+  # things call themselves "whisper-large-v3" and a buyer may want to know this
+  # is the reference OpenAI release.
+  backend_model: openai/whisper-large-v3
+  audio:
+    task: transcription
+
+# The rig's `constraints.gpu_vendor`, kept where the buyer can route on it.
+# `requirements` below has no vendor axis and needs none — every class it
+# lists is an NVIDIA part, so the placement gate is already exact — but a
+# gateway choosing between orchestrators cannot see `requirements`, and this
+# is the field that reaches the manifest tuple.
+#
+# Spelled `NVIDIA` as the operator wrote it, and spelled the same way in every
+# template here: a routing axis is matched as a string, so the catalog picking
+# two capitalisations would split one fleet into two.
+constraints:
+  gpu_vendor: NVIDIA
+
+match:
+  identity.openai.model: whisper-large-v3
+
+certification:
+  # The rig probed http-status on /healthz; that recipe belongs to the runner
+  # and the step runs whatever the runner declared (certification-steps.md
+  # §3.1). What the template sets is sufficiency, and it is looser here than
+  # elsewhere: Whisper large weights load slowly and a single-shot check would
+  # fail a runner that is merely still starting.
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: multipart
+      parts:
+        - { name: model, value: "{{identity.openai.model}}" }
+        - name: file
+          filename: probe.wav
+          content_type: audio/wav
+          # A built-in broker fixture, not a file the pool ships: every runner
+          # must be certified against the same 3s clip
+          # (certification-steps.md §4).
+          fixture: { ref: multipart-audio-duration-v1/wav-16k-mono-3s }
+      # Only that text came back — no assertion on what it says. Subjective
+      # quality scoring is out of scope for certification.
+      assert:
+        - "$.text"
+  # The fixture is 3s, so a correct duration extractor reports 3 units and a
+  # broken one reports 0 — which is exactly what min_units catches.
+  - { name: usage, type: usage, required: true, config: { min_units: 1 } }
+  # Not required: a slow runner is a scoring input, not an ineligible one. Six
+  # seconds for a 3s clip is generous on purpose — this template is meant to
+  # run as a secondary on a card that is already busy.
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 6000 } }
+
+# The rig wrote `constraints.gpu: "4090"`, `gpu_vendor: NVIDIA` — decided, so
+# stated. gpu_classes rather than gpu_models because a model string is the
+# driver's exact, case-sensitive marketing name (runner-attach.md §3.1): an
+# allowlist of them excludes rebadges and Ti/SUPER variants that are the same
+# card for every purpose this policy cares about, and `rtx-4090` is the pool's
+# normalised class for all of them
+# (pool-controller/internal/placement/class.go).
+#
+# rtx-5090 is added to what the operator wrote, and that addition is a
+# widening, not a substitution: a 5090 is strictly the faster card, and without
+# it this template could never be the secondary that the chat template's
+# 5090-only primary leaves room for. An operator who means "4090 and nothing
+# else" deletes one entry here.
+#
+# gpu_vram_min_bytes is unset: the operator constrained the card, not the
+# memory, and every card in these two classes clears any floor Whisper needs.
+requirements:
+  gpu_classes: [rtx-4090, rtx-5090]
+
+# Low on purpose. On a 4090 or 5090 this should lose the primary slot to chat,
+# vision or images and take a secondary slot instead.
+priority: 16
+
+# The catalog's clearest stacking case. Whisper's weights are small, its
+# requests are short and bounded by the uploaded file, and its concurrency is
+# capped at 2 above — so it fills the gaps in a chat or image primary's duty
+# cycle rather than competing with it. `primary: true` still matters: on a card
+# where nothing else qualifies, this template is the card's whole assignment.
+#
+# secondary_on lists GPU CLASSES, not templates. Stacking is capacity policy
+# the pool sets, never a member's choice — a member with a 4090 cannot add this
+# to their own card.
+stacking:
+  primary: true
+  secondary_on: [rtx-4090, rtx-5090]
+
+# runner_compose omitted: the images that serve this workload are unresolved
+# (tracked as lnm-v12). The rig named a compose service, not a published image
+# reference, and inventing a ghcr tag here would fail at `compose up` on a
+# member's host instead of in review.
+
+# Probation caps apply to the assignment, so a secondary assignment probates
+# separately from the primary already running on the same card.
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

@@ -5,26 +5,34 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	ethereum "github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
+// ContractCaller is the one thing Eth needs from a chain client: an
+// eth_call. Both go-ethereum's *ethclient.Client and chain-commons'
+// failover *multi.MultiRPC satisfy it, so the daemon can hand in the
+// same multi-endpoint client the rest of its chain reads use.
+type ContractCaller interface {
+	CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
+}
+
 // Eth is the production Chain implementation: eth_call against the
-// ServiceRegistry contract via go-ethereum's ethclient.
+// ServiceRegistry contract through a ContractCaller.
 //
 // Reads are fully implemented (manual ABI encoding for getServiceURI).
 type Eth struct {
-	cli        *ethclient.Client
+	cli        ContractCaller
 	registries []common.Address
 }
 
 // EthConfig captures the parameters NewEth needs.
 type EthConfig struct {
-	Client                   *ethclient.Client
+	Client                   ContractCaller
 	ServiceRegistryAddress   string // 0x-prefixed
 	AIServiceRegistryAddress string // optional 0x-prefixed; when set, resolver lookups use this registry instead of the primary
 }

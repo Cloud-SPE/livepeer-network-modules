@@ -46,6 +46,9 @@ type Server struct {
 	socketPath string
 	logger     *slog.Logger
 	grpcServer *grpc.Server
+
+	mu  sync.Mutex
+	lis net.Listener
 }
 
 type ReceiverAdminConfig struct {
@@ -56,11 +59,32 @@ type ReceiverAdminConfig struct {
 // mode). PayeeDaemon RPCs are not mounted; calls to them return
 // UNIMPLEMENTED. rec may be nil (no metrics).
 func NewSender(svc pb.PayerDaemonServer, socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
+	return NewSenderWithAdmin(svc, nil, SenderAdminConfig{}, socketPath, rec, logger)
+}
+
+// SenderAdminConfig gates the PayerAdmin surface. An empty token leaves
+// it mounted but refusing, exactly as the receiver's does: a surface
+// that can move the clock the release rule reads should be closed unless
+// an operator deliberately opened it.
+type SenderAdminConfig struct {
+	Token string
+}
+
+// NewSenderWithAdmin constructs a sender Server that also mounts
+// PayerAdmin. admin may be nil (not mounted).
+func NewSenderWithAdmin(svc pb.PayerDaemonServer, admin pb.PayerAdminServer, adminCfg SenderAdminConfig,
+	socketPath string, rec metrics.Recorder, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	gs := grpc.NewServer(grpc.UnaryInterceptor(metricsInterceptor(metrics.RoleSender, rec)))
+	gs := grpc.NewServer(grpc.ChainUnaryInterceptor(
+		metricsInterceptor(metrics.RoleSender, rec),
+		senderAdminAuthInterceptor(adminCfg.Token),
+	))
 	pb.RegisterPayerDaemonServer(gs, svc)
+	if admin != nil {
+		pb.RegisterPayerAdminServer(gs, admin)
+	}
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
@@ -81,9 +105,20 @@ func NewReceiver(svc pb.PayeeDaemonServer, admin pb.PayeeAdminServer, adminCfg R
 	return &Server{socketPath: socketPath, logger: logger, grpcServer: gs}
 }
 
-// Serve binds the unix socket and runs the gRPC server. Blocks until
-// the listener errors or GracefulStop is called.
-func (s *Server) Serve() error {
+// Listen binds the unix socket without accepting on it. Idempotent.
+//
+// It exists so a caller can know the socket is there before anything
+// dials it. Serve does the bind too, but it does it on the far side of
+// the `go Serve()` that callers write, so "the goroutine has started"
+// and "the socket exists" are two different moments — and a client that
+// dialled in between got ENOENT. That is a race a caller cannot close
+// from the outside without polling for a file and hoping.
+func (s *Server) Listen() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.lis != nil {
+		return nil
+	}
 	// Remove a stale socket file if a prior run left it behind.
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale socket %s: %w", s.socketPath, err)
@@ -93,9 +128,24 @@ func (s *Server) Serve() error {
 		return fmt.Errorf("listen unix %s: %w", s.socketPath, err)
 	}
 	if err := os.Chmod(s.socketPath, 0o660); err != nil {
+		_ = lis.Close()
 		return fmt.Errorf("chmod socket: %w", err)
 	}
+	s.lis = lis
 	s.logger.Info("gRPC listening", "socket", s.socketPath)
+	return nil
+}
+
+// Serve binds the unix socket (unless Listen already did) and runs the
+// gRPC server. Blocks until the listener errors or GracefulStop is
+// called.
+func (s *Server) Serve() error {
+	if err := s.Listen(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	lis := s.lis
+	s.mu.Unlock()
 	if err := s.grpcServer.Serve(lis); err != nil {
 		return fmt.Errorf("grpc serve: %w", err)
 	}
@@ -105,6 +155,14 @@ func (s *Server) Serve() error {
 // GracefulStop stops the gRPC server and lets in-flight RPCs finish.
 func (s *Server) GracefulStop() {
 	s.grpcServer.GracefulStop()
+	// A server that was bound but never served still holds the socket;
+	// GracefulStop on the gRPC server does not know about it.
+	s.mu.Lock()
+	if s.lis != nil {
+		_ = s.lis.Close()
+		s.lis = nil
+	}
+	s.mu.Unlock()
 	if err := os.Remove(s.socketPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		s.logger.Warn("remove socket on stop", "err", err)
 	}
@@ -161,22 +219,34 @@ func (t *inFlightTable) get(key string) *atomic.Int64 {
 	return c
 }
 
+// senderAdminAuthInterceptor gates PayerAdmin the way its receiver
+// counterpart gates PayeeAdmin.
+func senderAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return adminAuthInterceptor("/livepeer.payments.v1.PayerAdmin/", "payer admin token", token)
+}
+
 func receiverAdminAuthInterceptor(token string) grpc.UnaryServerInterceptor {
+	return adminAuthInterceptor("/livepeer.payments.v1.PayeeAdmin/", "payee admin token", token)
+}
+
+// adminAuthInterceptor gates one admin service prefix behind a bearer
+// token. Shared by both roles so the two surfaces cannot drift into
+// different answers for "no token configured".
+func adminAuthInterceptor(prefix, label, token string) grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
-		if !strings.HasPrefix(info.FullMethod, "/livepeer.payments.v1.PayeeAdmin/") {
+		if !strings.HasPrefix(info.FullMethod, prefix) {
 			return handler(ctx, req)
 		}
 		if strings.TrimSpace(token) == "" {
-			return nil, status.Error(codes.PermissionDenied, "payee admin token is not configured")
+			return nil, status.Errorf(codes.PermissionDenied, "%s is not configured", label)
 		}
 		md, _ := metadata.FromIncomingContext(ctx)
 		authz := ""
 		if vals := md.Get("authorization"); len(vals) > 0 {
 			authz = vals[0]
 		}
-		want := "Bearer " + token
-		if authz != want {
-			return nil, status.Error(codes.PermissionDenied, "invalid payee admin token")
+		if authz != "Bearer "+token {
+			return nil, status.Errorf(codes.PermissionDenied, "invalid %s", label)
 		}
 		return handler(ctx, req)
 	}

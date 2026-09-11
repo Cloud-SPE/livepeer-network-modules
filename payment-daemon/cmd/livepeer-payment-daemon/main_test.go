@@ -59,11 +59,29 @@ func testCfg(t *testing.T) bootConfig {
 	}
 }
 
+func TestBuildLimitsParsesWinningTicketExposure(t *testing.T) {
+	cfg := testCfg(t)
+	cfg.maxPaymentWei = "100"
+	cfg.maxTicketFaceValueWei = "1000"
+	limits, err := buildLimits(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if limits.MaxTicketFaceValueWei == nil || limits.MaxTicketFaceValueWei.String() != "1000" {
+		t.Fatalf("max ticket face value = %v; want 1000", limits.MaxTicketFaceValueWei)
+	}
+
+	cfg.maxTicketFaceValueWei = "not-wei"
+	if _, err := buildLimits(cfg); err == nil || !strings.Contains(err.Error(), "--max-ticket-face-value-wei") {
+		t.Fatalf("invalid face-value limit error = %v", err)
+	}
+}
+
 func TestBuildKeyStoreDevModeUsesDevKeystore(t *testing.T) {
 	t.Setenv(passwordEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "" // dev mode
+	cfg.chainRPCURLs = nil // dev mode
 
 	ks, err := buildKeyStore(logger, cfg)
 	if err != nil {
@@ -82,7 +100,7 @@ func TestBuildKeyStoreProductionRequiresKeystorePath(t *testing.T) {
 	t.Setenv(passwordEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	cfg.keystorePath = "" // missing
 
 	_, err := buildKeyStore(logger, cfg)
@@ -103,7 +121,7 @@ func TestBuildKeyStoreProductionDecryptSuccess(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := captureLogger(&logBuf)
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	path, addr := writeV3Keystore(t, t.TempDir(), "hunter2")
 	cfg.keystorePath = path
 
@@ -123,7 +141,7 @@ func TestBuildKeyStoreProductionWrongPassword(t *testing.T) {
 	t.Setenv(passwordEnvVar, "wrong-password")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	path, _ := writeV3Keystore(t, t.TempDir(), "hunter2")
 	cfg.keystorePath = path
 
@@ -144,7 +162,7 @@ func TestBuildKeyStoreProductionMissingFile(t *testing.T) {
 	t.Setenv(passwordEnvVar, "hunter2")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	cfg.keystorePath = filepath.Join(t.TempDir(), "missing.json")
 
 	_, err := buildKeyStore(logger, cfg)
@@ -160,7 +178,7 @@ func TestBuildKeyStoreProductionEmptyFile(t *testing.T) {
 	t.Setenv(passwordEnvVar, "hunter2")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "empty.json")
 	if err := os.WriteFile(path, []byte(""), 0o600); err != nil {
@@ -181,7 +199,7 @@ func TestBuildKeyStoreProductionBadJSON(t *testing.T) {
 	t.Setenv(passwordEnvVar, "hunter2")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "garbage.json")
 	if err := os.WriteFile(path, []byte("{not valid keystore"), 0o600); err != nil {
@@ -202,7 +220,7 @@ func TestBuildKeyStoreProductionPasswordViaFile(t *testing.T) {
 	t.Setenv(passwordEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	dir := t.TempDir()
 	path, _ := writeV3Keystore(t, dir, "from-file")
 	pwFile := filepath.Join(dir, "pw")
@@ -223,7 +241,7 @@ func TestBuildKeyStoreProductionConfigErrorBubblesAsConfigError(t *testing.T) {
 	t.Setenv(passwordEnvVar, "")
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	cfg := testCfg(t)
-	cfg.chainRPC = "https://example.invalid/rpc"
+	cfg.chainRPCURLs = []string{"https://example.invalid/rpc"}
 	cfg.keystorePath = "" // forces "--keystore-path required"
 
 	_, err := buildKeyStore(logger, cfg)
@@ -312,4 +330,4 @@ func TestNormalizeAddrHex(t *testing.T) {
 
 // The old plan-0017-standalone INFO line was removed when plan 0016
 // landed real broker/clock/gas-price providers — the daemon is no
-// longer "partially in production mode" with --chain-rpc set.
+// longer "partially in production mode" with --chain-rpc-urls set.

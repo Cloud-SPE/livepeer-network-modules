@@ -1,0 +1,73 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Hot zone</p>
+  <h1>Offers</h1>
+  <p class="muted">What each broker sells, and the runner-declared shape frozen into it. The first certified runner freezes the shape and the signature is the acceptance; superseding it is the explicit gesture below, and still has to be signed.</p>
+  {{template "hotzone-context" .}}
+</section>
+
+{{range $row := .Offers}}
+<section class="roster" id="offer-{{anchorID $row.Broker $row.OfferingID}}">
+  <h2>
+    <code>{{.OfferingID}}</code>
+    <span class="badge drift-{{.State}}">{{.State}}</span>
+    {{if .Advertised}}<span class="badge audit-success">advertised</span>{{else}}<span class="badge audit-failure">not advertised</span>{{end}}
+    <small class="muted">{{.CapabilityID}} · {{.Protocol}} · on {{.Broker}} · source {{.Source}}</small>
+  </h2>
+
+  <dl class="meta">
+    <dt>price</dt><dd>{{.Operator.Price.AmountWei}} wei{{if gt .Operator.Price.PerUnits 1}} per {{.Operator.Price.PerUnits}} units{{end}}</dd>
+    {{if .Operator.Match}}<dt>match</dt><dd>{{range $k, $v := .Operator.Match}}<code>{{$k}}={{$v}}</code> {{end}}</dd>{{end}}
+    {{if gt .Operator.Capacity.MaxInFlight 0}}<dt>capacity</dt><dd>max_in_flight {{.Operator.Capacity.MaxInFlight}}{{if gt .Operator.Capacity.QueueLimit 0}} · queue {{.Operator.Capacity.QueueLimit}}{{end}}</dd>{{end}}
+    <dt>runners</dt><dd>{{.Runners.Eligible}} eligible · {{.Runners.Ineligible}} ineligible · {{.Runners.Matched}} matched · {{.Runners.Attached}} attached</dd>
+  </dl>
+
+  {{if .Frozen}}
+  <h3>Frozen shape</h3>
+  <p class="muted"><small>
+    <span class="copy-inline"><code>{{.Frozen.ShapeHash}}</code><button type="button" class="copy-button" data-copy-value="{{.Frozen.ShapeHash}}">Copy</button></span>
+    · frozen {{.Frozen.FrozenAt.Format "2006-01-02 15:04:05Z"}} by
+    <a href="/runners#runner-{{anchorID $row.Broker $row.Frozen.FrozenBy.HostID}}" class="inline-link">{{.Frozen.FrozenBy.HostID}}</a>/{{.Frozen.FrozenBy.LocalID}}
+  </small></p>
+  <div class="table-wrap"><table><tbody>
+    {{range $k, $v := .Frozen.Projection}}<tr><td><code>{{$k}}</code></td><td>{{kv $v}}</td></tr>{{end}}
+  </tbody></table></div>
+  {{else}}
+  <p class="muted">Not frozen: no runner has certified yet, so this offer is not advertised. That is the rule — an offer nobody can serve is never published.</p>
+  {{end}}
+
+  {{if .Pending}}
+  <article class="alert-item alert-warn">
+    <strong>Supersession pending signature</strong>
+    <span>The candidate now advertises <code>{{.Pending.ShapeHash}}</code>. Paid work keeps going to the previously published shape until the signed manifest carries this one.</span>
+  </article>
+  {{end}}
+
+  {{if .Candidates}}
+  <h3>Candidate shapes</h3>
+  <p class="muted">Certified runners whose declaration disagrees with the frozen shape. They get no work until an operator accepts one of these — and a new signature.</p>
+  {{range .Candidates}}
+  <article class="checklist-item">
+    <div class="timeline-head">
+      <strong><code>{{.ShapeHash}}</code></strong>
+      <span class="muted">{{len .Runners}} runner(s), first seen {{.FirstSeen}}</span>
+    </div>
+    {{range .Diff}}
+    <p class="err"><small>{{.Field}}: frozen <code>{{.Expected}}</code> · candidate <code>{{.Declared}}</code></small></p>
+    {{end}}
+    <p class="muted"><small>{{range .Runners}}{{.HostID}}/{{.LocalID}} {{end}}</small></p>
+    <form method="post" action="/offers/accept-shape" class="refresh">
+      <input type="hidden" name="broker" value="{{$row.Broker}}">
+      <input type="hidden" name="offering_id" value="{{$row.OfferingID}}">
+      <input type="hidden" name="shape_hash" value="{{.ShapeHash}}">
+      <button type="submit">Accept this shape</button>
+      <span class="muted"><small>Changes what the manifest advertises. Runners on the old shape become ineligible; the candidate must then be signed.</small></span>
+    </form>
+  </article>
+  {{end}}
+  {{end}}
+</section>
+{{else}}
+<section><p class="muted"><em>No offers configured on any reachable broker.</em></p></section>
+{{end}}
+{{end}}

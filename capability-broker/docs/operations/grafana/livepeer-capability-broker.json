@@ -27,7 +27,7 @@
         "name": "job",
         "type": "query",
         "datasource": "${DS_PROMETHEUS}",
-        "query": "label_values(livepeer_mode_requests_total, job)",
+        "query": "label_values(livepeer_paid_requests_total, job)",
         "refresh": 2,
         "includeAll": true,
         "multi": true,
@@ -44,20 +44,20 @@
       "type": "timeseries", "title": "Request rate by capability/offering", "datasource": "${DS_PROMETHEUS}",
       "gridPos": {"h": 7, "w": 8, "x": 0, "y": 1}, "id": 2,
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
-      "targets": [{"expr": "sum by (capability,offering) (rate(livepeer_mode_requests_total{job=~\"$job\"}[5m]))", "legendFormat": "{{capability}}/{{offering}}", "refId": "A"}]
+      "targets": [{"expr": "sum by (capability,offering) (rate(livepeer_paid_requests_total{job=~\"$job\"}[5m]))", "legendFormat": "{{capability}}/{{offering}}", "refId": "A"}]
     },
     {
       "type": "timeseries", "title": "Error ratio (non-success outcomes)", "datasource": "${DS_PROMETHEUS}",
       "gridPos": {"h": 7, "w": 8, "x": 8, "y": 1}, "id": 3,
       "fieldConfig": {"defaults": {"unit": "percentunit", "max": 1}, "overrides": []},
-      "targets": [{"expr": "sum(rate(livepeer_mode_requests_total{job=~\"$job\",outcome!=\"success\"}[5m])) / clamp_min(sum(rate(livepeer_mode_requests_total{job=~\"$job\"}[5m])), 1e-9)", "legendFormat": "error ratio", "refId": "A"}]
+      "targets": [{"expr": "sum(rate(livepeer_paid_requests_total{job=~\"$job\",outcome!=\"success\"}[5m])) / clamp_min(sum(rate(livepeer_paid_requests_total{job=~\"$job\"}[5m])), 1e-9)", "legendFormat": "error ratio", "refId": "A"}]
     },
     {
       "type": "timeseries", "title": "Request p99 latency + work units/s", "datasource": "${DS_PROMETHEUS}",
       "gridPos": {"h": 7, "w": 8, "x": 16, "y": 1}, "id": 4,
       "targets": [
-        {"expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_mode_request_duration_seconds_bucket{job=~\"$job\"}[5m])))", "legendFormat": "p99 latency (s)", "refId": "A"},
-        {"expr": "sum(rate(livepeer_mode_work_units_total{job=~\"$job\"}[5m]))", "legendFormat": "work units/s", "refId": "B"}
+        {"expr": "histogram_quantile(0.99, sum by (le) (rate(livepeer_paid_request_duration_seconds_bucket{job=~\"$job\"}[5m])))", "legendFormat": "p99 latency (s)", "refId": "A"},
+        {"expr": "sum(rate(livepeer_paid_work_units_total{job=~\"$job\"}[5m]))", "legendFormat": "work units/s", "refId": "B"}
       ]
     },
     {"type": "row", "title": "Payment-daemon client", "gridPos": {"h": 1, "w": 24, "x": 0, "y": 8}, "id": 10, "panels": []},

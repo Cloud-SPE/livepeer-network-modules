@@ -28,7 +28,8 @@ func heldTestManifest(t *testing.T, addr string, seq uint64, price string) []byt
 		"capabilities": []any{map[string]any{
 			"capability_id":      "openai:chat",
 			"offering_id":        "small",
-			"interaction_mode":   "http-stream@v1",
+			"protocol":           "paid-job/v1",
+			"job":                map[string]any{"transports": []any{"unary", "stream"}},
 			"work_unit":          map[string]any{"name": "tokens"},
 			"price_per_unit_wei": price,
 			"worker_url":         "https://a.workers.example/",

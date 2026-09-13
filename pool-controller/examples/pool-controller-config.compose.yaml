@@ -25,6 +25,10 @@ receipt_sink:
     secret_ref: env://POOL_CONTROLLER_ADMIN_TOKEN
 
 bootstrap:
+  # Compose service name on the private network. This is the broker admin
+  # endpoint the controller pushes offers and attach credential hashes to;
+  # it is not the public gateway route.
+  broker_admin_url: http://capability-broker:8080
   public_controller_url: https://pool.example.com
   public_broker_url: https://pool.example.com
   public_broker_quic_addr: pool.example.com:8443

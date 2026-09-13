@@ -14,12 +14,11 @@
 #   - your secure-orch / service-registry flow stays out of this compose file
 #
 # Bring-up order:
-#   1. copy coordinator-config.example.yaml to coordinator-config.yaml
-#      and replace the broker public URL
-#   2. `docker compose up -d`
-#   3. create offers, approve members, and create assignments
-#      through pool-controller
-#   4. apply desired broker runtime through pool-controller
+#   1. create .env, the delegated settlement key, the sealing key, and the
+#      coordinator config
+#   2. run ./up.sh (renders and validates static broker bootstrap first)
+#   3. enable and price templates through pool-controller; it pushes the
+#      derived offers and attach credentials over the broker admin API
 #
 # Every optional variable carries its default inline (${VAR:-default}) so
 # the .env only needs the Required section of .env.example.
@@ -62,12 +61,11 @@ services:
       - "${BROKER_WORKER_QUIC_BIND:-0.0.0.0}:${BROKER_WORKER_QUIC_PORT:-8443}:8443/udp"
       - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9092}:9090"
     volumes:
-      - ${POOL_BROKER_CONFIG:-./run/generated-broker-host-config.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${POOL_BROKER_CONFIG:-./run/broker-host-config.yaml}:/etc/livepeer/host-config.yaml:ro
       - ${LIVEPEER_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
-      # Settlement signing key (identity.settlement_key_file in the generated
-      # host-config). Uncomment once the file exists — a bind mount of a
-      # missing file creates a directory and the broker refuses to start.
-      #   - ${BROKER_SETTLEMENT_KEY:-/opt/livepeer/broker-settlement.key}:/etc/livepeer/broker-settlement.key:ro
+      - ${BROKER_SETTLEMENT_KEY:?set BROKER_SETTLEMENT_KEY to the delegated broker settlement key}:/etc/livepeer/broker-settlement.key:ro
+      - ${BROKER_SEAL_KEY:?set BROKER_SEAL_KEY to the broker store sealing key}:/etc/livepeer/broker-seal.key:ro
+      - broker-state:/var/lib/livepeer
     restart: unless-stopped
 
   orch-coordinator:
@@ -148,3 +146,4 @@ services:
 volumes:
   payment-daemon-db: {}
   coordinator-data: {}
+  broker-state: {}

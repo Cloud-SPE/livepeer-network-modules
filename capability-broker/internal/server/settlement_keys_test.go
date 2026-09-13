@@ -66,6 +66,19 @@ func TestRegistrySettlementKeys_AnnouncesProvenKey(t *testing.T) {
 	if err := settlement.VerifyAnnouncement(a); err != nil {
 		t.Fatalf("proof: %v", err)
 	}
+
+	// The private key is operator-owned bootstrap, so a broker restart with
+	// the same file must announce the same delegated identity. A fresh key on
+	// each start would race the cold-signed manifest and make every settlement
+	// unverifiable until another sign cycle.
+	restarted, _ := newJobOfferBrokerBare(t, payment.NewMock(), keyFile)
+	afterRestart := fetchSettlementKeys(t, restarted.URL)
+	if len(afterRestart.Keys) != 1 || afterRestart.Keys[0].Statement.PublicKey != wantPub {
+		t.Fatalf("restart changed settlement key: %+v", afterRestart.Keys)
+	}
+	if err := settlement.VerifyAnnouncement(afterRestart.Keys[0]); err != nil {
+		t.Fatalf("restart proof: %v", err)
+	}
 }
 
 // No delegated key is a fact the endpoint states, not a failure.

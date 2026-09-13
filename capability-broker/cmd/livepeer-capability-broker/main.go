@@ -25,11 +25,13 @@ import (
 var version = "dev"
 
 func main() {
-	// Subcommands come before the flag set: `settlement-key` is an
-	// operator tool that needs no config and must not fail on missing
-	// broker flags.
+	// Subcommands come before the server flag set. Operator tools must not
+	// accidentally start listeners or dial payment-daemon.
 	if len(os.Args) > 1 && os.Args[1] == "settlement-key" {
 		os.Exit(runSettlementKey(os.Args[2:], os.Stdout, os.Stderr))
+	}
+	if len(os.Args) > 1 && os.Args[1] == "config" {
+		os.Exit(runConfig(os.Args[2:], os.Stdout, os.Stderr))
 	}
 	var (
 		configPath  = flag.String("config", "/etc/livepeer/host-config.yaml", "path to host-config.yaml")

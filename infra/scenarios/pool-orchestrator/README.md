@@ -35,14 +35,14 @@ secure-orch side to run:
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE`
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE`
 - A real coordinator config at `./coordinator-config.yaml`
-- A generated broker host-config at `./run/generated-broker-host-config.yaml`
-- A settlement signing key for the broker, minted with
-  `livepeer-capability-broker settlement-key generate`, mounted via the
-  commented `BROKER_SETTLEMENT_KEY` line in `docker-compose.yml` and named
-  by `identity.settlement_key_file` in the broker host-config. Without it
-  the broker's settlement records are unsigned and a clearinghouse refuses
-  them. Note: the pool-controller's generated host-config does not yet set
-  `settlement_key_file`; add it by hand after generation (bead lnm-6p2).
+- A delegated settlement signing key for the broker, minted with
+  `livepeer-capability-broker settlement-key generate`. This is a hot broker
+  key, not the cold orchestrator key. Its public half must be delegated by the
+  next cold-signed manifest.
+- A 32-byte broker sealing key, generated once and backed up securely. It
+  protects attach credentials and private session state at rest.
+- A public HTTPS broker origin. Workload authorizations bind this route, so it
+  must be the same origin gateways resolve from the signed manifest.
 
 ## Build images
 
@@ -61,37 +61,44 @@ From the repo root:
 
 ## Prepare broker runtime
 
-`pool-controller` no longer renders broker config from a nested controller YAML.
-The production path is:
+`pool-controller` no longer renders broker config. Static trust, route, and
+storage configuration belongs to the broker operator; the controller pushes
+only mutable offers and attach credential hashes. The production path is:
 
-1. bootstrap `pool-controller` with `template_catalog_dir` pointing at the
+1. copy `.env.example` to `.env`, set the required values, generate the
+   settlement and sealing keys, and run `./up.sh`. It atomically renders the
+   operator-owned bootstrap config, validates it with the broker image, checks
+   the settlement key, validates Compose, and only then starts containers
+2. bootstrap `pool-controller` with `template_catalog_dir` pointing at the
    workload catalog (repo-root `templates/`)
-2. enable the templates this pool sells and price them
+3. enable the templates this pool sells and price them
    (`PUT /admin/v1/template-overrides/{id}`). The offer set is *derived* from
    the enabled ones — there is no separate offer catalog to author
-3. members sign in with their wallet and enrol a host, then run the bundle,
+4. members sign in with their wallet and enrol a host, then run the bundle,
    which contains the agent and nothing else. There is no join request and no
    approval step — the pool never dials a member endpoint, so there is nothing
    to verify before admission
-4. placement policy matches each reported GPU to enabled templates by
+5. placement policy matches each reported GPU to enabled templates by
    `requirements` + `priority` + `stacking`; review
    `GET /admin/v1/placement-plan` and commit it with
    `POST /admin/v1/placement-plan/apply`
-5. the agent pulls its desired state and starts the runners, then re-attaches
+6. the agent pulls its desired state and starts the runners, then re-attaches
    declaring them; the broker certifies each and freezes the offer's
    runner-declared shape
-6. the ladder promotes a passing placement from `probationary` to `active` on
+7. the ladder promotes a passing placement from `probationary` to `active` on
    its own, once a settlement round has closed and it has completed the
    template's `min_jobs`
 
-> The five templates in `templates/` carry no `runner_compose` block yet — the
-> v1 images and model ids are still open (`lnm-v12`) — so nothing will actually
-> start on a member host from the shipped catalog. For an end-to-end scenario,
-> add `runner_compose.image` to the template you enable.
+The broker image runs as uid `65532`. Keep both private key files mode `0400`
+and owned by `65532:65532`; preflight tests readability as that container user.
+The rendered YAML is mode `0644` because it contains paths and secret
+references, not secret values.
 
-The controller pushes its offers and credentials to the broker over the
-admin API whenever pool state changes (plan 0043). There is no rendered
-broker config and no apply step; runner facts come from the runners.
+The rendered bootstrap contains `offers_source: admin` and `offers: []`.
+The controller pushes derived offers and credentials to the broker over the
+admin API whenever pool state changes (plan 0043); runner facts come from the
+runners. It never receives the settlement private key and cannot change the
+broker's route identity or persistent-store paths.
 
 See:
 
@@ -119,10 +126,30 @@ cp infra/scenarios/pool-orchestrator/.env.example \
    infra/scenarios/pool-orchestrator/.env
 $EDITOR infra/scenarios/pool-orchestrator/.env
 
-docker compose \
-  -f infra/scenarios/pool-orchestrator/docker-compose.yml \
-  --env-file infra/scenarios/pool-orchestrator/.env \
-  up -d
+cd infra/scenarios/pool-orchestrator
+./up.sh
+```
+
+To validate without starting the stack, render and run preflight explicitly:
+
+```bash
+mkdir -p run
+umask 077
+./render-broker-config.sh > run/broker-host-config.yaml
+./preflight.sh
+```
+
+Preflight is intentionally production-strict. Missing key material, an
+invalid orchestrator address, a non-HTTPS public origin, an invalid broker
+config, or an invalid Compose model stops before container creation. The
+broker itself still permits unsigned mock configurations for development.
+
+The Docker-first regression test builds the current broker, validates a
+rendered bootstrap and delegated key as the runtime uid, checks Compose, and
+proves that a missing key fails closed:
+
+```bash
+./test.sh
 ```
 
 ## Notes
@@ -133,10 +160,12 @@ docker compose \
 - Treat this scenario README as the compose/bootstrap guide only. The
   production control-plane and broker-apply workflow now lives in
   [`pool-controller/RUNBOOK.md`](../../../pool-controller/RUNBOOK.md).
-- The broker runtime artifact applied by `pool-controller` carries
-  `receipt_sink`, so broker-side work receipts flow back into
-  `pool-controller` when configured in controller state/bootstrap config.
+- The operator-owned broker bootstrap carries `receipt_sink` and
+  `pool_snapshot`, so broker work receipts flow to the controller and its
+  selection state gates Pool routing. These are static connections; the
+  controller does not render them.
 - The compose file exposes broker worker QUIC on UDP
-  `${BROKER_WORKER_QUIC_PORT:-8443}`. Set `listen.worker_quic: ":8443"` and
+  `${BROKER_WORKER_QUIC_PORT:-8443}`. The bootstrap renders
+  `listen.attach_quic: ":8443"`; set
   `bootstrap.public_broker_quic_addr: "<public-host>:8443"` in the controller
-  config to put QUIC into generated broker config and member bundles.
+  config so member bundles advertise the same endpoint.

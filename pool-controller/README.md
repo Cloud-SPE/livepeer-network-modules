@@ -421,10 +421,11 @@ Offer protocol vocabulary:
   request/response workloads pool members serve. Since plan 0043 the
   transports an offer advertises come from the runner that freezes it,
   so this default only affects admission-time validation.
-- `paid-session/*` offers are rejected at admission: the pool member contract carries no runtime descriptor schema or
-  runner create/status/terminate paths, and pool-controller configures neither
-  `external_base_url` nor `session_store` -- the broker requires all of them
-  before it will load a session capability.
+- `paid-session/*` offers are supported when the attached runner declares its
+  descriptor schema and create/status/terminate paths. `external_base_url` and
+  `session_store` remain operator-owned broker bootstrap, not controller
+  fields; the pool-orchestrator scenario configures both before the controller
+  pushes any session offer.
 
 Current Pool media limitation:
 

@@ -66,21 +66,34 @@ restarting. The old key stays delegated until its window closes.
 
 ## 1.1 Runtime reload in production
 
-When the broker participates in the Pool control-plane apply path:
+Validate a candidate without starting a broker or dialing payment-daemon:
+
+```bash
+livepeer-capability-broker config validate --config /etc/livepeer/host-config.yaml
+```
+
+For a standalone/file-sourced broker, runtime reload remains an operator
+workflow:
 
 - `host-config.yaml` must live at a stable path the broker can re-read
 - broker private admin auth must be enabled
 - `GET /admin/v1/runtime` and `POST /admin/v1/runtime/reload` must be
-  reachable from `pool-controller` over a private path only
+  reachable only over a private operator path
 
 The normal production sequence is:
 
-1. `pool-controller` stages a new `host-config.yaml`
-2. `pool-controller` calls broker reload
+1. the operator stages and validates a new `host-config.yaml`
+2. the operator calls broker reload
 3. broker emits a broker-local reload `attempt_id`
-4. `pool-controller` confirms:
+4. operator automation confirms:
    - broker `last_reload_attempt_id` matches the triggered attempt
-   - broker `loaded_revision` matches the controller desired revision
+   - broker `loaded_revision` matches the staged config
+
+For a Pool broker, set `offers_source: admin`. Static identity, delegated
+settlement key, route, store, and callback configuration still follows the
+operator workflow above, but pool-controller never renders or reloads that
+file. It changes commercial state with idempotent offer and credential pushes
+over the broker admin API.
 
 Do not treat file placement alone as convergence. Note that removing a
 paid-session capability while sessions for it are active leaves those

@@ -233,6 +233,11 @@ make run                 # run with examples/host-config.example.yaml
                          # (see that file's "RUNNING THIS FILE" header for
                          #  the env, key file and payment daemon it expects)
 make help                # show all targets
+
+# Validate without opening listeners or dialing payment-daemon:
+docker run --rm -v "$PWD/host-config.yaml:/config.yaml:ro" \
+  tztcloud/livepeer-capability-broker:v2.0.0 \
+  config validate --config /config.yaml
 ```
 
 No host Go install required.
@@ -339,6 +344,7 @@ for the full package tree and dispatch flow.
 capability-broker/
 ├── cmd/livepeer-capability-broker/
 │   ├── main.go
+│   ├── configcmd.go      # `config validate` deployment preflight
 │   └── settlementkey.go  # `settlement-key generate|pubkey` subcommand
 ├── internal/
 │   ├── config/         # host-config.yaml loader + validator

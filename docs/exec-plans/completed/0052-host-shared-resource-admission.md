@@ -1,6 +1,6 @@
 ---
 title: Host-shared resource admission
-status: implementing
+status: completed
 date: 2026-09-13
 beads: lnm-8bs
 ---
@@ -57,3 +57,8 @@ The binding design is
 The plan completes when every child bead is closed, the Docker-first component
 checks and protocol conformance pass, and the transcode handoff has an immutable
 Modules revision plus the requested generated Compose and eu-central evidence.
+
+Completed on 2026-09-13. The immutable implementation revision is
+`8c36dc26e44ab9b3b55e0703e9a647e8ef42f645`; the reproducible run and its
+consumer-revision boundary are recorded in
+[`2026-09-13-host-shared-resource-admission-evidence.md`](../../references/2026-09-13-host-shared-resource-admission-evidence.md).

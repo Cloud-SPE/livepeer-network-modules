@@ -169,11 +169,11 @@ record to keep in step.
    `DELETE` the override to switch it off.
 3. `GET /admin/v1/offers` — what those enabled templates derive into
 
-> None of the five templates in the repo catalog carries a `runner_compose`
-> block: the v1 images and model ids are still open (`lnm-v12`). Enabling one
-> makes the pool advertise it, but the compose service rendered for a member
-> host has no `image` and nothing will start there. Add
-> `runner_compose.image` to the templates you enable.
+Templates with a `runner_compose.image` are startable by managed members.
+Templates without one remain intentionally unplaceable until an image exists.
+The transcode templates also declare `runner_compose.host_admission`; the
+generated services sharing a physical GPU receive the same protected lock-file
+domain. Do not hand-edit those paths or mount the directory read-write.
 
 **Placement is policy, not a gesture.** For each GPU, among enabled templates
 whose `requirements` it satisfies and the member has not opted out of, the

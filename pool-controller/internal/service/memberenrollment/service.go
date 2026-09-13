@@ -428,6 +428,11 @@ func bundleCompose(input BundleInput) string {
 		// whole of what the pool asks of the host, and the member
 		// README says so plainly rather than burying it.
 		"      - /var/run/docker.sock:/var/run/docker.sock\n" +
+		// The agent initializes protected inode namespaces here and runner
+		// compose fragments bind the same host path into every colocated
+		// service. The identical source and target keep Docker-daemon path
+		// resolution correct when the agent itself runs in a container.
+		"      - /var/lib/livepeer-resource-admission:/var/lib/livepeer-resource-admission\n" +
 		"      - ./:/workspace\n" +
 		"    working_dir: /workspace\n"
 }

@@ -1,0 +1,79 @@
+services:
+  runner-unit-a-video-transcode-abr:
+    image: tztcloud/abr-runner-nvidia:v1.4.1
+    restart: unless-stopped
+    environment:
+      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+    volumes:
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        read_only: true
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["GPU-shared"]
+  runner-unit-a-video-transcode-live:
+    image: tztcloud/live-runner:v1.4.1
+    restart: unless-stopped
+    environment:
+      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+    volumes:
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        read_only: true
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["GPU-shared"]
+  runner-unit-a-video-transcode-vod:
+    image: tztcloud/transcode-runner-nvidia:v1.4.1
+    restart: unless-stopped
+    environment:
+      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+    volumes:
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
+        read_only: true
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.batch
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.live
+      - type: bind
+        source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+        target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock.mutex
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [gpu]
+              device_ids: ["GPU-shared"]

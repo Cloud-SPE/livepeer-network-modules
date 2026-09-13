@@ -246,6 +246,112 @@ func TestRevisionTracksWhatTheAgentActsOn(t *testing.T) {
 	}
 }
 
+func TestBuildSharesAdmissionDomainByPhysicalGPUAndIsolatesDifferentGPUs(t *testing.T) {
+	withAdmission := func(id, offering string) string {
+		return templateYAML(id, offering, "img:1") +
+			"  host_admission:\n" +
+			"    mechanism: flock-files/v1\n" +
+			"    scope: hardware-unit\n" +
+			"    env_var: GPU_ADMISSION_LOCK\n" +
+			"    file_suffixes: [.mutex, .live, .batch]\n"
+	}
+	cat := catalogOf(t, map[string]string{
+		"a.yaml": withAdmission("chat-a", "a"),
+		"b.yaml": withAdmission("chat-b", "b"),
+	})
+	doc, err := Build(Input{
+		EnrollmentID: "host-1",
+		Assignments: []types.TemplateAssignment{
+			assignment("unit-a", "chat-a", types.TemplateAssignmentActive),
+			assignment("unit-a", "chat-b", types.TemplateAssignmentActive),
+			assignment("unit-b", "chat-a", types.TemplateAssignmentActive),
+		},
+		Hardware: []types.HardwareUnit{unit("unit-a", "GPU-shared"), unit("unit-b", "GPU-other")},
+		Catalog:  cat,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Services) != 3 {
+		t.Fatalf("services=%d", len(doc.Services))
+	}
+	byAssignment := map[string]Service{}
+	for _, service := range doc.Services {
+		byAssignment[service.AssignmentID] = service
+	}
+	first := byAssignment["unit-a|chat-a"].HostAdmission
+	second := byAssignment["unit-a|chat-b"].HostAdmission
+	other := byAssignment["unit-b|chat-a"].HostAdmission
+	if first == nil || second == nil || other == nil {
+		t.Fatalf("missing admission: %#v %#v %#v", first, second, other)
+	}
+	if first.DomainID != second.DomainID || first.BasePath != second.BasePath {
+		t.Fatalf("same GPU did not share domain: %#v %#v", first, second)
+	}
+	if first.DomainID == other.DomainID || first.BasePath == other.BasePath {
+		t.Fatalf("different GPUs shared domain: %#v %#v", first, other)
+	}
+	if strings.Contains(first.BasePath, "GPU-shared") {
+		t.Fatalf("raw GPU UUID leaked into path: %s", first.BasePath)
+	}
+	for _, service := range []Service{byAssignment["unit-a|chat-a"], byAssignment["unit-a|chat-b"]} {
+		fragment := service.ComposeFragment
+		if !strings.Contains(fragment, "GPU_ADMISSION_LOCK: "+first.BasePath) ||
+			!strings.Contains(fragment, "source: "+first.BasePath+".mutex") ||
+			!strings.Contains(fragment, "read_only: true") {
+			t.Fatalf("fragment does not carry protected shared admission mounts:\n%s", fragment)
+		}
+	}
+}
+
+func TestBuildRejectsHostAdmissionWithoutStablePhysicalID(t *testing.T) {
+	body := templateYAML("chat-a", "a", "img:1") +
+		"  host_admission:\n    mechanism: flock-files/v1\n    scope: hardware-unit\n" +
+		"    env_var: LOCK\n    file_suffixes: [.mutex]\n"
+	cat := catalogOf(t, map[string]string{"a.yaml": body})
+	_, err := Build(Input{
+		EnrollmentID: "host-1",
+		Assignments:  []types.TemplateAssignment{assignment("unit-a", "chat-a", types.TemplateAssignmentActive)},
+		Hardware:     []types.HardwareUnit{{ID: "unit-a"}},
+		Catalog:      cat,
+	})
+	if err == nil || !strings.Contains(err.Error(), "HardwareUnit.GPUUUID") {
+		t.Fatalf("error=%v, want missing stable physical id", err)
+	}
+}
+
+func TestTranscodeSharedGPUComposeGolden(t *testing.T) {
+	cat, err := templates.Load("../../../templates")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unit := types.HardwareUnit{
+		ID: "unit-a", EnrollmentID: "host-1", GPUUUID: "GPU-shared",
+		GPUModel: "NVIDIA GeForce RTX 4090", State: types.HardwareUnitActive,
+	}
+	assignments := []types.TemplateAssignment{
+		assignment("unit-a", "video-transcode-vod", types.TemplateAssignmentActive),
+		assignment("unit-a", "video-transcode-abr", types.TemplateAssignmentActive),
+		assignment("unit-a", "video-transcode-live", types.TemplateAssignmentActive),
+	}
+	doc, err := Build(Input{EnrollmentID: "host-1", Assignments: assignments, Hardware: []types.HardwareUnit{unit}, Catalog: cat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got strings.Builder
+	got.WriteString("services:\n")
+	for _, service := range doc.Services {
+		got.WriteString(service.ComposeFragment)
+	}
+	want, err := os.ReadFile("../../testdata/shared-gpu-compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.String() != string(want) {
+		t.Fatalf("generated shared-GPU compose fixture drifted:\n--- got ---\n%s\n--- want ---\n%s", got.String(), want)
+	}
+}
+
 // Compose names have a restricted charset and an assignment id carries
 // a separator that is not in it.
 func TestServiceNameIsComposeSafe(t *testing.T) {
@@ -378,11 +484,11 @@ func TestBuildDrainsAPlacementOnAWithdrawnCard(t *testing.T) {
 func TestRenderPicksTheClassBuild(t *testing.T) {
 	tmpl := templates.Template{ID: "t-whisper", Protocol: "paid-job/v1",
 		RunnerCompose: templates.RunnerCompose{Image: map[string]string{"nvidia": "img:cu128", "nvidia/gtx-1080": "img:cu126"}}}
-	pascal := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-1", GPUModel: "NVIDIA GeForce GTX 1080"})
+	pascal := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-1", GPUModel: "NVIDIA GeForce GTX 1080"}, nil)
 	if !strings.Contains(pascal, "image: img:cu126") {
 		t.Fatalf("1080 compose:\n%s", pascal)
 	}
-	ada := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-2", GPUModel: "NVIDIA GeForce RTX 4090"})
+	ada := renderCompose("whisper", tmpl, types.HardwareUnit{GPUUUID: "GPU-2", GPUModel: "NVIDIA GeForce RTX 4090"}, nil)
 	if !strings.Contains(ada, "image: img:cu128") {
 		t.Fatalf("4090 compose:\n%s", ada)
 	}

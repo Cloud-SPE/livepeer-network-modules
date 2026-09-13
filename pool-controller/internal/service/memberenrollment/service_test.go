@@ -166,6 +166,9 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	if !bytes.Contains(composeBody, []byte("/var/run/docker.sock")) {
 		t.Fatalf("agent cannot start runners without the docker socket: %s", string(composeBody))
 	}
+	if !bytes.Contains(composeBody, []byte("/var/lib/livepeer-resource-admission:/var/lib/livepeer-resource-admission")) {
+		t.Fatalf("agent cannot initialize host-shared admission state: %s", string(composeBody))
+	}
 	if bytes.Contains(composeBody, []byte("runner_assign_chat_1:")) {
 		t.Fatalf("bundle still ships a per-placement service: %s", string(composeBody))
 	}

@@ -240,6 +240,11 @@ runner_compose:
   image:
     any: tztcloud/live-runner:v1.4.1
   rtmp_port: 1935
+  host_admission:
+    mechanism: flock-files/v1
+    scope: hardware-unit
+    env_var: GPU_ADMISSION_LOCK
+    file_suffixes: [.mutex, .live, .batch]
 
 # min_jobs counts SESSIONS, and a live session may run for hours — so 5 is
 # already a long probation in wall-clock terms, and a larger number would keep

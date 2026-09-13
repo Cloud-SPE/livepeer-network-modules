@@ -28,12 +28,10 @@ and the operator is left with the exceptions: lifting a suspension, overriding
 a duplicate GPU claim, banning a member, approving payouts until those
 graduate.
 
-> **The shipped catalog cannot start a runner yet.** None of the five templates
-> in `templates/` carries a `runner_compose` block — the v1 images and model ids
-> are still open (`lnm-v12`) — so the compose service rendered for them has no
-> `image`. Everything up to and including the placement decision works; a pool
-> that wants a runner to actually start must add `runner_compose.image` to a
-> template of its own.
+The shipped catalog contains both startable templates with
+`runner_compose.image` and deliberately unresolved templates with no image.
+Placement rejects a missing vendor/class image instead of allowing the failure
+to surface on a member host.
 
 ## What it owns
 
@@ -104,6 +102,12 @@ identity the runner must declare at attach. The agent fetches that document
 sequenced by the agent: `draining` goes into the attach document *before* the
 container stops, so the broker stops dispatching while the runner can still
 serve (`runner-attach` §7.1).
+
+An image that implements host-shared resource coordination opts in through
+`runner_compose.host_admission`. The controller hashes enrollment plus the
+stable hardware UUID into one path-safe domain and renders identical protected
+file mounts for every opted-in service on that unit. Suffixes are opaque to the
+controller; compatibility policy remains runner-owned.
 
 ## The trust ladder
 

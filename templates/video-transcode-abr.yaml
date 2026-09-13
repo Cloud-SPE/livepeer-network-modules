@@ -171,6 +171,11 @@ runner_compose:
   image:
     nvidia: tztcloud/abr-runner-nvidia:v1.4.1
     intel: tztcloud/abr-runner-intel:v1.4.1
+  host_admission:
+    mechanism: flock-files/v1
+    scope: hardware-unit
+    env_var: GPU_ADMISSION_LOCK
+    file_suffixes: [.mutex, .live, .batch]
 
 # High min_jobs for the same reason as VOD: transcode failures are bursty and
 # codec-dependent, so a small sample promotes on luck.

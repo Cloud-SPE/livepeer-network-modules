@@ -67,7 +67,22 @@ type Service struct {
 	Capability string            `json:"capability"`
 	Protocol   string            `json:"protocol,omitempty"`
 	Identity   map[string]string `json:"identity,omitempty"`
+	// HostAdmission tells the member agent which protected inode namespace
+	// must exist before this service may start.
+	HostAdmission *HostAdmission `json:"host_admission,omitempty"`
 }
+
+// HostAdmission is a fully resolved host-local admission declaration.
+type HostAdmission struct {
+	Mechanism    string   `json:"mechanism"`
+	Scope        string   `json:"scope"`
+	DomainID     string   `json:"domain_id"`
+	BasePath     string   `json:"base_path"`
+	EnvVar       string   `json:"env_var"`
+	FileSuffixes []string `json:"file_suffixes"`
+}
+
+const hostAdmissionContainerRoot = "/var/lib/livepeer-resource-admission/v1"
 
 // Model is a weight file that must be on disk before the service starts.
 type Model struct {
@@ -126,18 +141,23 @@ func Build(in Input) (Document, error) {
 			return Document{}, fmt.Errorf("assignment %s names template %q, which is not in the catalog",
 				assignment.ID, assignment.TemplateID)
 		}
+		admission, err := hostAdmissionFor(in.EnrollmentID, tmpl, unit)
+		if err != nil {
+			return Document{}, fmt.Errorf("assignment %s: %w", assignment.ID, err)
+		}
 		services = append(services, Service{
 			Name:            ServiceName(assignment.ID),
 			RTMPPort:        tmpl.RunnerCompose.RTMPPort,
 			Capability:      tmpl.Capability,
 			Protocol:        tmpl.Protocol,
 			Identity:        identityFor(tmpl),
-			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit),
+			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit, admission),
 			DeviceIDs:       []string{unit.GPUUUID},
 			Models:          modelsOf(tmpl),
 			Draining:        withdrawn,
 			TemplateID:      tmpl.ID,
 			AssignmentID:    assignment.ID,
+			HostAdmission:   admission,
 		})
 	}
 	// Stable order, so an unchanged pool yields an unchanged revision.
@@ -195,7 +215,7 @@ func modelsOf(tmpl templates.Template) []Model {
 // The GPU is pinned by UUID rather than `gpus: all`: a host with two
 // cards running two workloads must not have both services claim both
 // devices, and a UUID is the only identifier stable across reboots.
-func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit) string {
+func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit, admission *HostAdmission) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s:\n", name)
 	// The image is the vendor's build. Placement already refused a card
@@ -231,6 +251,9 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 	for name, value := range tmpl.RunnerCompose.Env {
 		env[name] = value
 	}
+	if admission != nil {
+		env[admission.EnvVar] = admission.BasePath
+	}
 	// A session runner builds its descriptor url from this and never
 	// guesses a hostname (plan 0046 §2): the host's public origin plus
 	// the path the agent's edge routes to this service. Only rendered
@@ -259,6 +282,15 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 			fmt.Fprintf(&b, "      %s: %s\n", name, env[name])
 		}
 	}
+	if admission != nil {
+		dir := strings.TrimSuffix(admission.BasePath, "/lock")
+		b.WriteString("    volumes:\n")
+		fmt.Fprintf(&b, "      - type: bind\n        source: %s\n        target: %s\n        read_only: true\n", dir, dir)
+		for _, suffix := range admission.FileSuffixes {
+			path := admission.BasePath + suffix
+			fmt.Fprintf(&b, "      - type: bind\n        source: %s\n        target: %s\n", path, path)
+		}
+	}
 	// How the card reaches the container is the vendor's to say, and
 	// the two known vendors do it differently. NVIDIA pins one card by
 	// UUID through its container runtime, which is what makes a
@@ -283,6 +315,31 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		b.WriteString("    devices:\n      - /dev/dri:/dev/dri\n      - /dev/kfd:/dev/kfd\n")
 	}
 	return b.String()
+}
+
+func hostAdmissionFor(enrollmentID string, tmpl templates.Template, unit types.HardwareUnit) (*HostAdmission, error) {
+	a := tmpl.RunnerCompose.HostAdmission
+	if a == nil {
+		return nil, nil
+	}
+	enrollmentID = strings.TrimSpace(enrollmentID)
+	physicalID := strings.TrimSpace(unit.GPUUUID)
+	if enrollmentID == "" || physicalID == "" {
+		return nil, fmt.Errorf("host admission requires enrollment_id and HardwareUnit.GPUUUID")
+	}
+	h := sha256.New()
+	_, _ = h.Write([]byte("livepeer-host-admission/v1\x00"))
+	_, _ = h.Write([]byte(enrollmentID))
+	_, _ = h.Write([]byte{0})
+	_, _ = h.Write([]byte(physicalID))
+	domain := hex.EncodeToString(h.Sum(nil))[:24]
+	suffixes := append([]string(nil), a.FileSuffixes...)
+	sort.Strings(suffixes)
+	return &HostAdmission{
+		Mechanism: a.Mechanism, Scope: a.Scope, DomainID: domain,
+		BasePath: hostAdmissionContainerRoot + "/" + domain + "/lock",
+		EnvVar:   a.EnvVar, FileSuffixes: suffixes,
+	}, nil
 }
 
 // identityFor is what this runner must declare so the offer's match

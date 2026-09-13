@@ -18,6 +18,8 @@ var (
 	promotedRE   = regexp.MustCompile(`^x-[A-Za-z0-9._-]+$`)
 	priceWeiRE   = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
 	matchKeyRE   = regexp.MustCompile(`^identity\.[a-z][a-z0-9_-]*(\.[a-z][a-z0-9_-]*)*$`)
+	envNameRE    = regexp.MustCompile(`^[A-Z_][A-Z0-9_]{0,127}$`)
+	lockSuffixRE = regexp.MustCompile(`^\.[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 )
 
 // validStepTypes mirrors the broker's certification-steps contract. A
@@ -278,6 +280,36 @@ func (t Template) Validate() error {
 	}
 	if t.RunnerCompose.RTMPPort > 0 && t.Protocol != "paid-session/v1" {
 		return fmt.Errorf("template %s: runner_compose.rtmp_port is only meaningful on paid-session/v1 (an ingest is a session)", t.ID)
+	}
+	if a := t.RunnerCompose.HostAdmission; a != nil {
+		if a.Mechanism != "flock-files/v1" {
+			return fmt.Errorf("template %s: runner_compose.host_admission.mechanism must be flock-files/v1 (got %q)", t.ID, a.Mechanism)
+		}
+		if a.Scope != "hardware-unit" {
+			return fmt.Errorf("template %s: runner_compose.host_admission.scope must be hardware-unit (got %q)", t.ID, a.Scope)
+		}
+		if !envNameRE.MatchString(a.EnvVar) {
+			return fmt.Errorf("template %s: runner_compose.host_admission.env_var %q is not a safe environment name", t.ID, a.EnvVar)
+		}
+		if _, exists := t.RunnerCompose.Env[a.EnvVar]; exists {
+			return fmt.Errorf("template %s: runner_compose.env must not override host admission variable %q", t.ID, a.EnvVar)
+		}
+		if len(a.FileSuffixes) == 0 || len(a.FileSuffixes) > 16 {
+			return fmt.Errorf("template %s: runner_compose.host_admission.file_suffixes must contain 1..16 entries", t.ID)
+		}
+		seen := make(map[string]bool, len(a.FileSuffixes))
+		for _, suffix := range a.FileSuffixes {
+			if !lockSuffixRE.MatchString(suffix) {
+				return fmt.Errorf("template %s: runner_compose.host_admission.file_suffixes contains unsafe suffix %q", t.ID, suffix)
+			}
+			if seen[suffix] {
+				return fmt.Errorf("template %s: runner_compose.host_admission.file_suffixes repeats %q", t.ID, suffix)
+			}
+			seen[suffix] = true
+		}
+		if !t.RunnerCompose.HasImage() || strings.TrimSpace(t.RunnerCompose.InternalURL) != "" {
+			return fmt.Errorf("template %s: runner_compose.host_admission requires a managed image, not internal_url", t.ID)
+		}
 	}
 	if t.RunnerCompose.HasImage() {
 		for _, class := range t.Requirements.GPUClasses {

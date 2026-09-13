@@ -176,6 +176,11 @@ runner_compose:
   image:
     nvidia: tztcloud/transcode-runner-nvidia:v1.4.1
     intel: tztcloud/transcode-runner-intel:v1.4.1
+  host_admission:
+    mechanism: flock-files/v1
+    scope: hardware-unit
+    env_var: GPU_ADMISSION_LOCK
+    file_suffixes: [.mutex, .live, .batch]
 
 # min_jobs is the highest in the catalog. Transcode failures are bursty — one
 # bad container produces many quick errors, and a codec the runner cannot

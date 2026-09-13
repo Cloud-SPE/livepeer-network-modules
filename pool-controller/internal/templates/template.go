@@ -153,6 +153,19 @@ type RunnerCompose struct {
 	// published port and forwards to it; the runner receives its public
 	// address as LIVEPEER_PUBLIC_RTMP_URL. Zero: no ingest.
 	RTMPPort int `yaml:"rtmp_port,omitempty" json:"rtmp_port,omitempty"`
+	// HostAdmission opts an image into a generic host-local admission
+	// mechanism. The pool supplies a stable namespace for the assigned
+	// hardware unit; only the runner interprets the opaque file suffixes.
+	HostAdmission *HostAdmission `yaml:"host_admission,omitempty" json:"host_admission,omitempty"`
+}
+
+// HostAdmission is the template half of host-shared resource admission.
+// It deliberately contains no workload or cohort vocabulary.
+type HostAdmission struct {
+	Mechanism    string   `yaml:"mechanism" json:"mechanism"`
+	Scope        string   `yaml:"scope" json:"scope"`
+	EnvVar       string   `yaml:"env_var" json:"env_var"`
+	FileSuffixes []string `yaml:"file_suffixes" json:"file_suffixes"`
 }
 
 // RTMPSPublicPort is the host port the agent's edge terminates RTMPS on

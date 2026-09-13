@@ -24,7 +24,7 @@ func vendorTmpl() templates.Template {
 func TestRenderComposePicksTheVendorsImageAndDeviceBlock(t *testing.T) {
 	nvidia := renderCompose("svc", vendorTmpl(), types.HardwareUnit{
 		GPUModel: "NVIDIA GeForce RTX 4090", GPUUUID: "GPU-abc",
-	})
+	}, nil)
 	if !strings.Contains(nvidia, "image: x/vod-nvidia:1") {
 		t.Fatalf("NVIDIA card did not get the nvidia image:\n%s", nvidia)
 	}
@@ -37,7 +37,7 @@ func TestRenderComposePicksTheVendorsImageAndDeviceBlock(t *testing.T) {
 
 	intel := renderCompose("svc", vendorTmpl(), types.HardwareUnit{
 		GPUModel: "Intel(R) Arc(TM) A770 Graphics", GPUUUID: "GPU-def",
-	})
+	}, nil)
 	if !strings.Contains(intel, "image: x/vod-intel:1") {
 		t.Fatalf("Intel card did not get the intel image:\n%s", intel)
 	}
@@ -55,7 +55,7 @@ func TestRenderComposePicksTheVendorsImageAndDeviceBlock(t *testing.T) {
 func TestRenderComposeWithNoImageRendersNoImageLine(t *testing.T) {
 	out := renderCompose("svc", templates.Template{ID: "t"}, types.HardwareUnit{
 		GPUModel: "NVIDIA GeForce RTX 4090", GPUUUID: "GPU-abc",
-	})
+	}, nil)
 	if strings.Contains(out, "image:") {
 		t.Fatalf("an image-less template rendered an image line:\n%s", out)
 	}
@@ -66,7 +66,7 @@ func TestRenderComposeWithNoImageRendersNoImageLine(t *testing.T) {
 func TestRenderComposeCarriesNoMemberPassthrough(t *testing.T) {
 	tmpl := vendorTmpl()
 	tmpl.RunnerCompose.Env = map[string]string{"MODEL": "m", "PORT": "8080"}
-	out := renderCompose("svc", tmpl, types.HardwareUnit{GPUModel: "NVIDIA GeForce RTX 4090", GPUUUID: "GPU-abc"})
+	out := renderCompose("svc", tmpl, types.HardwareUnit{GPUModel: "NVIDIA GeForce RTX 4090", GPUUUID: "GPU-abc"}, nil)
 	if strings.Contains(out, "${") {
 		t.Fatalf("fragment still asks the member's host for a value:\n%s", out)
 	}

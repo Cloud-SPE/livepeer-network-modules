@@ -2,12 +2,21 @@ package desiredstate
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+)
+
+const HostAdmissionRoot = "/var/lib/livepeer-resource-admission/v1"
+
+var (
+	hostAdmissionDomainRE = regexp.MustCompile(`^[a-f0-9]{24}$`)
+	hostAdmissionSuffixRE = regexp.MustCompile(`^\.[A-Za-z0-9][A-Za-z0-9._-]{0,31}$`)
 )
 
 // Runner is the side-effecting half — writing the compose file and
@@ -102,7 +111,14 @@ func RenderCompose(doc Document) string {
 // back as failed, because the pool's next decision depends on knowing
 // the difference.
 func Apply(ctx context.Context, runner Runner, composePath string, doc Document) StatusReport {
+	return applyWithAdmissionRoot(ctx, runner, composePath, doc, HostAdmissionRoot)
+}
+
+func applyWithAdmissionRoot(ctx context.Context, runner Runner, composePath string, doc Document, admissionRoot string) StatusReport {
 	report := StatusReport{Revision: doc.Revision}
+	if err := prepareHostAdmissions(doc, admissionRoot); err != nil {
+		return allFailed(doc, "prepare host admission: "+err.Error())
+	}
 	content := RenderCompose(doc)
 	if err := runner.WriteCompose(composePath, content); err != nil {
 		return allFailed(doc, "write compose: "+err.Error())
@@ -131,6 +147,105 @@ func Apply(ctx context.Context, runner Runner, composePath string, doc Document)
 		})
 	}
 	return report
+}
+
+// prepareHostAdmissions creates each declared lock file once and preserves
+// its inode forever. The generated compose mounts the directory read-only and
+// overlays the declared files read-write, so a runner can flock them but
+// cannot replace the mount points or invent an unprotected alias.
+func prepareHostAdmissions(doc Document, root string) error {
+	hasAdmission := false
+	for _, service := range doc.Services {
+		if service.HostAdmission != nil {
+			hasAdmission = true
+			break
+		}
+	}
+	if !hasAdmission {
+		return nil
+	}
+	root = filepath.Clean(root)
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("admission root %q is not absolute", root)
+	}
+	if err := ensureDirectory(root, 0o755); err != nil {
+		return fmt.Errorf("root: %w", err)
+	}
+	for _, service := range doc.Services {
+		a := service.HostAdmission
+		if a == nil {
+			continue
+		}
+		if a.Mechanism != "flock-files/v1" || a.Scope != "hardware-unit" {
+			return fmt.Errorf("service %s has unsupported admission %q/%q", service.Name, a.Mechanism, a.Scope)
+		}
+		if !hostAdmissionDomainRE.MatchString(a.DomainID) {
+			return fmt.Errorf("service %s has unsafe admission domain %q", service.Name, a.DomainID)
+		}
+		dir := filepath.Join(root, a.DomainID)
+		wantBase := filepath.Join(dir, "lock")
+		if a.BasePath != wantBase {
+			return fmt.Errorf("service %s admission base %q does not match domain %q", service.Name, a.BasePath, wantBase)
+		}
+		if len(a.FileSuffixes) == 0 || len(a.FileSuffixes) > 16 {
+			return fmt.Errorf("service %s admission suffix count is invalid", service.Name)
+		}
+		if err := ensureDirectory(dir, 0o755); err != nil {
+			return fmt.Errorf("service %s domain: %w", service.Name, err)
+		}
+		seen := make(map[string]bool, len(a.FileSuffixes))
+		for _, suffix := range a.FileSuffixes {
+			if !hostAdmissionSuffixRE.MatchString(suffix) || seen[suffix] {
+				return fmt.Errorf("service %s has unsafe or duplicate admission suffix %q", service.Name, suffix)
+			}
+			seen[suffix] = true
+			if err := ensureLockFile(wantBase + suffix); err != nil {
+				return fmt.Errorf("service %s lock %s: %w", service.Name, suffix, err)
+			}
+		}
+		if err := os.Chmod(dir, 0o555); err != nil {
+			return fmt.Errorf("service %s protect domain: %w", service.Name, err)
+		}
+	}
+	return nil
+}
+
+func ensureDirectory(path string, mode os.FileMode) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		if err := os.MkdirAll(path, mode); err != nil {
+			return err
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s is not a real directory", path)
+	}
+	return nil
+}
+
+func ensureLockFile(path string) error {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		file, createErr := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o666)
+		if createErr != nil {
+			return createErr
+		}
+		if closeErr := file.Close(); closeErr != nil {
+			return closeErr
+		}
+		info, err = os.Lstat(path)
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", path)
+	}
+	return os.Chmod(path, 0o666)
 }
 
 func allFailed(doc Document, detail string) StatusReport {

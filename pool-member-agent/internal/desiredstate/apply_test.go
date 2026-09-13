@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -18,6 +19,147 @@ type stubRunner struct {
 	failWrite   error
 	failPull    error
 	failUp      error
+}
+
+func TestPrepareHostAdmissionsCreatesStableProtectedInodes(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "admission", "v1")
+	domain := "0123456789abcdef01234567"
+	base := filepath.Join(root, domain, "lock")
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(base), 0o755) })
+	doc := Document{Services: []Service{{
+		Name: "runner-live",
+		HostAdmission: &HostAdmission{
+			Mechanism: "flock-files/v1", Scope: "hardware-unit", DomainID: domain,
+			BasePath: base, EnvVar: "GPU_ADMISSION_LOCK",
+			FileSuffixes: []string{".mutex", ".live", ".batch"},
+		},
+	}}}
+	if err := prepareHostAdmissions(doc, root); err != nil {
+		t.Fatal(err)
+	}
+	before := map[string]uint64{}
+	for _, suffix := range doc.Services[0].HostAdmission.FileSuffixes {
+		info, err := os.Lstat(base + suffix)
+		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o666 {
+			t.Fatalf("%s info=%v err=%v", suffix, info, err)
+		}
+		before[suffix] = info.Sys().(*syscall.Stat_t).Ino
+	}
+	dirInfo, err := os.Stat(filepath.Dir(base))
+	if err != nil || dirInfo.Mode().Perm() != 0o555 {
+		t.Fatalf("protected directory mode=%v err=%v", dirInfo, err)
+	}
+	if err := prepareHostAdmissions(doc, root); err != nil {
+		t.Fatalf("idempotent prepare: %v", err)
+	}
+	for suffix, inode := range before {
+		info, err := os.Stat(base + suffix)
+		if err != nil || info.Sys().(*syscall.Stat_t).Ino != inode {
+			t.Fatalf("%s inode changed: before=%d info=%v err=%v", suffix, inode, info, err)
+		}
+	}
+}
+
+func TestPrepareHostAdmissionsRejectsUnsafeState(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "admission", "v1")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	domain := "0123456789abcdef01234567"
+	if err := os.Symlink(target, filepath.Join(root, domain)); err != nil {
+		t.Fatal(err)
+	}
+	doc := Document{Services: []Service{{Name: "runner", HostAdmission: &HostAdmission{
+		Mechanism: "flock-files/v1", Scope: "hardware-unit", DomainID: domain,
+		BasePath: filepath.Join(root, domain, "lock"), EnvVar: "LOCK", FileSuffixes: []string{".mutex"},
+	}}}}
+	if err := prepareHostAdmissions(doc, root); err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("symlink error=%v", err)
+	}
+
+	doc.Services[0].HostAdmission.DomainID = "../../escape"
+	if err := prepareHostAdmissions(doc, root); err == nil || !strings.Contains(err.Error(), "unsafe admission domain") {
+		t.Fatalf("unsafe domain error=%v", err)
+	}
+}
+
+func TestPrepareHostAdmissionsSharesOneDomainAndIsolatesAnother(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "admission", "v1")
+	domainA := "aaaaaaaaaaaaaaaaaaaaaaaa"
+	domainB := "bbbbbbbbbbbbbbbbbbbbbbbb"
+	for _, domain := range []string{domainA, domainB} {
+		domain := domain
+		t.Cleanup(func() { _ = os.Chmod(filepath.Join(root, domain), 0o755) })
+	}
+	admission := func(domain string) *HostAdmission {
+		return &HostAdmission{
+			Mechanism: "flock-files/v1", Scope: "hardware-unit", DomainID: domain,
+			BasePath: filepath.Join(root, domain, "lock"), EnvVar: "LOCK",
+			FileSuffixes: []string{".mutex", ".cohort"},
+		}
+	}
+	doc := Document{Services: []Service{
+		{Name: "same-a", HostAdmission: admission(domainA)},
+		{Name: "same-b", HostAdmission: admission(domainA)},
+		{Name: "other", HostAdmission: admission(domainB)},
+	}}
+	if err := prepareHostAdmissions(doc, root); err != nil {
+		t.Fatal(err)
+	}
+	first, err := os.Stat(doc.Services[0].HostAdmission.BasePath + ".cohort")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := os.Stat(doc.Services[1].HostAdmission.BasePath + ".cohort")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := os.Stat(doc.Services[2].HostAdmission.BasePath + ".cohort")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstInode := first.Sys().(*syscall.Stat_t).Ino
+	if second.Sys().(*syscall.Stat_t).Ino != firstInode {
+		t.Fatal("services in one domain do not resolve to one inode")
+	}
+	if other.Sys().(*syscall.Stat_t).Ino == firstInode {
+		t.Fatal("different admission domains share an inode")
+	}
+}
+
+func TestPrepareHostAdmissionsRejectsUnusableRoot(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(root, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	domain := "0123456789abcdef01234567"
+	doc := Document{Services: []Service{{Name: "runner", HostAdmission: &HostAdmission{
+		Mechanism: "flock-files/v1", Scope: "hardware-unit", DomainID: domain,
+		BasePath: filepath.Join(root, domain, "lock"), EnvVar: "LOCK", FileSuffixes: []string{".mutex"},
+	}}}}
+	if err := prepareHostAdmissions(doc, root); err == nil || !strings.Contains(err.Error(), "not a real directory") {
+		t.Fatalf("unusable root error=%v", err)
+	}
+}
+
+func TestApplyFailsClosedBeforeComposeWhenAdmissionPreparationFails(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "admission", "v1")
+	doc := twoServiceDoc()
+	doc.Services[0].HostAdmission = &HostAdmission{
+		Mechanism: "unknown/v1", Scope: "hardware-unit", DomainID: "0123456789abcdef01234567",
+		BasePath: filepath.Join(root, "0123456789abcdef01234567", "lock"), EnvVar: "LOCK", FileSuffixes: []string{".x"},
+	}
+	runner := &stubRunner{}
+	report := applyWithAdmissionRoot(context.Background(), runner, "runners.compose.yaml", doc, root)
+	if len(runner.calls) != 0 {
+		t.Fatalf("compose side effects occurred: %v", runner.calls)
+	}
+	for _, service := range report.Services {
+		if service.Status != StatusFailed || !strings.Contains(service.Detail, "prepare host admission") {
+			t.Fatalf("service report=%+v", service)
+		}
+	}
 }
 
 func (s *stubRunner) WriteCompose(path, content string) error {

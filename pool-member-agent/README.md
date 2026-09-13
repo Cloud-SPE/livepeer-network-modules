@@ -54,6 +54,12 @@ Pool-managed (set all three and the reconcile loop starts):
 | `POOL_POLL_TIMEOUT` | Per-request timeout. Default `30s`. |
 | `POOL_ROTATE_EVERY` | Credential rotation cadence. Default `24h`. |
 
+The signup bundle bind-mounts `/var/lib/livepeer-resource-admission` at the
+same path inside the agent. For an opted-in template the agent creates stable
+lock-file inodes there before `docker compose up`; generated runner services
+mount the directory read-only and only the declared lock files read-write.
+Do not delete or recreate this directory while runner containers are active.
+
 ## Declaring runners
 
 This is the local path — the orchestrator's own hardware, or a dev host. A

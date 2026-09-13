@@ -36,9 +36,19 @@ type Service struct {
 	// Capability, Protocol and Identity are what this runner must
 	// declare at attach. The controller supplies them because it is the
 	// only side that knows what the offer selects on.
-	Capability string            `json:"capability"`
-	Protocol   string            `json:"protocol,omitempty"`
-	Identity   map[string]string `json:"identity,omitempty"`
+	Capability    string            `json:"capability"`
+	Protocol      string            `json:"protocol,omitempty"`
+	Identity      map[string]string `json:"identity,omitempty"`
+	HostAdmission *HostAdmission    `json:"host_admission,omitempty"`
+}
+
+type HostAdmission struct {
+	Mechanism    string   `json:"mechanism"`
+	Scope        string   `json:"scope"`
+	DomainID     string   `json:"domain_id"`
+	BasePath     string   `json:"base_path"`
+	EnvVar       string   `json:"env_var"`
+	FileSuffixes []string `json:"file_suffixes"`
 }
 
 type Model struct {

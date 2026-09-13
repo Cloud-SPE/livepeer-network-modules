@@ -1,8 +1,8 @@
 ---
 title: Paid Session Protocol
-version: 1.3.0-draft
+version: 1.4.0-draft
 status: draft
-last_updated: 2026-09-11
+last_updated: 2026-09-13
 ---
 
 # Paid Session Protocol
@@ -77,6 +77,14 @@ Successful admission:
    runner binding, and recovery obligations;
 5. returns `session_id`, `gateway_session_id`, `work_id`, session credential,
    sanitized runtime descriptor, control URLs, lease, and balance view.
+
+If step 3 receives runner `429 capacity_reached`, no runner session exists but
+the authorization from step 2 has already been admitted. The broker MUST
+settle it at zero cumulative units, release its reservation, persist signed
+terminal settlement evidence, and return public `503 capacity_exhausted` with
+`Livepeer-Backoff`. A retry replays that terminal outcome and cannot create a
+session. A broker that rejects capacity before step 2 instead records signed
+`NOT_ADMITTED` evidence; one request can never acquire both records.
 
 `work_id` equals the active `authorization_id`; it is correlation state, not a
 balance account. The stable economic owner is the payer-payee account.
@@ -253,6 +261,7 @@ A conforming implementation proves at least:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4.0-draft | 2026-09-13 | Defines session runner capacity refusal after authorization admission as public 503 plus a durable signed zero-use settlement, distinct from pre-admission evidence. |
 | 1.3.0-draft | 2026-09-11 | Makes wholesale accounts and single-purpose authorization the only paid-session accounting path; replaces ticket-session top-up/rebind with predecessor-bound authorization revisions; specifies account-only recovery, WebSocket revision frames, and the coordinated hard cut. |
 | 1.2.0-draft | 2026-09-09 | Added accepted quote persistence and output-health settlement fields. |
 | 1.1.0-draft | 2026-09-08 | Added standardized live output-health events and terminal behavior. |

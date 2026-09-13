@@ -14,6 +14,7 @@ Cross-cutting design decisions for the workload-agnostic supply-side rearchitect
 | [payment-decoupling.md](./payment-decoupling.md) | active | What changed in `payment-daemon` for opaque capability / work-unit names |
 | [pricing-overview.md](./pricing-overview.md) | active | End-to-end synthesis: how price flows from `host-config.yaml` through manifest, discovery, headers, extractors, protocols, session, debit, settlement, and pool receipts |
 | [backend-health.md](./backend-health.md) | active | Three-layer health model (manifest / live / failure-rate) — which layer answers which routing question |
+| [host-shared-resource-admission.md](./host-shared-resource-admission.md) | accepted | Generic per-hardware-unit inode namespaces, runner-owned compatibility policy, capacity refusal, and wholesale accounting semantics |
 | [trust-model.md](./trust-model.md) | active | Cold-key + sign-cycle deep dive; threat model and what each invariant defends against |
 - [`migrating-to-connected-runners.md`](./migrating-to-connected-runners.md)
   — what an existing deployment must change for plan 0043, and what it

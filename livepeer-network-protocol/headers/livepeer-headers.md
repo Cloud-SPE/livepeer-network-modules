@@ -1,7 +1,7 @@
 ---
 status: draft (rewritten for the v1 protocols)
-spec_version: 1.2.0-draft
-last_updated: 2026-09-11
+spec_version: 1.3.0-draft
+last_updated: 2026-09-13
 ---
 
 # Livepeer wire headers
@@ -338,7 +338,7 @@ On any non-2xx response, the broker SHOULD set a machine-readable error code.
 | `ambiguous_identifier` | 409 | A historical lookup key matches more than one retained pre-authorization session. Re-query by `gateway_session_id` or `session_id`; new authorization IDs are single-purpose. |
 | `refill_refused` | 409 | Top-up refused; `will_refuse_next_refill` was advertised beforehand (paid-session §3.3). |
 | `backend_unavailable` | 502 | Backend reachable but returned an error the broker can't recover from. |
-| `capacity_exhausted` | 503 | Broker has no slots; see `Livepeer-Backoff`. |
+| `capacity_exhausted` | 503 | Broker or selected runner has no usable capacity; see `Livepeer-Backoff`. No work began, but durable accounting evidence depends on whether authorization admission already occurred. |
 | `insufficient_balance` | 402 | The payer's balance does not cover the work. Emitted **before** the backend runs when the credited balance cannot cover one work unit (paid-job §4.5), and mid-flight when a long-running session's runway runs out. The header is emitted as a trailer where the protocol allows it (the response body has typically already begun); the connection is closed by the broker. Plan 0015. |
 | `internal_error` | 500 | Anything else. |
 

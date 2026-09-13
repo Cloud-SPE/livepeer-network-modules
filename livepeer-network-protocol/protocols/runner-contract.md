@@ -1,8 +1,8 @@
 ---
 spec_name: runner-contract
-version: 1.1.0-draft
+version: 1.2.0-draft
 status: draft
-last_updated: 2026-09-04
+last_updated: 2026-09-13
 ---
 
 # Runner contract
@@ -157,7 +157,18 @@ was a poll the broker ran against the runner. This is a read the agent
 makes once, at the one moment the answer is needed. The difference is
 the whole of plan 0043 item 11.
 
-## 6. Conformance
+## 6. Capacity refusal and conformance
+
+A runner that has not started work because a local concurrency or host-shared
+resource guard refused admission SHOULD return HTTP `429` with a JSON body
+whose `error` is `capacity_reached`. It MAY return a bounded `Retry-After` in
+integer seconds. It MUST emit this response before starting the workload and
+MUST NOT report positive usage for it.
+
+This is runner-to-broker vocabulary, not a public gateway protocol. The broker
+normalizes it to `503 capacity_exhausted` and `Livepeer-Backoff`. A runner MUST
+NOT expose its host resource path, device identifier, lock name, or cohort in
+the response.
 
 | Fixture | Asserts |
 |---|---|
@@ -170,5 +181,6 @@ the whole of plan 0043 item 11.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.2.0-draft | 2026-09-13 | Standardizes private runner `429 capacity_reached` for pre-execution local resource refusal; public normalization remains broker-owned. |
 | 1.1.0-draft | 2026-09-04 | The body MAY be an array of entries for a container that serves several capabilities; each is attached under a derived `local_id` (`<id>.<n>`) and routed to the container. Additive. |
 | 1.0.0-draft | 2026-09-01 | Initial contract (plan 0045 §3). Supersedes `pool-member-agent` adapter profiles. |

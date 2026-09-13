@@ -1,8 +1,8 @@
 ---
 spec_name: paid-job
-version: 1.2.0-draft
+version: 1.3.0-draft
 status: draft
-last_updated: 2026-09-11
+last_updated: 2026-09-13
 ---
 
 # Protocol: `paid-job/v1`
@@ -196,6 +196,15 @@ The broker fails closed before runner execution for:
 Malformed optional funding MUST fail the whole admission without losing an
 already-recorded idempotent credit.
 
+A runner response of `429` with `error: capacity_reached` means no workload
+execution began. The broker MUST normalize it to `503 capacity_exhausted` with
+`Livepeer-Backoff` before usage extraction. Because job authorization is
+admitted before runner invocation, this path MUST settle zero units, release
+the reservation, and persist signed terminal settlement evidence. It is not
+`NOT_ADMITTED`: that evidence is reserved for a broker refusal recorded before
+authorization admission. Retries MUST replay the one durable outcome and MUST
+NOT execute or settle again.
+
 ## 9. Compatibility and cutover
 
 Authorization-backed wholesale accounting is intrinsic to
@@ -231,6 +240,7 @@ Conformance covers:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3.0-draft | 2026-09-13 | Defines runner capacity refusal after authorization admission as public 503 plus a durable signed zero-use settlement. |
 | 1.2.0-draft | 2026-09-11 | Makes single-purpose spend authorization and stable wholesale-account settlement the only paid-job path. Tickets are funding instruments only; payment-only workload admission and bounded debit write-off are removed. |
 | 1.1.0-draft | 2026-08-21 | Added durable settlement lookup, request binding, and non-admission evidence. |
 | 1.0.0-draft | 2026-08-10 | Unified unary, streaming, and multipart paid jobs. |

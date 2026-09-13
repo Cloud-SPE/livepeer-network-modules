@@ -50,7 +50,7 @@ type CertOutcome struct {
 	Passed  bool
 	Pending bool // running or not yet run; the pair stays matched
 	RunID   string
-	State   string // passed | failed | running | error
+	State   string // passed | failed | running | inconclusive | error
 	Reason  *runnerattach.Reason
 	At      time.Time
 }

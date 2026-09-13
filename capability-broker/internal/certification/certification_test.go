@@ -196,6 +196,76 @@ func TestRequiredFailureSkipsRestAndReports(t *testing.T) {
 	}
 }
 
+func TestCapacityRefusalIsInconclusiveThenRetries(t *testing.T) {
+	var calls int
+	conn := &handlerConn{h: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		if calls == 1 {
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(http.StatusTooManyRequests)
+			_, _ = w.Write([]byte(`{"error":"capacity_reached"}`))
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"usage":{"total_tokens":1}}`))
+	})}
+	cap := jobCapability()
+	offer := chatOffer(config.CertificationStep{Name: "smoke", Type: "request",
+		Config: map[string]any{"body": map[string]any{}}})
+	reg := testRegistryWith(t, conn, cap)
+	e := New(reg, Options{Extractors: extractorRegistry()})
+	t.Cleanup(e.Close)
+	reports := make(chan offers.CertOutcome, 2)
+	e.Report = func(_ offers.PairKey, out offers.CertOutcome) { reports <- out }
+	sn, _ := reg.Get("h1")
+	if first := e.Certify(sn, cap, offer); !first.Pending {
+		t.Fatalf("initial result = %+v", first)
+	}
+	select {
+	case out := <-reports:
+		if !out.Pending || out.Passed || out.State != RunInconclusive {
+			t.Fatalf("capacity outcome = %+v", out)
+		}
+		res := e.PairResults("h1", offer.OfferingID)
+		if len(res) != 1 || res[0].Steps[0].Status != StepInconclusive ||
+			res[0].Steps[0].Evidence["retry_after_seconds"] != 1 {
+			t.Fatalf("capacity evidence = %+v", res)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("capacity run did not report inconclusive")
+	}
+	select {
+	case out := <-reports:
+		if !out.Passed || out.State != RunPassed || calls != 2 {
+			t.Fatalf("retry outcome=%+v calls=%d", out, calls)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("bounded capacity retry did not run")
+	}
+}
+
+func TestSessionCertificationCapacityRefusalIsInconclusive(t *testing.T) {
+	conn := &handlerConn{h: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "999")
+		w.WriteHeader(http.StatusTooManyRequests)
+		_, _ = w.Write([]byte(`{"error":"capacity_reached"}`))
+	})}
+	cap := &runnerattach.Capability{
+		CapabilityID: "video:transcode.live", Protocol: "paid-session/v1", LocalID: "live",
+		DescriptorSchemas: []string{"rtmp-hls-session/v1"}, Metering: "runner-reported",
+		WorkUnit:  runnerattach.WorkUnit{Name: "seconds"},
+		Paths:     map[string]string{"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}"},
+		Readiness: runnerattach.Readiness{Type: "http-status", Path: "/ready"},
+	}
+	offer := config.Offer{OfferingID: "live", Capability: cap.CapabilityID, Protocol: cap.Protocol,
+		Certification: []config.CertificationStep{{Name: "open", Type: "request"}}}
+	out, res, _ := runAndWait(t, conn, cap, offer)
+	if !out.Pending || out.State != RunInconclusive || res.Steps[0].Status != StepInconclusive ||
+		res.Steps[0].Evidence["retry_after_seconds"] != 60 {
+		t.Fatalf("session capacity result=%+v steps=%+v", out, res.Steps)
+	}
+}
+
 func TestNonRequiredFailurePasses(t *testing.T) {
 	conn := &handlerConn{h: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(5 * time.Millisecond)

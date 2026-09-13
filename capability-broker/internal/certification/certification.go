@@ -35,19 +35,21 @@ const LocalIDHeader = "Livepeer-Runner-Local-Id"
 
 // Step statuses.
 const (
-	StepPassed  = "passed"
-	StepFailed  = "failed"
-	StepSkipped = "skipped"
-	StepError   = "error"
+	StepPassed       = "passed"
+	StepFailed       = "failed"
+	StepSkipped      = "skipped"
+	StepError        = "error"
+	StepInconclusive = "inconclusive"
 )
 
 // Run states.
 const (
-	RunRunning = "running"
-	RunPassed  = "passed"
-	RunFailed  = "failed"
-	RunAborted = "aborted"
-	RunError   = "error"
+	RunRunning      = "running"
+	RunPassed       = "passed"
+	RunFailed       = "failed"
+	RunAborted      = "aborted"
+	RunError        = "error"
+	RunInconclusive = "inconclusive"
 )
 
 // StepResult is one executed step (broker-admin §6.1).
@@ -228,6 +230,19 @@ func (e *Engine) execute(ctx context.Context, key offers.PairKey, offer config.O
 	}
 	report := e.Report
 	e.mu.Unlock()
+	if res.State == RunInconclusive && ctx.Err() == nil {
+		delay := capacityRetryDelay(res.Steps)
+		go func() {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			select {
+			case <-e.ctx.Done():
+				return
+			case <-timer.C:
+				e.Start(key, "capacity-retry", offer, c)
+			}
+		}()
+	}
 
 	if res.State == RunAborted || report == nil {
 		return
@@ -341,9 +356,26 @@ func (e *Engine) PairResults(hostID, offeringID string) []Result {
 
 func outcomeOf(r *Result) offers.CertOutcome {
 	return offers.CertOutcome{
-		Passed: r.State == RunPassed, Pending: r.State == RunRunning,
+		Passed: r.State == RunPassed, Pending: r.State == RunRunning || r.State == RunInconclusive,
 		RunID: r.RunID, State: r.State, At: r.FinishedAt,
 	}
+}
+
+func capacityRetryDelay(steps []StepResult) time.Duration {
+	seconds := 5
+	for _, step := range steps {
+		if step.Status != StepInconclusive || step.Evidence == nil {
+			continue
+		}
+		if n, ok := step.Evidence["retry_after_seconds"].(int); ok && n > 0 {
+			seconds = n
+			break
+		}
+	}
+	if seconds > 60 {
+		seconds = 60
+	}
+	return time.Duration(seconds) * time.Second
 }
 
 func shapeHashOf(c *runnerattach.Capability, offer config.Offer) string {

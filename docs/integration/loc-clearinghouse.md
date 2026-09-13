@@ -115,3 +115,24 @@ cross-payee transfer or automatic cash refund.
 
 The payer sender and registry resolver are trusted sidecars intended for
 co-location over Unix sockets, not public network exposure.
+
+## 7. Capacity refusal and retail holds
+
+Treat `503` plus `Livepeer-Error: capacity_exhausted` as a retryable routing
+outcome, never as retail usage. When it includes `Livepeer-Settlement`, the
+authorization was admitted: verify that signed record, require zero debited
+units, and release the retail hold immediately. For session open, the response
+also carries `session_id`, `gateway_session_id`, `work_id`, and a settlement
+URL so reconciliation does not depend on the invoking user's SDK.
+
+When no settlement exists, do not infer non-admission from the `503`. Ask
+`POST /v1/non-admission/{request_id}` and release the hold only after verifying
+the signed `NOT_ADMITTED` record. A broker must never issue both forms for one
+request.
+
+A retry on another orchestrator is new economic intent: resolve a new route,
+pin its quote and fingerprints, mint a new single-purpose authorization and
+request ID, then invoke that payee. Never carry the first payee's authorization
+or payment envelope across the route boundary. Honoring the exact
+`Livepeer-Backoff` is an optional efficiency optimization; correctness comes
+from fresh route binding and verified terminal/non-admission evidence.

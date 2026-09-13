@@ -40,16 +40,20 @@ const (
 	HdrWorkUnitName = "Livepeer-Work-Unit"
 	HdrJobID        = "Livepeer-Job-Id"
 	HdrSettlement   = "Livepeer-Settlement"
+	HdrNonAdmission = "Livepeer-Non-Admission"
 	HdrError        = "Livepeer-Error"
+	HdrBackoff      = "Livepeer-Backoff"
 )
 
 // Error codes the suite asserts on (headers/livepeer-headers.md).
 const (
-	ErrTransportUnsupported  = "protocol_transport_unsupported"
-	ErrJobInFlight           = "job_in_flight"
-	ErrRequestIDReuse        = "request_id_reuse"
-	ErrRefillRefused         = "refill_refused"
-	ErrAuthorizationRequired = "authorization_required"
+	ErrTransportUnsupported    = "protocol_transport_unsupported"
+	ErrJobInFlight             = "job_in_flight"
+	ErrRequestIDReuse          = "request_id_reuse"
+	ErrRefillRefused           = "refill_refused"
+	ErrAuthorizationRequired   = "authorization_required"
+	ErrCapacityExhausted       = "capacity_exhausted"
+	ErrPaymentEnvelopeMismatch = "payment_envelope_mismatch"
 )
 
 // Protocol tags.
@@ -265,6 +269,13 @@ type JobRequest struct {
 	Accept            string
 	ContentType       string
 	OmitAuthorization bool
+	Authorization     string
+}
+
+// JobAuthorization returns the single-purpose authorization a normal caller
+// would obtain after selecting this exact route.
+func (c *Ctx) JobAuthorization(offering, requestID string, body []byte) string {
+	return c.authorization(c.JobCapability, offering, ProtoPaidJob, requestID, "", "", body)
 }
 
 // JobResponse is the fully-read exchange result. Trailer values are
@@ -291,7 +302,11 @@ func (c *Ctx) DoJob(jr JobRequest) (*JobResponse, error) {
 	req.Header.Set(HdrRequestID, jr.RequestID)
 	req.Header.Set(HdrPayment, jr.Payment)
 	if !jr.OmitAuthorization {
-		req.Header.Set(HdrAuthorization, c.authorization(c.JobCapability, jr.Offering, ProtoPaidJob, jr.RequestID, "", "", jr.Body))
+		authorization := jr.Authorization
+		if authorization == "" {
+			authorization = c.JobAuthorization(jr.Offering, jr.RequestID, jr.Body)
+		}
+		req.Header.Set(HdrAuthorization, authorization)
 	}
 	if jr.Accept != "" {
 		req.Header.Set("Accept", jr.Accept)
@@ -333,6 +348,23 @@ func (c *Ctx) QuerySettlement(id string) (*HTTPResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	return c.do(req)
+}
+
+// QueryNonAdmission asks the broker to turn durable absence into an explicit
+// signed NOT_ADMITTED claim. It is intentionally separate from workload
+// invocation: silence or an HTTP refusal alone is not financial evidence.
+func (c *Ctx) QueryNonAdmission(requestID, protocol string) (*HTTPResult, error) {
+	body := fmt.Sprintf(`{"protocol":%q,"work_id":%q,"sender":%q,"recipient":%q,`+
+		`"quote_id":"conformance-quote","quote_version":1,`+
+		`"constraint_fingerprint":"01","route_fingerprint":"02","job_issued_at":%q}`,
+		protocol, "conf-auth-"+requestID, strings.Repeat("01", 20), strings.Repeat("02", 20),
+		time.Now().UTC().Format(time.RFC3339Nano))
+	req, err := http.NewRequest(http.MethodPost, c.BrokerURL+"/v1/non-admission/"+requestID, strings.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
 	return c.do(req)
 }
 
@@ -555,6 +587,11 @@ func FieldNumber(m map[string]any, path string) (float64, bool) {
 	v := Field(m, path)
 	n, ok := v.(float64)
 	return n, ok
+}
+
+func FieldNumberOrZero(m map[string]any, path string) float64 {
+	n, _ := FieldNumber(m, path)
+	return n
 }
 
 // Field digs a dotted path out of nested JSON maps.

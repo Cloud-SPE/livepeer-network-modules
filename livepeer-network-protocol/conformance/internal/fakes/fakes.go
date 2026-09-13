@@ -5,6 +5,7 @@
 package fakes
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -114,6 +115,20 @@ func NewJobBackend(l Listen) (*JobBackend, error) {
 		b.mu.Lock()
 		b.hits++
 		b.mu.Unlock()
+		// A body-triggered refusal lets the conformance suite exercise the
+		// normal offering without adding a fake-only public route.
+		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
+			raw, _ := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+			r.Body = io.NopCloser(bytes.NewReader(raw))
+			var requested map[string]any
+			if json.Unmarshal(raw, &requested) == nil && requested["conformance_mode"] == "capacity_reached" {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Retry-After", "1")
+				w.WriteHeader(http.StatusTooManyRequests)
+				fmt.Fprint(w, `{"error":"capacity_reached"}`)
+				return
+			}
+		}
 		if strings.HasSuffix(r.URL.Path, "/slow") {
 			// Long enough for a second request to arrive while this one
 			// is still in flight.
@@ -276,6 +291,13 @@ func (f *SessionRunner) handleCreate(w http.ResponseWriter, r *http.Request) {
 	var params map[string]any
 	_ = json.Unmarshal(req.SessionParams, &params)
 	mode, _ := params["conformance_mode"].(string)
+	if mode == "capacity_reached" {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"capacity_reached"}`)
+		return
+	}
 
 	runtime := ""
 	switch mode {

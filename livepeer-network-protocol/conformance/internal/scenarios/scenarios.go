@@ -575,6 +575,64 @@ func jobScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
+		{Name: "paid-job/capacity-refusal-zero-use", Spec: "paid-job §5.1", Run: func(c *harness.Ctx) error {
+			reqID := c.RequestID("capacity")
+			requestBody := []byte(`{"conformance_mode":"capacity_reached","requested_units":999999}`)
+			authorization := c.JobAuthorization(c.JobOfferingAll, reqID, requestBody)
+			r, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingAll, RequestID: reqID,
+				Payment:       harness.PaymentEnvelope("capacity"),
+				Body:          requestBody,
+				ContentType:   "application/json",
+				Authorization: authorization,
+			})
+			if err != nil {
+				return err
+			}
+			if r.Status != 503 || r.Header.Get(harness.HdrError) != harness.ErrCapacityExhausted ||
+				r.Header.Get(harness.HdrBackoff) != "1" || r.Header.Get(harness.HdrWorkUnits) != "0" {
+				return fmt.Errorf("capacity response status=%d error=%q backoff=%q units=%q",
+					r.Status, r.Header.Get(harness.HdrError), r.Header.Get(harness.HdrBackoff), r.Header.Get(harness.HdrWorkUnits))
+			}
+			jobID := r.Header.Get(harness.HdrJobID)
+			if jobID == "" || r.Header.Get(harness.HdrSettlement) == "" {
+				return fmt.Errorf("capacity refusal omitted immediate settlement or job id")
+			}
+			q, err := c.QuerySettlement(jobID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 || harness.FieldNumberOrZero(q.JSON(), "work_units") != 0 || q.Header.Get(harness.HdrSettlement) == "" {
+				return fmt.Errorf("capacity settlement status=%d body=%s", q.Status, q.Body)
+			}
+			wrongRouteID := c.RequestID("capacity-wrong-route")
+			wrong, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingUnary, RequestID: wrongRouteID,
+				Payment: harness.PaymentEnvelope("capacity-wrong-route"), Body: requestBody,
+				ContentType: "application/json", Authorization: authorization,
+			})
+			if err != nil {
+				return err
+			}
+			if wrong.Status != 401 || wrong.Header.Get(harness.HdrError) != harness.ErrPaymentEnvelopeMismatch {
+				return fmt.Errorf("old route authorization accepted: status=%d error=%q err=%v", wrong.Status, wrong.Header.Get(harness.HdrError), err)
+			}
+			// Honoring the exact backoff is optional. Waiting here keeps the fresh
+			// route proof and later independent fixtures off local cooldown.
+			time.Sleep(1100 * time.Millisecond)
+			fresh, err := c.DoJob(harness.JobRequest{
+				Offering: c.JobOfferingUnary, RequestID: c.RequestID("capacity-fresh-route"),
+				Payment: harness.PaymentEnvelope("capacity-fresh-route"),
+				Body:    []byte(`{"prompt":"fresh route"}`), ContentType: "application/json",
+			})
+			if err != nil {
+				return err
+			}
+			if fresh.Status != 200 {
+				return fmt.Errorf("fresh route-bound authorization failed: status=%d err=%v", fresh.Status, err)
+			}
+			return nil
+		}},
 	}
 }
 
@@ -1349,6 +1407,54 @@ func sessionScenarios() []harness.Scenario {
 				}
 			}
 			return fmt.Errorf("session never wound down after missed heartbeats (still active after 20s)")
+		}},
+		{Name: "paid-session/capacity-refusal-evidence", Spec: "paid-session §3.1/§3.3.1", Run: func(c *harness.Ctx) error {
+			reqID := c.RequestID("session-capacity")
+			gatewayID := c.GatewaySessionID("session-capacity")
+			body := `{"gateway_session_id":"` + gatewayID + `","session_params":{"conformance_mode":"capacity_reached"}}`
+			r, err := c.OpenSession(reqID, harness.PaymentEnvelope("session-capacity"), body)
+			if err != nil {
+				return err
+			}
+			m := r.JSON()
+			if r.Status != 503 || r.Header.Get(harness.HdrError) != harness.ErrCapacityExhausted ||
+				r.Header.Get(harness.HdrWorkUnits) != "0" || r.Header.Get(harness.HdrSettlement) == "" {
+				return fmt.Errorf("session capacity response status=%d headers=%v body=%s", r.Status, r.Header, r.Body)
+			}
+			sessionID := harness.FieldString(m, "session_id")
+			if sessionID == "" || harness.FieldString(m, "gateway_session_id") != gatewayID {
+				return fmt.Errorf("capacity response omitted stable reconciliation ids: %s", r.Body)
+			}
+			q, err := c.QuerySettlement(gatewayID)
+			if err != nil {
+				return err
+			}
+			if q.Status != 200 || harness.FieldString(q.JSON(), "state") != "closed" ||
+				harness.FieldNumberOrZero(q.JSON(), "debited_units") != 0 {
+				return fmt.Errorf("terminal zero-use settlement status=%d body=%s", q.Status, q.Body)
+			}
+
+			// While the runner is in broker-local cooldown, a different request
+			// is genuinely refused before authorization admission. That request
+			// may obtain NOT_ADMITTED, while the admitted request above may not.
+			preID := c.RequestID("session-capacity-pre-admission")
+			preBody := `{"gateway_session_id":"` + c.GatewaySessionID("session-capacity-pre") + `","session_params":{}}`
+			pre, err := c.OpenSession(preID, harness.PaymentEnvelope("session-capacity-pre"), preBody)
+			if err != nil || pre.Status != 503 || pre.Header.Get(harness.HdrSettlement) != "" {
+				return fmt.Errorf("pre-admission refusal status=%d settlement=%q err=%v", pre.Status, pre.Header.Get(harness.HdrSettlement), err)
+			}
+			if c.SettlementSigner != "" {
+				na, err := c.QueryNonAdmission(preID, harness.ProtoPaidSession)
+				if err != nil || na.Status != 200 || na.Header.Get(harness.HdrNonAdmission) == "" {
+					return fmt.Errorf("non-admission evidence status=%d header=%q err=%v body=%s", na.Status, na.Header.Get(harness.HdrNonAdmission), err, na.Body)
+				}
+				contradiction, err := c.QueryNonAdmission(reqID, harness.ProtoPaidSession)
+				if err != nil || contradiction.Status == 200 || contradiction.Header.Get(harness.HdrNonAdmission) != "" {
+					return fmt.Errorf("admitted capacity request also received non-admission: status=%d err=%v", contradiction.Status, err)
+				}
+			}
+			time.Sleep(1100 * time.Millisecond)
+			return nil
 		}},
 	}
 }

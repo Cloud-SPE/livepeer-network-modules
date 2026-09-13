@@ -127,3 +127,17 @@ bounds what may be spent; the signed settlement says what was.
 LOC job id, broker request id, broker job id, work unit, units, and the
 signed settlement. The signed settlement is authoritative over the
 immediate response headers wherever they disagree.
+
+## 10. Capacity refusal
+
+On `503` with `Livepeer-Error: capacity_exhausted`, record no customer usage.
+If the response carries `Livepeer-Settlement`, reconcile it as an admitted,
+zero-use authorization and release the customer's retail hold immediately. If
+it does not, obtain signed `NOT_ADMITTED` evidence before releasing the hold;
+the HTTP status alone is not financial evidence.
+
+Trying another orchestrator requires a new request ID and a new authorization
+bound to that orchestrator's quote, route fingerprint, and payee. Do not reuse
+the refused route's authorization. `Livepeer-Backoff` is bounded guidance that
+a caller may honor to reduce futile retries, not an SDK requirement and not a
+permission to reuse authority on a different route.

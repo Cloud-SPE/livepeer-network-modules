@@ -1,8 +1,8 @@
 ---
 spec_name: certification-steps
-version: 1.2.0-draft
+version: 1.3.0-draft
 status: draft
-last_updated: 2026-09-02
+last_updated: 2026-09-13
 ---
 
 # Certification steps
@@ -262,6 +262,13 @@ Substitution is textual, JSON-escaped; no expressions, no defaults.
    against `max_in_flight`, but the broker SHOULD hold at most one
    certification exchange per host at a time so a run never starves paid
    work.
+   A private runner `429` whose JSON body is exactly classified by
+   `error: capacity_reached` is a temporary host-admission refusal
+   (`runner-contract` §4.4), not evidence that the workload passed or the
+   runner failed. The required step and run are recorded `inconclusive`, later
+   steps are skipped, and the broker retries after the bounded `Retry-After`
+   (default 5 seconds, maximum 60 seconds). Other `429` responses retain the
+   ordinary expectation/failure behavior.
 5. **Evidence bound:** ≤ 8 KiB per step after truncation; bodies are never
    stored; a failed assertion records the JSONPath and the first 256 bytes
    of the value it found.
@@ -299,7 +306,7 @@ One per run, as `broker-admin.md` §6.1 returns it:
 { "host_id": "…", "local_id": "…", "offering_id": "…", "run_id": "run_01jx…",
   "trigger": "match", "state": "passed", "started_at": "…", "finished_at": "…",
   "shape_hash": "sha256:…",
-  "steps": [ { "name", "type", "required", "status": "passed|failed|skipped|error",
+  "steps": [ { "name", "type", "required", "status": "passed|failed|skipped|error|inconclusive",
                "duration_ms", "evidence": { }, "message"? } ] }
 ```
 
@@ -322,6 +329,13 @@ Retries after a failed automatic run: exponential from 30 s, capped at
 `recertify_backoff_max` (default 30 min), reset on any trigger. A runner
 that keeps failing stays `matched` — visible with its last result, never
 served.
+
+An `inconclusive` capacity run also keeps the pair `matched`, but does not
+demote a previously eligible runner or count as a failed certification. It is
+retried using the runner's bounded delay (5 seconds when absent or invalid,
+maximum 60 seconds). Persistent capacity contention therefore remains visible
+without being mislabeled as runner corruption; persistent non-capacity errors
+continue through the fail-closed path above.
 
 ### 6.3 What freezes and what does not
 
@@ -442,6 +456,7 @@ its steps.
 | `cert-required-failure-skips-rest` | Required step 2 fails → steps 3..n `skipped`, run `failed`, pair stays `matched`. |
 | `cert-nonrequired-failure-passes-run` | Only a `required: false` latency step fails → run `passed`, step recorded `failed`. |
 | `cert-latency-bounds-percentile` | 3 samples, `p50_max_ms` below observed → `failed` with `p50_ms` and `bound` in evidence. |
+| `cert-capacity-refusal-inconclusive` | Job or session runner returns canonical `429 capacity_reached` → zero successful work, step/run `inconclusive`, bounded retry, no immediate demotion. A generic 429 still fails normally. |
 | `cert-no-payment-no-settlement` | A full run produces no settlement record, no receipt, no `Livepeer-Work-Units`, no capacity slot use. |
 | `cert-first-pass-freezes-second-does-not` | Two runners pass in sequence → `frozen_by.run_id` is the first's; second only certifies. |
 | `cert-offer-change-recertifies` | Editing `certification[]` triggers `offer_change` runs; an eligible runner stays eligible until its new run fails. |
@@ -451,6 +466,7 @@ its steps.
 
 | Version | Date | Change |
 |---|---|---|
+| 1.3.0-draft | 2026-09-13 | Classifies canonical private-runner capacity refusal as an inconclusive certification result with bounded retry, never success or immediate runner demotion. |
 | 1.2.0-draft | 2026-09-02 | Session `request` gains `reach` (plan 0046): the broker dials the descriptor's public address with the named grant while the session is open, so reachability is proved rather than claimed. Additive. |
 | 1.1.0-draft | 2026-09-01 | §4: `{{fixture_url.<ref>}}` and `{{sink_url}}`, run-scoped URLs the broker mints so a runner that takes source and destination URLs can be certified against a real file. Mirrors the §3.3 usage callback. Additive (plan 0045 §7). |
 | 1.0.0-draft | 2026-08-26 | Initial spec (plan 0043 §3.5, item 3). Step envelope; `readiness` (runner-declared probe, author sets sufficiency), `request` (job: transport/body/parts/status/JSONPath asserts; session: create/descriptor/terminate), `usage` (declared extractor or runner usage event ≥ `min_units`), `latency` (p50/p95 over N samples, total or first-byte); built-in and inline fixtures; `{{identity.*}}`/`{{offer.*}}` substitution; execution order and required/skip rule; result record, triggers, retry backoff; first-pass freeze rule; the five controller probe families as YAML; 16 conformance fixtures. |

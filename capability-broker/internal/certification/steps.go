@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -99,6 +100,7 @@ func (x *runExec) run() ([]StepResult, string, *runnerattach.Reason) {
 	var out []StepResult
 	skipping := false
 	failed := false
+	inconclusive := false
 	var firstFail *runnerattach.Reason
 	for _, step := range x.offer.Certification {
 		sr := StepResult{Name: step.Name, Type: step.Type, Required: step.IsRequired()}
@@ -112,6 +114,11 @@ func (x *runExec) run() ([]StepResult, string, *runnerattach.Reason) {
 		sr.DurationMS = time.Since(start).Milliseconds()
 		boundEvidence(&sr)
 		out = append(out, sr)
+		if sr.Status == StepInconclusive && sr.Required {
+			skipping = true
+			inconclusive = true
+			continue
+		}
 		if sr.Status != StepPassed && sr.Required {
 			skipping = true
 			failed = true
@@ -124,6 +131,8 @@ func (x *runExec) run() ([]StepResult, string, *runnerattach.Reason) {
 	state := RunPassed
 	if failed {
 		state = RunFailed
+	} else if inconclusive {
+		state = RunInconclusive
 	}
 	if x.ctx.Err() != nil {
 		state = RunError
@@ -246,6 +255,12 @@ func (x *runExec) stepRequest(step config.CertificationStep, sr *StepResult, tim
 	if err != nil {
 		sr.Status = StepError
 		sr.Message = err.Error()
+		return
+	}
+	if backoff, refused := certificationCapacityRefusal(ex); refused {
+		sr.Status = StepInconclusive
+		sr.Message = "runner temporarily refused host resource admission"
+		sr.Evidence = map[string]any{"status": ex.status, "retry_after_seconds": backoff}
 		return
 	}
 	if failMsg != "" {
@@ -428,6 +443,12 @@ func (x *runExec) sessionRequest(cfg map[string]any, sr *StepResult, timeout tim
 		return
 	}
 	if ex.status < 200 || ex.status >= 300 {
+		if backoff, refused := certificationCapacityRefusal(ex); refused {
+			sr.Status = StepInconclusive
+			sr.Message = "runner temporarily refused host resource admission"
+			sr.Evidence = map[string]any{"status": ex.status, "retry_after_seconds": backoff}
+			return
+		}
 		sr.Status = StepFailed
 		sr.Message = fmt.Sprintf("create returned %d", ex.status)
 		sr.Evidence = map[string]any{"status": ex.status}
@@ -595,6 +616,14 @@ func (x *runExec) stepLatency(step config.CertificationStep, sr *StepResult, tim
 	var durations []time.Duration
 	for i := 0; i < warmup+samples; i++ {
 		ex, failMsg, err := x.jobExchange(cfg, perSample)
+		if ex != nil {
+			if backoff, refused := certificationCapacityRefusal(ex); refused {
+				sr.Status = StepInconclusive
+				sr.Message = "sample temporarily refused host resource admission"
+				sr.Evidence = map[string]any{"samples": len(durations), "status": ex.status, "retry_after_seconds": backoff}
+				return
+			}
+		}
 		if err != nil || failMsg != "" {
 			sr.Status = StepFailed
 			sr.Message = "sample failed: " + firstNonEmpty(failMsg, errString(err))
@@ -635,6 +664,26 @@ func (x *runExec) stepLatency(step config.CertificationStep, sr *StepResult, tim
 		sr.Status = StepFailed
 		sr.Message = "percentile above bound"
 	}
+}
+
+func certificationCapacityRefusal(ex *exchange) (int, bool) {
+	if ex == nil || ex.status != http.StatusTooManyRequests {
+		return 0, false
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(ex.body, &payload) != nil || payload.Error != "capacity_reached" {
+		return 0, false
+	}
+	backoff := 5
+	if n, err := strconv.Atoi(strings.TrimSpace(ex.header.Get("Retry-After"))); err == nil && n > 0 {
+		if n > 60 {
+			n = 60
+		}
+		backoff = n
+	}
+	return backoff, true
 }
 
 // --- transport & helpers ----------------------------------------------------

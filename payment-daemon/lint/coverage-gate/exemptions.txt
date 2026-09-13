@@ -22,15 +22,3 @@ github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers 
 # no-secrets-in-logs runs against the tree in `make test`.
 github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/lint/no-secrets-in-logs  # lint tool; runs against the tree
 github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/lint/no-secrets-in-logs/testdata  # test fixtures
-
-# Pre-existing coverage debt, outside plan 0048's scope. Tracked in bead lnm-tou.7;
-# delete a line as its package reaches the floor.
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store  # 41% before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types  # 44% before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow  # 67% before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver  # 68% before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/keystore/inmemory  # 70% before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devbroker  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devkeystore  # dev-mode fake, no tests before plan 0048; bead lnm-tou.7
-github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server  # grpc.Server lifecycle, no tests before plan 0048; bead lnm-tou.7

@@ -3,10 +3,13 @@ package inmemory
 import (
 	"bytes"
 	"errors"
+	"math/big"
 	"strings"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/accounts"
+	ethcommon "github.com/ethereum/go-ethereum/common"
+	ethtypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -141,5 +144,31 @@ func TestSatisfiesProvidersKeyStoreInterface(t *testing.T) {
 	})
 	if !hasAddress || !hasSign {
 		t.Fatalf("KeyStore missing providers.KeyStore methods (Address=%v, Sign=%v)", hasAddress, hasSign)
+	}
+}
+
+func TestSignTx(t *testing.T) {
+	key, _ := crypto.GenerateKey()
+	ks, _ := New(key)
+	to := ethcommon.HexToAddress("0x1111111111111111111111111111111111111111")
+	tx := ethtypes.NewTx(&ethtypes.LegacyTx{Nonce: 3, To: &to, Value: big.NewInt(7), Gas: 21_000, GasPrice: big.NewInt(2)})
+	chainID := big.NewInt(42161)
+	signed, err := ks.SignTx(tx, chainID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender, err := ethtypes.Sender(ethtypes.LatestSignerForChainID(chainID), signed)
+	if err != nil || !bytes.Equal(sender.Bytes(), ks.Address()) {
+		t.Fatalf("signed sender=%s err=%v", sender, err)
+	}
+	if _, err := ks.SignTx(tx, nil); err == nil {
+		t.Fatal("nil chain ID accepted")
+	}
+	ks.key = nil
+	if _, err := ks.Sign([]byte("x")); !errors.Is(err, ErrNilKey) {
+		t.Fatalf("Sign nil key err=%v", err)
+	}
+	if _, err := ks.SignTx(tx, chainID); !errors.Is(err, ErrNilKey) {
+		t.Fatalf("SignTx nil key err=%v", err)
 	}
 }

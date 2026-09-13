@@ -1,6 +1,6 @@
 # chain-commons Adoption — Exec Plan 0048
 
-> Status: Code complete; real-process run pending · Owner: Mike Zupper · Last updated: 2026-09-04
+> Status: Complete · Owner: Mike Zupper · Completed: 2026-09-13
 > Branch: `tasks/lpm-v2`
 > Components: `chain-commons`, `payment-daemon`, `pool-payout-executor`, `protocol-daemon`, `service-registry-daemon`
 
@@ -153,9 +153,22 @@ built from this plan's final commit.
 - 2026-09-04 — stages 4 and 5 landed: `2a8feab` (executor payouts on
   txintent), `09cc28b` (ticket redemption on txintent), `494533f`
   (txintent first-submit race found by the redemption tests),
-  `5d8ea89` (payment-daemon image copies chain-commons), and the round
-  clock commit. Both images build. All five modules green on build,
-  vet, test, lint and the coverage gate. Remaining before the plan
-  moves to completed/: the integration-stack real-process run (§3
-  layer 3), which uses real keys on mainnet and is the operator's
-  call, and the image rebuild + push that the broker rollout needs.
+  `5d8ea89` (payment-daemon image copies chain-commons), and `c2d9c3f`
+  (round clock). Both images build. All five modules green on build,
+  vet, test, lint and the coverage gate.
+- 2026-09-09 — the approved integration-stack pilot and recovery drill ran
+  against Arbitrum One (`chain_id=42161`) with immutable payment-daemon
+  digest `sha256:1690ca9b83fc47a2a099093c4cf3b4c3bbc6edfec670706acc04313af98314ab`.
+  The binary identified as `v2.0.0-31ebb155144c`; every plan-0048 commit is
+  an ancestor of that revision. Post-pilot reconciliation reported
+  `PASS wholesale evidence`, zero reserved wei, and the drain completed.
+- 2026-09-13 — publication was reverified from the registry. The current
+  immutable images are `tztcloud/livepeer-payment-daemon@sha256:b0ab8d74e48241d8178c850f584972d4150195287a93aa227d62d57004269138`
+  and `tztcloud/livepeer-pool-payout-executor@sha256:47eb0061d4036c1d9b810136334656348274495f680df43c5dbcd91a98a6aaf6`;
+  both binaries identify as `v2.0.0-c453d14be2e1`. The pre-existing package
+  coverage exemptions were moved out of this plan to independent epic
+  `lnm-dex`, superseding `lnm-tou.7`. Plan 0048 is complete.
+- 2026-09-13 — follow-up epic `lnm-dex` raised every inherited payment-daemon
+  and pool-payout-executor package exemption above the 75% floor and removed
+  those exemptions. Only the separately justified structural CLI, interface,
+  and lint-tool exemptions remain.

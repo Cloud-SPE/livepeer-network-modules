@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -29,6 +30,18 @@ type RunnerClient interface {
 
 // ErrRunnerSessionGone reports a runner that no longer holds the session.
 var ErrRunnerSessionGone = fmt.Errorf("sessionengine: runner session gone")
+
+// RunnerCapacityError is the private runner's typed refusal to start work on
+// a saturated host resource. It is distinct from transport/backend failure so
+// the public broker surface can return capacity_exhausted and preserve the
+// authorization ledger's zero-use terminal outcome.
+type RunnerCapacityError struct {
+	BackoffSeconds int
+}
+
+func (e *RunnerCapacityError) Error() string {
+	return "sessionengine: runner capacity reached"
+}
 
 // RunnerCreateRequest is what the broker sends on session create.
 type RunnerCreateRequest struct {
@@ -83,18 +96,18 @@ func (c *HTTPRunnerClient) urlFor(path, runnerSessionID string) string {
 	return strings.TrimRight(c.BaseURL, "/") + p
 }
 
-func (c *HTTPRunnerClient) do(ctx context.Context, method, u string, body any, out any) (int, error) {
+func (c *HTTPRunnerClient) do(ctx context.Context, method, u string, body any, out any) (int, http.Header, []byte, error) {
 	var rdr io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
-			return 0, err
+			return 0, nil, nil, err
 		}
 		rdr = bytes.NewReader(raw)
 	}
 	req, err := http.NewRequestWithContext(ctx, method, u, rdr)
 	if err != nil {
-		return 0, err
+		return 0, nil, nil, err
 	}
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -104,28 +117,31 @@ func (c *HTTPRunnerClient) do(ctx context.Context, method, u string, body any, o
 	}
 	resp, err := c.httpClient().Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, nil, err
 	}
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
-		return resp.StatusCode, err
+		return resp.StatusCode, resp.Header, nil, err
 	}
 	if out != nil && resp.StatusCode/100 == 2 {
 		if err := json.Unmarshal(raw, out); err != nil {
-			return resp.StatusCode, fmt.Errorf("sessionengine: decode runner response: %w", err)
+			return resp.StatusCode, resp.Header, raw, fmt.Errorf("sessionengine: decode runner response: %w", err)
 		}
 	}
-	return resp.StatusCode, nil
+	return resp.StatusCode, resp.Header, raw, nil
 }
 
 func (c *HTTPRunnerClient) CreateSession(ctx context.Context, req RunnerCreateRequest) (*RunnerCreateResult, error) {
 	var out RunnerCreateResult
-	code, err := c.do(ctx, http.MethodPost, c.urlFor(c.Paths.Create, ""), req, &out)
+	code, header, raw, err := c.do(ctx, http.MethodPost, c.urlFor(c.Paths.Create, ""), req, &out)
 	if err != nil {
 		return nil, err
 	}
 	if code/100 != 2 {
+		if backoff, ok := runnerCapacityRefusal(code, header, raw); ok {
+			return nil, &RunnerCapacityError{BackoffSeconds: backoff}
+		}
 		return nil, fmt.Errorf("sessionengine: runner create returned %d", code)
 	}
 	if out.RunnerSessionID == "" {
@@ -136,7 +152,7 @@ func (c *HTTPRunnerClient) CreateSession(ctx context.Context, req RunnerCreateRe
 
 func (c *HTTPRunnerClient) QuerySession(ctx context.Context, id string) (*RunnerStatus, error) {
 	var out RunnerStatus
-	code, err := c.do(ctx, http.MethodGet, c.urlFor(c.Paths.Status, id), nil, &out)
+	code, _, _, err := c.do(ctx, http.MethodGet, c.urlFor(c.Paths.Status, id), nil, &out)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +167,7 @@ func (c *HTTPRunnerClient) QuerySession(ctx context.Context, id string) (*Runner
 
 func (c *HTTPRunnerClient) TerminateSession(ctx context.Context, id, reason string) error {
 	body := map[string]string{"reason": reason}
-	code, err := c.do(ctx, http.MethodDelete, c.urlFor(c.Paths.Terminate, id), body, nil)
+	code, _, _, err := c.do(ctx, http.MethodDelete, c.urlFor(c.Paths.Terminate, id), body, nil)
 	if err != nil {
 		return err
 	}
@@ -160,4 +176,26 @@ func (c *HTTPRunnerClient) TerminateSession(ctx context.Context, id, reason stri
 		return nil
 	}
 	return fmt.Errorf("sessionengine: runner terminate returned %d", code)
+}
+
+const maxRunnerCapacityBackoffSeconds = 60
+
+func runnerCapacityRefusal(code int, header http.Header, raw []byte) (int, bool) {
+	if code != http.StatusTooManyRequests {
+		return 0, false
+	}
+	var payload struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(raw, &payload) != nil || payload.Error != "capacity_reached" {
+		return 0, false
+	}
+	backoff := 5
+	if n, err := strconv.Atoi(strings.TrimSpace(header.Get("Retry-After"))); err == nil && n > 0 {
+		if n > maxRunnerCapacityBackoffSeconds {
+			n = maxRunnerCapacityBackoffSeconds
+		}
+		backoff = n
+	}
+	return backoff, true
 }

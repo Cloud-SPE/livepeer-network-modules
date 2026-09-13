@@ -1,6 +1,45 @@
 package server
 
-import "github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+import (
+	"time"
+
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+)
+
+func (s *Server) markBackendCapacityRefused(backendID string, backoffSeconds int) {
+	if s == nil || backendID == "" {
+		return
+	}
+	if backoffSeconds <= 0 || backoffSeconds > maxCapacityBackoffSeconds {
+		backoffSeconds = defaultCapacityBackoffSeconds
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.backendCapacityUntil == nil {
+		s.backendCapacityUntil = make(map[string]time.Time)
+	}
+	until := time.Now().Add(time.Duration(backoffSeconds) * time.Second)
+	if until.After(s.backendCapacityUntil[backendID]) {
+		s.backendCapacityUntil[backendID] = until
+	}
+}
+
+func (s *Server) backendCapacityBackoff(backendID string, now time.Time) bool {
+	if s == nil || backendID == "" {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	until := s.backendCapacityUntil[backendID]
+	if until.IsZero() {
+		return false
+	}
+	if !now.Before(until) {
+		delete(s.backendCapacityUntil, backendID)
+		return false
+	}
+	return true
+}
 
 func (s *Server) currentBackendInFlight(backendID string) int {
 	if s == nil || backendID == "" {

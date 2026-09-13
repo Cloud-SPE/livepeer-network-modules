@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
@@ -137,29 +138,32 @@ func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile st
 // that the tuple is unadvertised and dispatch has nowhere to go.
 func attachJobRunner(t *testing.T, s *Server, ts *httptest.Server, backendCalls *atomic.Int64) {
 	t.Helper()
+	attachJobRunnerResponder(t, s, ts, func(_, _ string, headers map[string][]string, _ []byte) (int, http.Header, []byte) {
+		if backendCalls != nil {
+			backendCalls.Add(1)
+		}
+		if strings.Contains(strings.Join(headers["Accept"], ","), "text/event-stream") {
+			body := []byte("data: {\"chunk\":1}\n\ndata: {\"usage\":{\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
+			return http.StatusOK, http.Header{
+				"Content-Type":   {"text/event-stream"},
+				"Content-Length": {strconv.Itoa(len(body))},
+			}, body
+		}
+		body := []byte(`{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
+		return http.StatusOK, http.Header{
+			"Content-Type":   {"application/json"},
+			"Content-Length": {strconv.Itoa(len(body))},
+		}, body
+	})
+}
+
+func attachJobRunnerResponder(t *testing.T, s *Server, ts *httptest.Server,
+	respond func(string, string, map[string][]string, []byte) (int, http.Header, []byte)) {
+	t.Helper()
 	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"h1"}`, nil)
 	token := enr["credential"].(map[string]any)["token"].(string)
 	c := dialAttach(t, ts)
-	results := runnerSideFull(t, c,
-		func(_, _ string, headers map[string][]string, _ []byte) (int, http.Header, []byte) {
-			if backendCalls != nil {
-				backendCalls.Add(1)
-			}
-			if strings.Contains(strings.Join(headers["Accept"], ","), "text/event-stream") {
-				body := []byte("data: {\"chunk\":1}\n\ndata: {\"usage\":{\"total_tokens\":21}}\n\ndata: [DONE]\n\n")
-				return http.StatusOK, http.Header{
-					"Content-Type":   {"text/event-stream"},
-					"Content-Length": {strconv.Itoa(len(body))},
-				}, body
-			}
-			body := []byte(`{"choices":[{"text":"hi"}],"usage":{"total_tokens":42}}`)
-			// Content-Length is what a real container sends, and the
-			// broker's trailer behaviour turns on it.
-			return http.StatusOK, http.Header{
-				"Content-Type":   {"application/json"},
-				"Content-Length": {strconv.Itoa(len(body))},
-			}, body
-		})
+	results := runnerSideFull(t, c, respond)
 	res := registerVia(t, c, results, attachDoc(token, "h1", func(m map[string]any) {
 		cap0 := m["capabilities"].([]any)[0].(map[string]any)
 		cap0["identity"] = map[string]any{"openai.model": "test-model"}
@@ -176,6 +180,39 @@ func attachJobRunner(t *testing.T, s *Server, ts *httptest.Server, backendCalls 
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatal("the attached runner never became eligible for the chat offer")
+}
+
+func TestJobCapacityRefusalSettlesZeroForUnaryAndStream(t *testing.T) {
+	for _, accept := range []string{"", "text/event-stream"} {
+		t.Run(map[bool]string{true: "stream", false: "unary"}[accept != ""], func(t *testing.T) {
+			mock := payment.NewMock()
+			srv, s := newJobOfferBrokerBare(t, mock, "")
+			attachJobRunnerResponder(t, s, srv, func(_, _ string, _ map[string][]string, _ []byte) (int, http.Header, []byte) {
+				return http.StatusTooManyRequests, http.Header{"Retry-After": {"999"}}, []byte(`{"error":"capacity_reached"}`)
+			})
+			requestID := "capacity-" + map[bool]string{true: "stream", false: "unary"}[accept != ""]
+			resp := jobReq(t, srv, requestID, accept)
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusServiceUnavailable || resp.Header.Get(livepeerheader.Error) != livepeerheader.ErrCapacityExhausted || resp.Header.Get(livepeerheader.Backoff) != "60" {
+				t.Fatalf("response status=%d error=%q backoff=%q", resp.StatusCode, resp.Header.Get(livepeerheader.Error), resp.Header.Get(livepeerheader.Backoff))
+			}
+			units := resp.Header.Get(livepeerheader.WorkUnits)
+			if accept != "" {
+				units = resp.Trailer.Get(livepeerheader.WorkUnits)
+				if units == "" { // normalized refusal is a unary terminal response
+					units = resp.Header.Get(livepeerheader.WorkUnits)
+				}
+			}
+			if units != "0" {
+				t.Fatalf("work units = %q, want zero", units)
+			}
+			status, err := mock.GetSpendAuthorization(context.Background(), bytes.Repeat([]byte{1}, 20), "auth-"+requestID)
+			if err != nil || status.Billed.Sign() != 0 || status.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) {
+				t.Fatalf("authorization status=%+v err=%v", status, err)
+			}
+		})
+	}
 }
 
 func jobReq(t *testing.T, srv *httptest.Server, requestID, accept string) *http.Response {

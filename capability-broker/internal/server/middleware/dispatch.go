@@ -34,6 +34,10 @@ type Dispatch struct {
 	// tunnel failed, or the read did — which is a backend failure with
 	// no latency worth the name.
 	Forwarded bool
+	// CapacityRefused is a typed runner admission refusal. It is observable
+	// capacity pressure, but is neither successful execution nor evidence that
+	// the runner is corrupt/unhealthy.
+	CapacityRefused bool
 }
 
 // DispatchSlot is a one-shot holder the idempotency layer installs and

@@ -48,7 +48,7 @@ func jobOutcome(status int) string {
 // broker's own hardware — the orch's "pool of one" — has no member to
 // attribute work to and no controller that would accept the report.
 func (s *Server) reportJobOutcome(d *middleware.Dispatch, status int) {
-	if d == nil || s.poolReporter == nil {
+	if d == nil || d.CapacityRefused || s.poolReporter == nil {
 		return
 	}
 	sn, ok := s.runners.Get(d.HostID)

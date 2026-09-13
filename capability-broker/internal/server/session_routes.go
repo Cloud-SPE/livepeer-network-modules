@@ -164,7 +164,22 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	}
 	capID := r.Header.Get(livepeerheader.Capability)
 	offID := r.Header.Get(livepeerheader.Offering)
-	c := s.sessionCapability(capID, offID)
+	// Resolve an already-recorded request to its pinned runner before fresh
+	// selection. This is essential for idempotent capacity refusals: the first
+	// typed refusal places that backend in a short local cooldown, but a retry
+	// of the same request must replay its durable zero-use outcome rather than
+	// becoming a new pre-admission refusal with no reconciliation identifiers.
+	var c *config.Capability
+	if existingID, lookupErr := s.sessionStore.SessionIDForRequest(r.Header.Get(livepeerheader.RequestID)); lookupErr == nil {
+		if rec, getErr := s.sessionStore.Get(existingID); getErr == nil && rec.Capability == capID && rec.Offering == offID {
+			if pinnedCap, pinnedOff, pair, pinned := splitSessionBackendRef(rec.BackendRef); pinned {
+				c = s.pinnedSessionCapability(pinnedCap, pinnedOff, pair)
+			}
+		}
+	}
+	if c == nil {
+		c = s.sessionCapability(capID, offID)
+	}
 	if c == nil {
 		// An advertised offer with nothing eligible behind it is
 		// unavailable, not absent: 404 would tell a gateway to stop
@@ -253,6 +268,35 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		observability.RecordSessionOpen("failed")
+		var capacity *sessionengine.CapacityError
+		if errors.As(err, &capacity) {
+			backoff := capacity.BackoffSeconds
+			if backoff <= 0 || backoff > maxCapacityBackoffSeconds {
+				backoff = defaultCapacityBackoffSeconds
+			}
+			s.markBackendCapacityRefused(backendIDForCapability(c), backoff)
+			w.Header().Set(livepeerheader.Backoff, strconv.Itoa(backoff))
+			w.Header().Set(livepeerheader.WorkUnits, "0")
+			w.Header().Set(livepeerheader.Error, livepeerheader.ErrCapacityExhausted)
+			if rec, getErr := s.sessionStore.Get(capacity.SessionID); getErr == nil {
+				if set := s.sessionEngine.SettlementFor(rec, specFromCapability(c)); set != nil {
+					if encoded, encodeErr := settlement.Encode(set, s.settlementSigner); encodeErr == nil {
+						w.Header().Set(livepeerheader.Settlement, encoded)
+					}
+				}
+			}
+			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
+				"error": map[string]any{
+					"code":    livepeerheader.ErrCapacityExhausted,
+					"message": "selected runner has no compatible host capacity",
+				},
+				"session_id":         capacity.SessionID,
+				"gateway_session_id": capacity.GatewaySessionID,
+				"work_id":            capacity.WorkID,
+				"settlement_url":     strings.TrimRight(s.currentConfig().ExternalBaseURL, "/") + "/v1/settlement/" + capacity.SessionID,
+			})
+			return
+		}
 		s.writeSessionError(w, err)
 		return
 	}

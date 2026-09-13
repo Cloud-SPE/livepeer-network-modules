@@ -73,6 +73,7 @@ type Server struct {
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
 	backendInFlight      map[string]int
+	backendCapacityUntil map[string]time.Time
 	secrets              backend.SecretResolver
 	receiptSink          receipts.Client
 	poolReporter         poolreport.Client

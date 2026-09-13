@@ -29,6 +29,16 @@ Dispatches inbound requests to attached runners over the connection those
 runners opened. Validates payment via a co-located `payment-daemon` (over
 unix socket; a stub client is available for dev via `payment_daemon.mock`).
 
+Private runners may refuse pre-execution host admission with HTTP `429` and
+`{"error":"capacity_reached"}`. The broker deliberately recognizes only that
+typed response, converts it to public `503 capacity_exhausted`, bounds
+`Livepeer-Backoff` to 60 seconds, and records zero work units. For an already
+admitted wholesale authorization, jobs settle immediately at zero; session
+opens first persist a zero-use winding-down record so payment closure and its
+signed terminal evidence survive a broker crash. These refusals appear in paid
+request metrics as `capacity_exhausted` and are not reported to Pool scoring as
+runner success or corruption.
+
 Declaring any `paid-session/v1` offer makes `session_store` (durable bbolt
 path + sealing key) and `external_base_url` required; see
 [`docs/operator-runbook.md`](./docs/operator-runbook.md) §2.

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/backend"
 
@@ -193,6 +194,12 @@ func (s *Server) selectRunnerBackend(group *capabilityGroup) (*config.Capability
 	denied := map[string]int{}
 	for _, cap := range group.Backends {
 		backendID := backendIDForCapability(cap)
+		if s.backendCapacityBackoff(backendID, time.Now()) {
+			const reason = "runner_capacity_backoff"
+			observability.RecordBackendSelectionDenied(capID, offID, backendID, reason)
+			denied[reason]++
+			continue
+		}
 		if cap.Backend.MaxInFlight > 0 && s.currentBackendInFlight(backendID) >= cap.Backend.MaxInFlight {
 			const reason = "max_in_flight_reached"
 			observability.RecordBackendSelectionDenied(capID, offID, backendID, reason)

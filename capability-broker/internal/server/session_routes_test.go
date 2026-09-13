@@ -584,3 +584,46 @@ func TestSessionOpenNeverEmitsNullGrants(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionOpenNormalizesCapacityAndExposesZeroUseSettlement(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /sessions", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Retry-After", "120")
+		w.WriteHeader(http.StatusTooManyRequests)
+		fmt.Fprint(w, `{"error":"capacity_reached"}`)
+	})
+	srv := newSessionTestServerWithRunner(t, mux)
+
+	resp := sessionOpenReq(t, srv, "req-capacity")
+	body := decode(t, resp)
+	if resp.StatusCode != http.StatusServiceUnavailable ||
+		resp.Header.Get(livepeerheader.Error) != livepeerheader.ErrCapacityExhausted ||
+		resp.Header.Get(livepeerheader.Backoff) != "60" ||
+		resp.Header.Get(livepeerheader.WorkUnits) != "0" {
+		t.Fatalf("capacity response status=%d headers=%v body=%v", resp.StatusCode, resp.Header, body)
+	}
+	sessionID, _ := body["session_id"].(string)
+	if sessionID == "" || body["gateway_session_id"] != "gws-1" || body["work_id"] == "" {
+		t.Fatalf("capacity response lacks reconciliation identifiers: %v", body)
+	}
+	if resp.Header.Get(livepeerheader.Settlement) == "" {
+		t.Fatal("capacity response omitted immediate zero-use settlement")
+	}
+	settled, err := http.Get(srv.URL + "/v1/settlement/" + sessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settlementBody := decode(t, settled)
+	if settled.StatusCode != http.StatusOK || settlementBody["state"] != "closed" ||
+		settlementBody["debited_units"] != float64(0) || settlementBody["claimed_units"] != float64(0) {
+		t.Fatalf("settlement status=%d body=%v", settled.StatusCode, settlementBody)
+	}
+
+	// Idempotent retry returns the same refused session and does not ask the
+	// runner to create work again.
+	replay := sessionOpenReq(t, srv, "req-capacity")
+	replayBody := decode(t, replay)
+	if replay.StatusCode != http.StatusServiceUnavailable || replayBody["session_id"] != sessionID {
+		t.Fatalf("capacity replay status=%d body=%v", replay.StatusCode, replayBody)
+	}
+}

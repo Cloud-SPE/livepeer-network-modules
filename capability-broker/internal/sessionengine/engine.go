@@ -46,6 +46,20 @@ type RetryableError struct{ Err error }
 func (e *RetryableError) Error() string { return "retryable: " + e.Err.Error() }
 func (e *RetryableError) Unwrap() error { return e.Err }
 
+// CapacityError is a completed, zero-use open outcome. SessionID identifies
+// the durable record whose signed settlement can be fetched immediately;
+// callers retrying the same request id receive this same outcome.
+type CapacityError struct {
+	SessionID        string
+	GatewaySessionID string
+	WorkID           string
+	BackoffSeconds   int
+}
+
+func (e *CapacityError) Error() string {
+	return "capacity_exhausted: selected runner has no compatible host capacity"
+}
+
 // Terminal close reasons (stable, machine-readable).
 const (
 	ReasonGatewayClose           = "gateway_close"
@@ -57,6 +71,7 @@ const (
 	ReasonAuthorizationExhausted = "authorization_exhausted"
 	ReasonRecoveryFailed         = "recovery_failed"
 	ReasonOpenFailed             = "open_failed"
+	ReasonCapacityExhausted      = "capacity_exhausted"
 	// ReasonPaymentUnrecoverable ends a session whose payment identity
 	// cannot be recovered — a rotation that could not settle, or one
 	// that exhausted its bound. It names the consequence, not the
@@ -379,6 +394,40 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		CallbackToken: callbackToken,
 	})
 	if err != nil {
+		var capacity *RunnerCapacityError
+		if errors.As(err, &capacity) {
+			// Admission already happened. Convert the open reservation into a
+			// normal session record before closing payment, so a crash at any
+			// following instruction leaves recovery a durable winding-down
+			// obligation and never loses terminal settlement evidence.
+			rec := &sessionstore.Record{
+				SessionID: sessionID, GatewaySessionID: req.GatewaySessionID,
+				WorkID: workID, Capability: req.Spec.Capability,
+				Offering: req.Spec.Offering, BackendRef: req.Spec.BackendRef,
+				QuoteID: req.AcceptedQuoteRef.GetQuoteId(), QuoteVersion: req.AcceptedQuoteRef.GetQuoteVersion(),
+				ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
+				RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
+				Sender:                sender, OpenFingerprint: fingerprint,
+				AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
+				AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
+				AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
+				AuthorizationReservedWei: req.InitialReservationWei.String(),
+				FundedWei:                bigIntString(credited), Unit: req.Spec.WorkUnit,
+				SettlementSeq: 1,
+				State:         sessionstore.StateWindingDown, CloseReason: ReasonCapacityExhausted,
+				RunnerTerminated: true, CapacityRef: req.CapacityRef,
+				LastEventAt: now,
+			}
+			if persistErr := e.cfg.Store.CreateIndexed(rec, req.RequestID); persistErr != nil {
+				return nil, &RetryableError{Err: fmt.Errorf("persist capacity refusal: %w", persistErr)}
+			}
+			mu := e.sessionMu(sessionID)
+			mu.Lock()
+			e.winddownLocked(ctx, sessionID, ReasonCapacityExhausted)
+			mu.Unlock()
+			return nil, &CapacityError{SessionID: sessionID, GatewaySessionID: req.GatewaySessionID,
+				WorkID: workID, BackoffSeconds: capacity.BackoffSeconds}
+		}
 		return nil, failClosed("runner create", err, "")
 	}
 	if err := recordStage(func(r *sessionstore.OpenReservation) {
@@ -492,6 +541,10 @@ func (e *Engine) replayOpen(sessionID string, fingerprint []byte) (*OpenResult, 
 	if len(rec.OpenFingerprint) > 0 && !bytesEqual(rec.OpenFingerprint, fingerprint) {
 		return nil, protoErr("request_id_reuse",
 			"request id reused with different open content")
+	}
+	if rec.CloseReason == ReasonCapacityExhausted {
+		return nil, &CapacityError{SessionID: rec.SessionID, GatewaySessionID: rec.GatewaySessionID,
+			WorkID: rec.WorkID, BackoffSeconds: 5}
 	}
 	out := &OpenResult{
 		SessionID: rec.SessionID,
@@ -1060,7 +1113,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		return
 	}
 	state := sessionstore.StateEnded
-	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed || reason == ReasonOutputFailed {
+	if reason == ReasonRunnerFailed || reason == ReasonRecoveryFailed || reason == ReasonOutputFailed || reason == ReasonCapacityExhausted {
 		state = sessionstore.StateFailed
 	}
 	// The terminal write comes first and is checked. Releasing the

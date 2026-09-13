@@ -599,6 +599,12 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 			"read backend body: "+err.Error())
 		return
 	}
+	if backoff, refused := runnerCapacityRefusal(resp.StatusCode, resp.Header, respBody); refused {
+		dispatch.CapacityRefused = true
+		s.markBackendCapacityRefused(dispatch.BackendID, backoff)
+		writeCapacityRefusal(w, backoff)
+		return
+	}
 	// A non-2xx backend produced no billable output, so the claim is
 	// zero regardless of what the extractor would compute (paid-job §5).
 	//
@@ -631,6 +637,31 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 // trailer (paid-job §3.2).
 func (s *Server) streamJobResponse(w http.ResponseWriter, r *http.Request, resp *http.Response,
 	extractor extractors.Extractor, reqBody []byte, start time.Time) {
+	// A capacity refusal is a small, terminal JSON response despite the
+	// caller having negotiated the streaming transport. Detect it before
+	// headers are committed and, crucially, before any request-derived
+	// extractor can turn the refused request into usage.
+	if resp.StatusCode == http.StatusTooManyRequests {
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+		if err == nil {
+			if backoff, refused := runnerCapacityRefusal(resp.StatusCode, resp.Header, body); refused {
+				if slot := middleware.DispatchSlotFrom(r.Context()); slot != nil {
+					if d := slot.Get(); d != nil {
+						d.CapacityRefused = true
+						s.markBackendCapacityRefused(d.BackendID, backoff)
+					}
+				}
+				writeCapacityRefusal(w, backoff)
+				return
+			}
+		}
+		// Preserve an unrecognized application-level 429 without charging it.
+		copyBackendHeaders(w, resp)
+		w.Header().Set(livepeerheader.WorkUnits, "0")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
 
 	copyBackendHeaders(w, resp)
 	// Chunked encoding is required for trailers: a copied Content-Length
@@ -662,7 +693,10 @@ func (s *Server) streamJobResponse(w http.ResponseWriter, r *http.Request, resp 
 			break
 		}
 	}
-	units := s.extractUnits(r, extractor, reqBody, buf.Bytes(), resp, start)
+	var units uint64
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		units = s.extractUnits(r, extractor, reqBody, buf.Bytes(), resp, start)
+	}
 	w.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(units, 10))
 }
 

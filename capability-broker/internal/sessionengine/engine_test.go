@@ -51,6 +51,7 @@ type fakePayment struct {
 	debitedUnits    uint64
 	accountAdvances []payment.AdvanceAuthorizationRequest
 	accountSettles  []payment.SettleAuthorizationRequest
+	failSettles     int
 }
 
 func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
@@ -100,6 +101,10 @@ func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleA
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.accountSettles = append(f.accountSettles, req)
+	if f.failSettles > 0 {
+		f.failSettles--
+		return nil, errors.New("transient settlement failure")
+	}
 	f.closed++
 	price, per := f.pricing()
 	billed := payment.BillFor(price, per, req.ActualUnits)
@@ -235,6 +240,7 @@ type fakeRunner struct {
 	gone          bool
 	runtime       json.RawMessage
 	failCreate    bool
+	capacity      bool
 	failTerminate bool
 }
 
@@ -252,6 +258,9 @@ func (f *fakeRunner) CreateSession(_ context.Context, req RunnerCreateRequest) (
 	defer f.mu.Unlock()
 	if f.failCreate {
 		return nil, errors.New("runner create refused")
+	}
+	if f.capacity {
+		return nil, &RunnerCapacityError{BackoffSeconds: 17}
 	}
 	f.created++
 	rt := f.runtime
@@ -433,6 +442,58 @@ func TestOpenHappyPath(t *testing.T) {
 	}
 	if rec.WorkID == "" || rec.RunnerSessionID != "rns_1" {
 		t.Fatalf("binding incomplete: %+v", rec)
+	}
+}
+
+func TestOpenCapacityRefusalPersistsZeroUseAndRecoversSettlement(t *testing.T) {
+	h := newHarness(t)
+	h.runner.capacity = true
+	h.pay.failSettles = 1 // fail the inline close; recovery must finish it
+	req := OpenRequest{
+		RequestID: "req-capacity", GatewaySessionID: "gws-capacity",
+		SessionParams:         json.RawMessage(`{"room_hint":"full"}`),
+		AuthorizationBytes:    h.authorization(t, "auth-capacity", "req-capacity", "gws-capacity", 100),
+		InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "cap-capacity",
+	}
+	_, err := h.engine.Open(context.Background(), req)
+	var capacity *CapacityError
+	if !errors.As(err, &capacity) || capacity.BackoffSeconds != 17 {
+		t.Fatalf("open error = %v; want typed capacity refusal with backoff", err)
+	}
+	rec, err := h.store.Get(capacity.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.State != sessionstore.StateWindingDown || rec.CloseReason != ReasonCapacityExhausted ||
+		rec.ClaimedTotal != 0 || rec.DebitedTotal != 0 || !rec.RunnerTerminated || rec.PaymentClosed {
+		t.Fatalf("durable refusal before recovery = %+v", rec)
+	}
+	if _, err := h.store.Reservation(req.RequestID); !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("open reservation remains after durable conversion: %v", err)
+	}
+
+	// The normal restart path retries the recorded payment obligation and
+	// reaches one terminal zero-use record without asking the runner again.
+	h.engine.Recover(context.Background())
+	rec, err = h.store.Get(capacity.SessionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !rec.Terminal() || rec.State != sessionstore.StateFailed || !rec.PaymentClosed ||
+		rec.CloseReason != ReasonCapacityExhausted || rec.DebitedTotal != 0 {
+		t.Fatalf("recovered refusal = %+v", rec)
+	}
+	if len(h.release) != 1 || h.release[0] != "cap-capacity" {
+		t.Fatalf("capacity releases = %v; want exactly one", h.release)
+	}
+	_, err = h.engine.Open(context.Background(), req)
+	if !errors.As(err, &capacity) || h.pay.openCalls != 1 || h.runner.created != 0 {
+		t.Fatalf("replay = %v admissions=%d creates=%d", err, h.pay.openCalls, h.runner.created)
+	}
+	set := h.engine.SettlementFor(rec, h.spec)
+	if set.GetState() != "closed" || set.GetActualUnits() != 0 || set.GetDebitedUnits() != 0 ||
+		set.GetBreakdown()["termination_reason"] != ReasonCapacityExhausted {
+		t.Fatalf("settlement = %+v", set)
 	}
 }
 

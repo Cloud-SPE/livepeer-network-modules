@@ -248,9 +248,10 @@ type Capability struct {
 	// for most capabilities; see Estimator. Typed rather than carried in
 	// extra_json because a consumer acts on it, and an operator-declared
 	// key of the same name could otherwise shadow it.
-	WorkUnitEstimator *Estimator `protobuf:"bytes,5,opt,name=work_unit_estimator,json=workUnitEstimator,proto3" json:"work_unit_estimator,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	WorkUnitEstimator  *Estimator `protobuf:"bytes,5,opt,name=work_unit_estimator,json=workUnitEstimator,proto3" json:"work_unit_estimator,omitempty"`
+	SettlementDomainId string     `protobuf:"bytes,6,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *Capability) Reset() {
@@ -316,6 +317,13 @@ func (x *Capability) GetWorkUnitEstimator() *Estimator {
 		return x.WorkUnitEstimator
 	}
 	return nil
+}
+
+func (x *Capability) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 // Estimator mirrors the manifest schema's #/$defs/estimator, projected
@@ -610,7 +618,7 @@ var File_livepeer_registry_v1_types_proto protoreflect.FileDescriptor
 
 const file_livepeer_registry_v1_types_proto_rawDesc = "" +
 	"\n" +
-	" livepeer/registry/v1/types.proto\x12\x14livepeer.registry.v1\"\xeb\x01\n" +
+	" livepeer/registry/v1/types.proto\x12\x14livepeer.registry.v1\"\x9d\x02\n" +
 	"\n" +
 	"Capability\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x1b\n" +
@@ -618,7 +626,8 @@ const file_livepeer_registry_v1_types_proto_rawDesc = "" +
 	"\tofferings\x18\x03 \x03(\v2\x1e.livepeer.registry.v1.OfferingR\tofferings\x12\x1d\n" +
 	"\n" +
 	"extra_json\x18\x04 \x01(\fR\textraJson\x12O\n" +
-	"\x13work_unit_estimator\x18\x05 \x01(\v2\x1f.livepeer.registry.v1.EstimatorR\x11workUnitEstimator\"\x8b\x01\n" +
+	"\x13work_unit_estimator\x18\x05 \x01(\v2\x1f.livepeer.registry.v1.EstimatorR\x11workUnitEstimator\x120\n" +
+	"\x14settlement_domain_id\x18\x06 \x01(\tR\x12settlementDomainId\"\x8b\x01\n" +
 	"\tEstimator\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\brounding\x18\x02 \x01(\tR\brounding\x12\x1c\n" +

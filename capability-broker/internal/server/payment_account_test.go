@@ -28,7 +28,7 @@ func (f *fundingAccountClient) FundWholesaleAccount(_ context.Context, wire []by
 	f.fundCalls.Add(1)
 	f.wantWire = append([]byte(nil), wire...)
 	return &payment.FundWholesaleAccountResult{
-		Account: &payment.WholesaleAccount{
+		Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Payer:     bytesOf(0xab, 20),
 			Payee:     bytesOf(0xcd, 20),
 			Available: big.NewInt(37),
@@ -109,4 +109,8 @@ func bytesOf(b byte, n int) []byte {
 		out[i] = b
 	}
 	return out
+}
+
+func (f *fundingAccountClient) SettlementDomain(context.Context) (string, error) {
+	return payment.MockSettlementDomainID, nil
 }

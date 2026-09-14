@@ -20,6 +20,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"hash/fnv"
 	"log/slog"
 	"math/big"
@@ -147,7 +148,11 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 	if strings.TrimSpace(req.GetAuthorizationId()) == "" || strings.TrimSpace(req.GetRequestId()) == "" {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "authorization_id and request_id are required")
 	}
-	if strings.TrimSpace(req.GetBrokerUri()) == "" {
+	if !store.ValidSettlementDomainID(req.GetSettlementDomainId()) {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "canonical settlement_domain_id is required")
+	}
+	brokerURI, uriErr := identity.BrokerURI(req.GetBrokerUri())
+	if uriErr != nil {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "broker_uri is required")
 	}
 	if req.GetProtocol() != "paid-job/v1" && req.GetProtocol() != "paid-session/v1" {
@@ -208,7 +213,7 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 		return nil, grpcstatus.Error(codes.InvalidArgument, "a positive revision requires predecessor_authorization_id")
 	}
 	payload := &pb.SpendAuthorizationPayload{
-		Domain: spendauth.Domain, Payer: append([]byte(nil), s.keystore.Address()...),
+		SettlementDomainId: req.GetSettlementDomainId(), Domain: spendauth.Domain, Payer: append([]byte(nil), s.keystore.Address()...),
 		Payee: append([]byte(nil), req.GetPayee()...), AuthorizationId: req.GetAuthorizationId(),
 		RequestId: req.GetRequestId(), SessionId: req.GetSessionId(), Protocol: req.GetProtocol(),
 		Capability: accepted.CapabilityName, Offering: accepted.Offering,
@@ -218,7 +223,7 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 		RequestDigest:   append([]byte(nil), req.GetRequestDigest()...),
 		CallerPublicKey: append([]byte(nil), req.GetCallerPublicKey()...), Revision: req.GetRevision(),
 		PredecessorAuthorizationId: req.GetPredecessorAuthorizationId(),
-		BrokerUri:                  strings.TrimRight(strings.TrimSpace(req.GetBrokerUri()), "/"),
+		BrokerUri:                  brokerURI,
 		ChainId:                    req.GetChainId(), Denomination: req.GetDenomination(),
 	}
 	if s.store == nil {
@@ -229,7 +234,7 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 		return nil, grpcstatus.Errorf(codes.Internal, "authorization fingerprint: %v", err)
 	}
 	fingerprint := sha256.Sum256(payloadWire)
-	storeID := "authorization/" + payload.GetAuthorizationId()
+	storeID := fmt.Sprintf("authorization/v2/%d/%x/%s/%s/%s", payload.GetChainId(), payload.GetPayee(), payload.GetSettlementDomainId(), payload.GetDenomination(), payload.GetAuthorizationId())
 	prior, err := s.store.MintReserve(s.keystore.Address(), storeID, fingerprint[:])
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.AlreadyExists, "authorization idempotency: %v", err)
@@ -322,6 +327,9 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.InvalidArgument, "account_funding: %v", err)
 	}
+	if !identity.ValidDomain(req.GetAccountFunding().GetSettlementDomainId()) {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "account_funding.settlement_domain_id is required")
+	}
 	funding.fundedValueWei = shortfall
 	if shortfall.Sign() == 0 {
 		out := &pb.CreatePaymentResponse{
@@ -387,7 +395,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	// request changes underneath them. Unrelated routes remain concurrent.
 	unlockSession := s.lockSession(sessionKey(req.GetRecipient(),
 		acceptedPrice.CapabilityName, acceptedPrice.Offering,
-		req.GetTicketParamsBaseUrl()))
+		req.GetTicketParamsBaseUrl(), req.GetAccountFunding().GetSettlementDomainId()))
 	defer unlockSession()
 
 	session, err := s.findOrOpenSession(
@@ -398,10 +406,13 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		acceptedPrice.Offering,
 		req.GetTicketParamsBaseUrl(),
 		acceptedPrice.toPriceInfo(funding.estimatedUnits),
-		req.GetAcceptedPrice().GetQuoteRef(),
+		req.GetAcceptedPrice().GetQuoteRef(), req.GetAccountFunding().GetSettlementDomainId(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("ticket params: %w", err)
+	}
+	if session.ticketParams.SettlementDomainID != req.GetAccountFunding().GetSettlementDomainId() {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "ticket parameters belong to a different settlement domain")
 	}
 	if len(session.ticketParams.Seed) == 0 {
 		return nil, errors.New("ticket params: seed is empty")
@@ -815,9 +826,12 @@ func (s *Service) rotateExhaustedSession(ctx context.Context, old *senderSession
 
 	next, err := s.findOrOpenSession(ctx, recipient, funding.fundedValueWei,
 		old.capability, old.offering, baseURL,
-		acceptedPrice.toPriceInfo(funding.estimatedUnits), acceptedQuote)
+		acceptedPrice.toPriceInfo(funding.estimatedUnits), acceptedQuote, old.ticketParams.SettlementDomainID)
 	if err != nil {
 		return nil, fmt.Errorf("rotating exhausted ticket session %s: %w", old.workID, err)
+	}
+	if next.ticketParams.SettlementDomainID != old.ticketParams.SettlementDomainID {
+		return nil, fmt.Errorf("settlement domain changed during ticket rotation")
 	}
 	if next.workID == old.workID {
 		// The payee re-quoted the SAME identity, which means it does not
@@ -868,6 +882,9 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 		s.metrics.IncTicketParamsFetch(metrics.ResultError)
 		return nil, fmt.Errorf("re-quoting ticket params for %s wei expected value: %w", want, err)
 	}
+	if retry.SettlementDomainID != current.SettlementDomainID {
+		return nil, fmt.Errorf("settlement domain changed during ticket re-quote")
+	}
 	s.metrics.IncTicketParamsFetch(metrics.ResultOK)
 
 	if got := types.CreditedEV(retry.FaceValue, retry.WinProb); got.Cmp(want) != 0 {
@@ -894,8 +911,8 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 	return retry, nil
 }
 
-func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef) (*senderSession, error) {
-	key := sessionKey(recipient, capability, offering, ticketParamsBaseURL)
+func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef, expectedDomain ...string) (*senderSession, error) {
+	key := sessionKey(recipient, capability, offering, ticketParamsBaseURL, expectedDomain...)
 
 	s.mu.Lock()
 	if sess, ok := s.sessions[key]; ok {
@@ -1262,8 +1279,12 @@ func evToBytes(ev *big.Rat) []byte {
 // Face value and probability are mutable sizing state, not identity. Each
 // replenishment re-quotes target EV while the payee keeps recipient rand and a
 // redeemable winning face stable where possible.
-func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string) string {
-	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL)
+func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string, domain ...string) string {
+	scope := ""
+	if len(domain) > 0 {
+		scope = domain[0]
+	}
+	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL) + "|" + scope
 }
 
 func cloneTicketParams(in *types.TicketParams) *types.TicketParams {

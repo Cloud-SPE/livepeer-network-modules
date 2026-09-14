@@ -10,7 +10,7 @@ func TestBrokerOfferings_Validate_HappyPath(t *testing.T) {
 	b := &BrokerOfferings{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xABCDEF1234567890ABCDEF1234567890ABCDEF12",
-		Capabilities: []BrokerOffering{{
+		Capabilities: []BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "cap",
 			OfferingID:      "off",
 			Protocol:        "paid-job/v1",
@@ -39,7 +39,7 @@ func TestBrokerOfferings_Validate_RejectsBadPrice(t *testing.T) {
 	b := &BrokerOfferings{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Capabilities: []BrokerOffering{{
+		Capabilities: []BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "cap",
 			OfferingID:      "off",
 			Protocol:        "paid-job/v1",
@@ -57,7 +57,7 @@ func TestBrokerOfferings_Validate_RejectsMalformedProtocolTag(t *testing.T) {
 	b := &BrokerOfferings{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Capabilities: []BrokerOffering{{
+		Capabilities: []BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "cap",
 			OfferingID:      "off",
 			Protocol:        "http-stream@v1",
@@ -98,7 +98,7 @@ func TestBrokerOfferings_Validate_ProtocolAxesPairing(t *testing.T) {
 			b := &BrokerOfferings{
 				SpecVersion:    version.VERSION,
 				OrchEthAddress: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-				Capabilities: []BrokerOffering{{
+				Capabilities: []BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					CapabilityID:    "cap",
 					OfferingID:      "off",
 					Protocol:        tc.protocol,
@@ -135,7 +135,7 @@ func TestParseSignedManifest_RejectsTrailingData(t *testing.T) {
 
 func TestBrokerOfferings_Validate_SpecVersion(t *testing.T) {
 	const addr = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	cap := BrokerOffering{
+	cap := BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
 		Job:      &JobAxes{"transports": []any{"unary"}},
 		WorkUnit: WorkUnit{Name: "tokens"}, PricePerUnitWei: "1",

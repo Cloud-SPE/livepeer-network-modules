@@ -50,6 +50,7 @@ message Capability {
   // extra_json because a consumer acts on it, and an operator-declared
   // key of the same name could otherwise shadow it.
   Estimator work_unit_estimator = 5;
+  string settlement_domain_id = 6;
 }
 // Estimator mirrors the manifest schema's #/$defs/estimator, projected
 // from the signed manifest onto the route.

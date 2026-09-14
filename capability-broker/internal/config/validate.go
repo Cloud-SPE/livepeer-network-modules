@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"net/url"
 	"regexp"
 	"strings"
@@ -38,6 +39,13 @@ var vtuberTaskByCapabilityID = map[string]string{
 // Validate runs cross-field validation against a parsed Config. Defaults are
 // filled in for omitted-but-optional fields (e.g., Listen addresses).
 func (c *Config) Validate() error {
+	if c.ExternalBaseURL != "" {
+		u, err := identity.BrokerURI(c.ExternalBaseURL)
+		if err != nil {
+			return fmt.Errorf("external_base_url: %w", err)
+		}
+		c.ExternalBaseURL = u
+	}
 	if !ethAddressRE.MatchString(c.Identity.OrchEthAddress) {
 		return fmt.Errorf("identity.orch_eth_address: must be 0x-prefixed 40-hex (got %q)", c.Identity.OrchEthAddress)
 	}

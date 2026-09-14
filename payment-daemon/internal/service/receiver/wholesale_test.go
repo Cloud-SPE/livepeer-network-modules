@@ -20,7 +20,7 @@ func signedAuthorization(t *testing.T, ks *inmemory.KeyStore, id string, payee [
 	t.Helper()
 	now := time.Now().UTC()
 	requestDigest := sha256.Sum256([]byte("request body"))
-	payload := &pb.SpendAuthorizationPayload{
+	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Domain: spendauth.Domain, Payer: ks.Address(), Payee: payee,
 		ChainId: 42161, Denomination: "wei",
 		AuthorizationId: id, RequestId: "request-" + id, BrokerUri: "https://broker.example",
@@ -98,14 +98,14 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	if err != nil || !admitReplay.GetReplayed() || len(admitReplay.GetCreditedValueWei().GetValue()) != 0 {
 		t.Fatalf("admission replay=%+v err=%v", admitReplay, err)
 	}
-	advanced, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{
+	advanced, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2,
 		TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1,
 	})
 	if err != nil || new(big.Int).SetBytes(advanced.GetBilledDeltaWei().GetValue()).Int64() != 20 {
 		t.Fatalf("advanced=%+v err=%v", advanced, err)
 	}
-	advanceReplay, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{
+	advanceReplay, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2,
 		TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1,
 		PaymentBytes: []byte("must-not-be-processed"),
@@ -113,14 +113,14 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	if err != nil || !advanceReplay.GetReplayed() || len(advanceReplay.GetCreditedValueWei().GetValue()) != 0 {
 		t.Fatalf("advance replay=%+v err=%v", advanceReplay, err)
 	}
-	settled, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
+	settled, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if new(big.Int).SetBytes(settled.GetBilledValueWei().GetValue()).Int64() != 40 || new(big.Int).SetBytes(settled.GetReleasedValueWei().GetValue()).Int64() != 60 {
 		t.Fatalf("settled=%+v", settled)
 	}
-	replay, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
+	replay, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
 	if err != nil || !replay.GetReplayed() {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}

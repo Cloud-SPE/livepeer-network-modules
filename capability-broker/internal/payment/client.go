@@ -91,6 +91,7 @@ type AdvanceAuthorizationResult struct {
 }
 
 type WholesaleAccount struct {
+	SettlementDomainID                     string
 	Payer, Payee                           []byte
 	Credited, Reserved, Debited, Available *big.Int
 	Version                                uint64
@@ -164,13 +165,14 @@ type GetTicketParamsRequest struct {
 
 // TicketParams is the broker-local shape of payee-issued ticket params.
 type TicketParams struct {
-	Recipient         []byte
-	FaceValue         *big.Int
-	WinProb           *big.Int
-	RecipientRandHash []byte
-	Seed              []byte
-	ExpirationBlock   *big.Int
-	ExpirationParams  *TicketExpirationParams
+	SettlementDomainID string
+	Recipient          []byte
+	FaceValue          *big.Int
+	WinProb            *big.Int
+	RecipientRandHash  []byte
+	Seed               []byte
+	ExpirationBlock    *big.Int
+	ExpirationParams   *TicketExpirationParams
 	// HighestSeenNonce / HasSeenNonces are relayed verbatim from the
 	// payee so a payer whose durable nonce counter was lost can resume
 	// above what the payee has already recorded. The broker has no
@@ -236,4 +238,9 @@ type SufficientBalanceRequest struct {
 type SufficientBalanceResult struct {
 	Sufficient bool
 	Balance    *big.Int
+}
+
+// DomainClient discovers the immutable financial identity from the receiver.
+type DomainClient interface {
+	SettlementDomain(context.Context) (string, error)
 }

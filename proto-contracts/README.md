@@ -33,3 +33,11 @@ does not rely on a local `replace ../proto-contracts`.
 - `make test` — run module tests
 - `make lint` — vet + custom lints
 - `make coverage-check` — enforce per-package coverage floor
+
+## 2026-09-14: settlement-domain route binding
+
+`SelectedRoute.settlement_domain_id` (field 17) and `Capability.settlement_domain_id`
+(field 6) relay the immutable ledger ID from the cold-signed manifest. Paid clients
+must require it and scope their accounts accordingly. See
+[the cross-component contract](../docs/design-docs/settlement-domain-identity.md).
+Payments protobuf additions remain owned by `livepeer-network-protocol/proto/`.

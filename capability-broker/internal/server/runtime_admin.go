@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"log"
 	"net/http"
 	"strings"
@@ -40,6 +41,16 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "runtime config is not loaded", http.StatusInternalServerError)
 		return
 	}
+	domainClient, ok := s.payment.(payment.DomainClient)
+	if !ok {
+		http.Error(w, "payment ledger identity unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	domainID, err := domainClient.SettlementDomain(r.Context())
+	if err != nil || domainID == "" {
+		http.Error(w, "payment ledger identity unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	payload := registry.BuildOfferings(cfg)
 	if s.offersEngine != nil {
 		payload.OffersRevision = s.offersEngine.Revision()
@@ -48,6 +59,7 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		// runner churn (plan 0043 §3.4).
 		for _, adv := range s.offersEngine.AdvertisedOffers() {
 			if t := registry.OfferTuple(adv.Offer, offerShape(adv.Shape)); t != nil {
+				t.SettlementDomainID = domainID
 				payload.Capabilities = append(payload.Capabilities, *t)
 			}
 		}

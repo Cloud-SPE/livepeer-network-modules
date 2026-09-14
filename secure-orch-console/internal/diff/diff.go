@@ -134,7 +134,10 @@ func diff(before, after map[string]any) *Result {
 		if keys[i].cap != keys[j].cap {
 			return keys[i].cap < keys[j].cap
 		}
-		return keys[i].off < keys[j].off
+		if keys[i].off != keys[j].off {
+			return keys[i].off < keys[j].off
+		}
+		return keys[i].domain < keys[j].domain
 	})
 	for _, k := range keys {
 		b, hasB := beforeMap[k]
@@ -155,6 +158,7 @@ func diff(before, after map[string]any) *Result {
 
 type tupleKey struct {
 	cap, off string
+	domain   string
 }
 
 func index(m map[string]any) map[tupleKey]map[string]any {
@@ -176,7 +180,8 @@ func index(m map[string]any) map[tupleKey]map[string]any {
 		if cap == "" {
 			continue
 		}
-		out[tupleKey{cap: cap, off: off}] = c
+		domain, _ := c["settlement_domain_id"].(string)
+		out[tupleKey{cap: cap, off: off, domain: domain}] = c
 	}
 	return out
 }

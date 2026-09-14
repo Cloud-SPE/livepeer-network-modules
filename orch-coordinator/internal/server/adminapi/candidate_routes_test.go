@@ -233,7 +233,7 @@ func primedScrapeService(t *testing.T) *scrape.Service {
 	fc.Set("http://x:1", &types.BrokerOfferings{
 		SpecVersion:    version.VERSION,
 		OrchEthAddress: addr,
-		Capabilities: []types.BrokerOffering{{
+		Capabilities: []types.BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "cap",
 			OfferingID:      "off",
 			Protocol:        "paid-job/v1",

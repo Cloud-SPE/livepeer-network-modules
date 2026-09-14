@@ -29,13 +29,14 @@ var ErrTicketParamsExpired = errors.New("ticket params expired")
 // receiver convert to/from the wire form at the boundary; the rest of
 // the code path uses this form so big-int math is clean.
 type TicketParams struct {
-	Recipient         []byte // 20 bytes
-	FaceValue         *big.Int
-	WinProb           *big.Int
-	RecipientRandHash []byte // 32 bytes
-	Seed              []byte
-	ExpirationBlock   *big.Int
-	ExpirationParams  *TicketExpirationParams
+	SettlementDomainID string
+	Recipient          []byte // 20 bytes
+	FaceValue          *big.Int
+	WinProb            *big.Int
+	RecipientRandHash  []byte // 32 bytes
+	Seed               []byte
+	ExpirationBlock    *big.Int
+	ExpirationParams   *TicketExpirationParams
 	// HighestSeenNonce is the largest sender nonce the PAYEE has already
 	// recorded against this rand, when it reported one. A sender resumes
 	// above it, so a lost local counter heals on the next quote instead

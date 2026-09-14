@@ -119,7 +119,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 
 	mintReq := devModeCreateRequest(recipient, "account-float-1", baseURL)
 	mintReq.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(100_000).Bytes()}
-	mintReq.AccountFunding = &pb.AccountFundingIntent{
+	mintReq.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100_000).Bytes()},
 		ObservedAvailableWei: &pb.BigUInt{},
 	}
@@ -133,11 +133,11 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{WorkId: minted.GetWorkId(), Capability: "openai:chat-completions", Offering: "model-a", PricePerWorkUnitWei: big.NewInt(1000).Bytes(), PerUnits: 1, WorkUnit: "tokens"}); err != nil {
 		t.Fatalf("price funding generation: %v", err)
 	}
-	funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+	funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
 	if err != nil || new(big.Int).SetBytes(funded.GetCreditedValueWei().GetValue()).Sign() <= 0 {
 		t.Fatalf("fund stable account: result=%+v err=%v", funded, err)
 	}
-	fundingReplay, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+	fundingReplay, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
 	if err != nil || !fundingReplay.GetReplayed() || new(big.Int).SetBytes(fundingReplay.GetCreditedValueWei().GetValue()).Sign() != 0 {
 		t.Fatalf("funding replay=%+v err=%v", fundingReplay, err)
 	}
@@ -146,7 +146,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 		t.Helper()
 		now := time.Now().UTC()
 		bodyDigest := sha256.Sum256([]byte("exact-job-body"))
-		res, err := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{
+		res, err := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Payee: recipient, AuthorizationId: id, RequestId: "request-" + id,
 			Protocol: "paid-job/v1", AcceptedPrice: proto.Clone(mintReq.GetAcceptedPrice()).(*pb.AcceptedPrice),
 			MaxDebitWei:   &pb.BigUInt{Value: new(big.Int).Mul(big.NewInt(1000), new(big.Int).SetUint64(maxUnits)).Bytes()},
@@ -168,7 +168,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 		t.Fatal("funding-free admission reported new ticket value")
 	}
 	credited := new(big.Int).SetBytes(first.GetAccount().GetCreditedValueWei().GetValue())
-	if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: first.GetAccount().GetPayer(), AuthorizationId: "job-one", ActualUnits: 1, SettlementSeq: 1}); err != nil {
+	if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: first.GetAccount().GetPayer(), AuthorizationId: "job-one", ActualUnits: 1, SettlementSeq: 1}); err != nil {
 		t.Fatalf("settle first authorization: %v", err)
 	}
 
@@ -179,7 +179,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 	if new(big.Int).SetBytes(second.GetCreditedValueWei().GetValue()).Sign() != 0 {
 		t.Fatal("funding-free admission reported new ticket value")
 	}
-	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: second.GetAccount().GetPayer(), AuthorizationId: "job-two", ActualUnits: 1, SettlementSeq: 1})
+	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: second.GetAccount().GetPayer(), AuthorizationId: "job-two", ActualUnits: 1, SettlementSeq: 1})
 	if err != nil {
 		t.Fatalf("settle second authorization: %v", err)
 	}
@@ -322,9 +322,9 @@ func devModeSenderStandOn(t *testing.T, payeeFor func() pb.PayeeDaemonClient, re
 		out := map[string]any{
 			// Relayed the way the real broker relays them: a payer that
 			// lost its nonce counter resumes above the payee's mark.
-			"highest_seen_nonce": resp.GetHighestSeenNonce(),
-			"has_seen_nonces":    resp.GetHasSeenNonces(),
-			"ticket_params": map[string]any{
+			"highest_seen_nonce":   resp.GetHighestSeenNonce(),
+			"has_seen_nonces":      resp.GetHasSeenNonces(),
+			"settlement_domain_id": receiverDomain(t, payeeFor()), "ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
 				"win_prob":            new(big.Int).SetBytes(resp.GetTicketParams().GetWinProb()).String(),
@@ -396,7 +396,7 @@ func devModeCreateRequest(recipient []byte, mintID, baseURL string) *pb.CreatePa
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
-		AccountFunding: &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
+		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	}
 }
 
@@ -480,14 +480,18 @@ func defaultConfigReceiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonC
 // defaultConfigReceiverStandWithStore also hands back the payee's store,
 // so a test can arrange payee-side conditions — such as a nonce ledger
 // already at its cap — that the payer cannot produce on its own.
-func defaultConfigReceiverStandWithStore(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store.Store, func()) {
+func defaultConfigReceiverStandWithStore(t *testing.T, recipient []byte, domainOverride ...string) (pb.PayeeDaemonClient, *store.Store, func()) {
 	t.Helper()
 	dir := t.TempDir()
 	st, err := store.Open(filepath.Join(dir, "rx.db"))
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{Recipient: recipient}, nil)
+	domain := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	if len(domainOverride) > 0 {
+		domain = domainOverride[0]
+	}
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: domain, Recipient: recipient}, nil)
 
 	sockPath := filepath.Join(dir, "rx.sock")
 	lis, err := net.Listen("unix", sockPath)
@@ -988,7 +992,7 @@ func receiverStandAt(t *testing.T, recipient []byte, dbPath string) (pb.PayeeDae
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{Recipient: recipient}, nil)
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: recipient}, nil)
 
 	sockPath := filepath.Join(t.TempDir(), "rx.sock")
 	lis, err := net.Listen("unix", sockPath)
@@ -1374,4 +1378,13 @@ func TestConcurrentQuotesAtAnExhaustedBudgetKeepOneSuccessor(t *testing.T) {
 				"live identity")
 		}
 	}
+}
+
+func receiverDomain(t *testing.T, payee pb.PayeeDaemonClient) string {
+	t.Helper()
+	h, err := payee.Health(context.Background(), &pb.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return h.GetSettlementDomainId()
 }

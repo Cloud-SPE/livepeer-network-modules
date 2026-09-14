@@ -60,7 +60,7 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 		return fmt.Errorf("provider authorization: %w", err)
 	}
 	payerAddress := firstAuth.GetPayer()
-	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return fmt.Errorf("account before: %w", err)
 	}
@@ -90,7 +90,7 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	fmt.Printf("  provider authorized max=%d units, served=%d, minted shortfall=%s wei\n",
 		cfg.maxAuthUnits, firstUnits, wantFirst)
 
-	afterFirst, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	afterFirst, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return fmt.Errorf("account after provider: %w", err)
 	}
@@ -151,7 +151,7 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	// A transport retry carries the same workload-bound authorization and
 	// payment. It must replay the broker result before either is processed
 	// again, so the account version and totals remain unchanged.
-	beforeReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	beforeReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return fmt.Errorf("account before replay: %w", err)
 	}
@@ -162,7 +162,7 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	if err := assertAccountingReplay(second, replay); err != nil {
 		return fmt.Errorf("delegated replay: %w", err)
 	}
-	afterReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	afterReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return fmt.Errorf("account after replay: %w", err)
 	}
@@ -198,7 +198,7 @@ func probeWholesale(ctx context.Context, cfg config, payer pb.PayerDaemonClient,
 	if err != nil {
 		return fmt.Errorf("delegated session: %w", err)
 	}
-	final, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	final, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return fmt.Errorf("final account: %w", err)
 	}
@@ -269,7 +269,7 @@ func wholesaleSessionConfig(cfg config) config {
 }
 
 func ensureWholesaleFloat(ctx context.Context, cfg config, payer pb.PayerDaemonClient, payee pb.PayeeDaemonClient, payerAddress []byte, target *big.Int, tag string) (*big.Int, error) {
-	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -282,7 +282,7 @@ func ensureWholesaleFloat(ctx context.Context, cfg config, payer pb.PayerDaemonC
 		return nil, err
 	}
 	if shortfall.Sign() > 0 {
-		funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: minted.GetPaymentBytes()})
+		funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: cfg.settlementDomainID, PaymentBytes: minted.GetPaymentBytes()})
 		if err != nil {
 			return nil, err
 		}
@@ -298,7 +298,7 @@ func probeWholesaleConcurrency(ctx context.Context, cfg config, payer pb.PayerDa
 	if err != nil {
 		return nil, fmt.Errorf("concurrency float: %w", err)
 	}
-	baseline, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	baseline, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -348,7 +348,7 @@ func probeWholesaleConcurrency(ctx context.Context, cfg config, payer pb.PayerDa
 	if uint64(len(winners)) != affordable {
 		return nil, fmt.Errorf("concurrent admissions=%d; balance %s affords %d reservations of %s", len(winners), baseline.Available.big(), affordable, maxDebit)
 	}
-	during, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	during, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -360,7 +360,7 @@ func probeWholesaleConcurrency(ctx context.Context, cfg config, payer pb.PayerDa
 		return nil, fmt.Errorf("concurrent available delta=%s; want %s", got, wantReserved)
 	}
 	for _, i := range winners {
-		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
+		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
 			return nil, fmt.Errorf("release admitted reservation %d: %w", i, err)
 		}
 	}
@@ -368,11 +368,11 @@ func probeWholesaleConcurrency(ctx context.Context, cfg config, payer pb.PayerDa
 		if _, err := payee.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: attempts[i].auth}); err != nil {
 			return nil, fmt.Errorf("admit refused authorization %d after release: %w", i, err)
 		}
-		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
+		if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: attempts[i].id, ActualUnits: 0, SettlementSeq: 1}); err != nil {
 			return nil, fmt.Errorf("release retried reservation %d: %w", i, err)
 		}
 	}
-	after, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	after, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -404,7 +404,7 @@ func probeWholesaleSession(ctx context.Context, cfg config, payer pb.PayerDaemon
 	if err != nil {
 		return nil, err
 	}
-	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	before, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -435,7 +435,7 @@ func probeWholesaleSession(ctx context.Context, cfg config, payer pb.PayerDaemon
 	if sessionID == "" || credential == "" {
 		return nil, fmt.Errorf("open response missing session identity: %s", open.body)
 	}
-	afterOpen, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	afterOpen, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -453,7 +453,7 @@ func probeWholesaleSession(ctx context.Context, cfg config, payer pb.PayerDaemon
 	if eventResult.status != http.StatusOK {
 		return nil, fmt.Errorf("usage callback status %d body=%s", eventResult.status, eventResult.body)
 	}
-	afterUsage, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	afterUsage, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -483,14 +483,14 @@ func probeWholesaleSession(ctx context.Context, cfg config, payer pb.PayerDaemon
 	if ended.status != http.StatusOK {
 		return nil, fmt.Errorf("end status=%d body=%s", ended.status, ended.body)
 	}
-	authState, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: payerAddress, AuthorizationId: gatewayID})
+	authState, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: gatewayID})
 	if err != nil {
 		return nil, err
 	}
 	if authState.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED || authState.GetActualUnits() != actualUnits {
 		return nil, fmt.Errorf("authorization terminal state=%s units=%d", authState.GetState(), authState.GetActualUnits())
 	}
-	afterEnd, err := queryWholesaleAccount(cfg.brokerURL, payerAddress)
+	afterEnd, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
 	if err != nil {
 		return nil, err
 	}
@@ -521,7 +521,7 @@ func acceptedPrice(cfg config) *pb.AcceptedPrice {
 func createJobAuthorization(ctx context.Context, cfg config, payer pb.PayerDaemonClient, authorizationID, requestID string, body []byte, maxDebit *big.Int, callerPublicKey []byte) (*pb.CreateSpendAuthorizationResponse, error) {
 	digest := sha256.Sum256(body)
 	now := time.Now().UTC()
-	return payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{
+	return payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID,
 		Payee: cfg.recipient, AuthorizationId: authorizationID, RequestId: requestID,
 		Protocol: "paid-job/v1", AcceptedPrice: acceptedPrice(cfg), MaxDebitWei: &pb.BigUInt{Value: maxDebit.Bytes()},
 		MaxTotalUnits: cfg.maxAuthUnits, NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano),
@@ -534,7 +534,7 @@ func createJobAuthorization(ctx context.Context, cfg config, payer pb.PayerDaemo
 func createSessionAuthorization(ctx context.Context, cfg config, payer pb.PayerDaemonClient, authorizationID, requestID string, body []byte, maxDebit *big.Int, callerPublicKey []byte) (*pb.CreateSpendAuthorizationResponse, error) {
 	digest := sha256.Sum256(body)
 	now := time.Now().UTC()
-	return payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{
+	return payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID,
 		Payee: cfg.recipient, AuthorizationId: authorizationID, RequestId: requestID,
 		SessionId: authorizationID, Protocol: "paid-session/v1", AcceptedPrice: acceptedPrice(cfg),
 		MaxDebitWei: &pb.BigUInt{Value: maxDebit.Bytes()}, MaxTotalUnits: cfg.maxAuthUnits,
@@ -555,7 +555,7 @@ func mintAccountShortfallWithID(ctx context.Context, cfg config, payer pb.PayerD
 		AcceptedPrice: acceptedPrice(cfg),
 		Funding:       &pb.FundingIntent{FundedValueWei: &pb.BigUInt{Value: target.Bytes()}, EstimatedUnits: cfg.maxAuthUnits},
 		MintRequestId: mintRequestID,
-		AccountFunding: &pb.AccountFundingIntent{
+		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: cfg.settlementDomainID,
 			TargetAvailableWei:   &pb.BigUInt{Value: target.Bytes()},
 			ObservedAvailableWei: &pb.BigUInt{Value: observed.Bytes()},
 		},
@@ -628,16 +628,17 @@ func (d decimal) big() *big.Int {
 }
 
 type wholesaleAccount struct {
-	Payer        string  `json:"payer"`
-	Payee        string  `json:"payee"`
-	ChainID      uint64  `json:"chain_id"`
-	Denomination string  `json:"denomination"`
-	Credited     decimal `json:"credited_value_wei"`
-	Reserved     decimal `json:"reserved_value_wei"`
-	Debited      decimal `json:"debited_value_wei"`
-	Available    decimal `json:"available_value_wei"`
-	Version      uint64  `json:"version"`
-	ObservedAt   string  `json:"observed_at"`
+	SettlementDomainID string  `json:"settlement_domain_id"`
+	Payer              string  `json:"payer"`
+	Payee              string  `json:"payee"`
+	ChainID            uint64  `json:"chain_id"`
+	Denomination       string  `json:"denomination"`
+	Credited           decimal `json:"credited_value_wei"`
+	Reserved           decimal `json:"reserved_value_wei"`
+	Debited            decimal `json:"debited_value_wei"`
+	Available          decimal `json:"available_value_wei"`
+	Version            uint64  `json:"version"`
+	ObservedAt         string  `json:"observed_at"`
 }
 
 func (a wholesaleAccount) validate() error {
@@ -651,7 +652,7 @@ func (a wholesaleAccount) validate() error {
 	return nil
 }
 
-func queryWholesaleAccount(brokerURL string, payer []byte) (*wholesaleAccount, error) {
+func queryWholesaleAccount(brokerURL string, payer []byte, expectedDomain string) (*wholesaleAccount, error) {
 	body, _ := json.Marshal(map[string]string{"payer_eth_address": "0x" + hex.EncodeToString(payer)})
 	resp, err := (&http.Client{Timeout: 15 * time.Second}).Post(strings.TrimRight(brokerURL, "/")+"/v1/payment/account", "application/json", bytes.NewReader(body))
 	if err != nil {
@@ -665,6 +666,9 @@ func queryWholesaleAccount(brokerURL string, payer []byte) (*wholesaleAccount, e
 	var out wholesaleAccount
 	if err := json.Unmarshal([]byte(raw), &out); err != nil {
 		return nil, err
+	}
+	if expectedDomain == "" || out.SettlementDomainID != expectedDomain {
+		return nil, fmt.Errorf("account settlement domain differs from signed route")
 	}
 	return &out, nil
 }

@@ -773,10 +773,11 @@ func (x *ProcessPaymentRequest) GetWorkId() string {
 }
 
 type FundWholesaleAccountRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	PaymentBytes  []byte                 `protobuf:"bytes,1,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	PaymentBytes       []byte                 `protobuf:"bytes,1,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,2,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *FundWholesaleAccountRequest) Reset() {
@@ -814,6 +815,13 @@ func (x *FundWholesaleAccountRequest) GetPaymentBytes() []byte {
 		return x.PaymentBytes
 	}
 	return nil
+}
+
+func (x *FundWholesaleAccountRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 type FundWholesaleAccountResponse struct {
@@ -1052,6 +1060,7 @@ type AdvanceAuthorizationRequest struct {
 	TargetReservedValueWei *BigUInt               `protobuf:"bytes,4,opt,name=target_reserved_value_wei,json=targetReservedValueWei,proto3" json:"target_reserved_value_wei,omitempty"`
 	AdvanceSeq             uint64                 `protobuf:"varint,5,opt,name=advance_seq,json=advanceSeq,proto3" json:"advance_seq,omitempty"`
 	PaymentBytes           []byte                 `protobuf:"bytes,6,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
+	SettlementDomainId     string                 `protobuf:"bytes,7,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1126,6 +1135,13 @@ func (x *AdvanceAuthorizationRequest) GetPaymentBytes() []byte {
 		return x.PaymentBytes
 	}
 	return nil
+}
+
+func (x *AdvanceAuthorizationRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 type AdvanceAuthorizationResponse struct {
@@ -1297,13 +1313,14 @@ func (x *AdmitAuthorizationResponse) GetReplayed() bool {
 }
 
 type SettleAuthorizationRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Payer           []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
-	AuthorizationId string                 `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
-	ActualUnits     uint64                 `protobuf:"varint,3,opt,name=actual_units,json=actualUnits,proto3" json:"actual_units,omitempty"`
-	SettlementSeq   uint64                 `protobuf:"varint,4,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	AuthorizationId    string                 `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	ActualUnits        uint64                 `protobuf:"varint,3,opt,name=actual_units,json=actualUnits,proto3" json:"actual_units,omitempty"`
+	SettlementSeq      uint64                 `protobuf:"varint,4,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,5,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SettleAuthorizationRequest) Reset() {
@@ -1362,6 +1379,13 @@ func (x *SettleAuthorizationRequest) GetSettlementSeq() uint64 {
 		return x.SettlementSeq
 	}
 	return 0
+}
+
+func (x *SettleAuthorizationRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 type SettleAuthorizationResponse struct {
@@ -1441,10 +1465,11 @@ func (x *SettleAuthorizationResponse) GetReplayed() bool {
 }
 
 type GetWholesaleAccountRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Payer         []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,2,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetWholesaleAccountRequest) Reset() {
@@ -1482,6 +1507,13 @@ func (x *GetWholesaleAccountRequest) GetPayer() []byte {
 		return x.Payer
 	}
 	return nil
+}
+
+func (x *GetWholesaleAccountRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 type GetWholesaleAccountResponse struct {
@@ -1529,11 +1561,12 @@ func (x *GetWholesaleAccountResponse) GetAccount() *WholesaleAccountView {
 }
 
 type GetSpendAuthorizationRequest struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	Payer           []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
-	AuthorizationId string                 `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	AuthorizationId    string                 `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,3,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *GetSpendAuthorizationRequest) Reset() {
@@ -1576,6 +1609,13 @@ func (x *GetSpendAuthorizationRequest) GetPayer() []byte {
 func (x *GetSpendAuthorizationRequest) GetAuthorizationId() string {
 	if x != nil {
 		return x.AuthorizationId
+	}
+	return ""
+}
+
+func (x *GetSpendAuthorizationRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
 	}
 	return ""
 }
@@ -2488,9 +2528,10 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\x14OUTCOME_ALREADY_OPEN\x10\x02\"U\n" +
 	"\x15ProcessPaymentRequest\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12\x17\n" +
-	"\awork_id\x18\x02 \x01(\tR\x06workId\"B\n" +
+	"\awork_id\x18\x02 \x01(\tR\x06workId\"t\n" +
 	"\x1bFundWholesaleAccountRequest\x12#\n" +
-	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\"\xcd\x01\n" +
+	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x120\n" +
+	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\"\xcd\x01\n" +
 	"\x1cFundWholesaleAccountResponse\x12D\n" +
 	"\aaccount\x18\x01 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\x12K\n" +
 	"\x12credited_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10creditedValueWei\x12\x1a\n" +
@@ -2507,7 +2548,7 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\x19AdmitAuthorizationRequest\x12/\n" +
 	"\x13authorization_bytes\x18\x01 \x01(\fR\x12authorizationBytes\x12#\n" +
 	"\rpayment_bytes\x18\x02 \x01(\fR\fpaymentBytes\x12Q\n" +
-	"\x15reservation_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13reservationValueWei\"\xa9\x02\n" +
+	"\x15reservation_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13reservationValueWei\"\xdb\x02\n" +
 	"\x1bAdvanceAuthorizationRequest\x12\x14\n" +
 	"\x05payer\x18\x01 \x01(\fR\x05payer\x12)\n" +
 	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x12)\n" +
@@ -2515,7 +2556,8 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\x19target_reserved_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x16targetReservedValueWei\x12\x1f\n" +
 	"\vadvance_seq\x18\x05 \x01(\x04R\n" +
 	"advanceSeq\x12#\n" +
-	"\rpayment_bytes\x18\x06 \x01(\fR\fpaymentBytes\"\x86\x04\n" +
+	"\rpayment_bytes\x18\x06 \x01(\fR\fpaymentBytes\x120\n" +
+	"\x14settlement_domain_id\x18\a \x01(\tR\x12settlementDomainId\"\x86\x04\n" +
 	"\x1cAdvanceAuthorizationResponse\x12C\n" +
 	"\x05state\x18\x01 \x01(\x0e2-.livepeer.payments.v1.SpendAuthorizationStateR\x05state\x12D\n" +
 	"\aaccount\x18\x02 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\x12G\n" +
@@ -2529,25 +2571,28 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\aaccount\x18\x02 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\x12K\n" +
 	"\x12reserved_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10reservedValueWei\x12K\n" +
 	"\x12credited_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10creditedValueWei\x12\x1a\n" +
-	"\breplayed\x18\x05 \x01(\bR\breplayed\"\xa7\x01\n" +
+	"\breplayed\x18\x05 \x01(\bR\breplayed\"\xd9\x01\n" +
 	"\x1aSettleAuthorizationRequest\x12\x14\n" +
 	"\x05payer\x18\x01 \x01(\fR\x05payer\x12)\n" +
 	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x12!\n" +
 	"\factual_units\x18\x03 \x01(\x04R\vactualUnits\x12%\n" +
-	"\x0esettlement_seq\x18\x04 \x01(\x04R\rsettlementSeq\"\xda\x02\n" +
+	"\x0esettlement_seq\x18\x04 \x01(\x04R\rsettlementSeq\x120\n" +
+	"\x14settlement_domain_id\x18\x05 \x01(\tR\x12settlementDomainId\"\xda\x02\n" +
 	"\x1bSettleAuthorizationResponse\x12C\n" +
 	"\x05state\x18\x01 \x01(\x0e2-.livepeer.payments.v1.SpendAuthorizationStateR\x05state\x12D\n" +
 	"\aaccount\x18\x02 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\x12G\n" +
 	"\x10billed_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0ebilledValueWei\x12K\n" +
 	"\x12released_value_wei\x18\x04 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10releasedValueWei\x12\x1a\n" +
-	"\breplayed\x18\x05 \x01(\bR\breplayed\"2\n" +
+	"\breplayed\x18\x05 \x01(\bR\breplayed\"d\n" +
 	"\x1aGetWholesaleAccountRequest\x12\x14\n" +
-	"\x05payer\x18\x01 \x01(\fR\x05payer\"c\n" +
+	"\x05payer\x18\x01 \x01(\fR\x05payer\x120\n" +
+	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\"c\n" +
 	"\x1bGetWholesaleAccountResponse\x12D\n" +
-	"\aaccount\x18\x01 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\"_\n" +
+	"\aaccount\x18\x01 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\"\x91\x01\n" +
 	"\x1cGetSpendAuthorizationRequest\x12\x14\n" +
 	"\x05payer\x18\x01 \x01(\fR\x05payer\x12)\n" +
-	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\"\xb2\x03\n" +
+	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x120\n" +
+	"\x14settlement_domain_id\x18\x03 \x01(\tR\x12settlementDomainId\"\xb2\x03\n" +
 	"\x1dGetSpendAuthorizationResponse\x12C\n" +
 	"\x05state\x18\x01 \x01(\x0e2-.livepeer.payments.v1.SpendAuthorizationStateR\x05state\x12K\n" +
 	"\x12reserved_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10reservedValueWei\x12G\n" +

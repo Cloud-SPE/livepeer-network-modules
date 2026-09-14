@@ -270,8 +270,8 @@ func setJobTestAuthorizationPrice(t *testing.T, req *http.Request, _ string, pri
 	req.Body = io.NopCloser(strings.NewReader(string(body)))
 	digest := sha256.Sum256(body)
 	requestID := req.Header.Get(livepeerheader.RequestID)
-	payload := &pb.SpendAuthorizationPayload{
-		Domain: "livepeer-spend-authorization/v1", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v2", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
 		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID,
 		RequestId: requestID, Protocol: "paid-job/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example",
 		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(price).Bytes()}, UnitsPerPrice: 1, WorkUnitName: workUnit, Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering)},

@@ -33,12 +33,18 @@ expected orchestrator address.
 
 Capability tuples are grouped by `worker_url` into synthetic `node-N` IDs.
 Each tuple carries capability and offering, protocol/axes, work-unit metadata,
-price numerator and `per_units` denominator, optional extra and constraints.
+price numerator and `per_units` denominator, settlement-domain identity, optional
+extra and constraints. Protocol-major-4 tuples require a canonical nonzero
+`settlement_domain_id`; the decoder rejects different domains for the same worker
+URL. Earlier manifests can still be decoded for diagnosis but cannot supply the
+required domain for the major-4 paid path.
 Protocol and declared axes pass through; workload validation belongs to the
 consumer. Reserved declaration keys may not be shadowed by `extra`.
 
 Use Select/SelectMany for the full route projection, including typed protocol,
-price denominator, estimator and settlement keys. The inventory Node proto is
+price denominator, estimator, settlement keys and `settlement_domain_id` (field 17).
+The ID is included in quote/route fingerprints so a new financial domain cannot
+reuse the old route identity. The inventory Node proto is
 narrower. See [gRPC contract](grpc-surface.md).
 
 An unsigned allowance applies to static/CSV node sources, never to unsigned or
@@ -81,3 +87,11 @@ seeding. Overlay pointer changes invalidate reuse of the old source on the
 next resolution after restart. An unchanged coordinator may publish multiple
 broker URLs under one orchestrator identity; multiple identities require
 separate manifests.
+
+## Settlement-domain rollout
+
+The payment daemon owns the immutable ledger ID. Broker inventory carries it into
+each cold-signed tuple; the registry relays it and does not generate or infer it
+from the payee, broker URL or static overlay. Independent brokers may share a
+payee while exposing different IDs, balances and account versions. See the
+[identity and migration contract](../../../docs/design-docs/settlement-domain-identity.md).

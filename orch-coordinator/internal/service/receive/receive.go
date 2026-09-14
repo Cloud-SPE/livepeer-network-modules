@@ -404,6 +404,9 @@ func capsToList(caps []types.CapabilityTuple) []any {
 		// is the default, so omitting it keeps every already-signed
 		// manifest canonicalizing to the same bytes it did before the
 		// field existed.
+		if c.SettlementDomainID != "" {
+			entry["settlement_domain_id"] = c.SettlementDomainID
+		}
 		if c.PerUnits > 1 {
 			entry["per_units"] = c.PerUnits
 		}

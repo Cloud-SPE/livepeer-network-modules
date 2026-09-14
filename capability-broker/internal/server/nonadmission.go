@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"io"
 	"net/http"
 	"strings"
@@ -207,12 +208,23 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 	cfp, _ := strictHex(q.ConstraintFingerprint)
 	rfp, _ := strictHex(q.RouteFingerprint)
 
+	domainClient, ok := s.payment.(payment.DomainClient)
+	if !ok {
+		http.Error(w, "settlement domain unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	domainID, domainErr := domainClient.SettlementDomain(r.Context())
+	if domainErr != nil || domainID == "" {
+		http.Error(w, "settlement domain unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	rec := &pb.NonAdmissionRecord{
-		Protocol:  q.Protocol,
-		RequestId: requestID,
-		WorkId:    q.WorkID,
-		Sender:    sender,
-		Recipient: recipient,
+		SettlementDomainId: domainID,
+		Protocol:           q.Protocol,
+		RequestId:          requestID,
+		WorkId:             q.WorkID,
+		Sender:             sender,
+		Recipient:          recipient,
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               q.QuoteID,
 			QuoteVersion:          q.QuoteVersion,

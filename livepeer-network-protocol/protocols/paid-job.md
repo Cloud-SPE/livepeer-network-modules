@@ -21,7 +21,7 @@ The key words MUST, MUST NOT, SHOULD, and MAY are interpreted as in RFC 2119.
 
 Every exchange follows [wholesale-account.md](./wholesale-account.md).
 Probabilistic tickets only fund the stable `(chain, payer, payee,
-denomination)` account. A ticket, payment envelope, recipient-random
+settlement_domain_id, denomination)` account. A ticket, payment envelope, recipient-random
 generation, or residual balance never authorizes a workload.
 
 Every job requires a signed `SpendAuthorization` scoped to exactly one
@@ -69,7 +69,7 @@ MUST reject it before processing a payment or invoking a runner.
 
 The authorization payload MUST bind:
 
-- domain `livepeer-spend-authorization/v1`;
+- domain `livepeer-spend-authorization/v2`;
 - payer, payee, chain, and denomination;
 - the broker URI, protocol, capability, and offering;
 - the accepted quote and exact work-unit price;

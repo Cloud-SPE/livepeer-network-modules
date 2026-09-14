@@ -10,11 +10,12 @@ consumed it; future gateway-side implementations are out-of-repo.
 
 ## Status
 
-Spec-wide version is in [`VERSION`](./VERSION) and, for Go consumers, `version.VERSION` in [`version/`](./version/) (a test keeps them equal). The 2.0.0 major bump
-removed `interaction_mode` from the manifest in favour of `protocol` plus
-declared axes; pre-2.0 consumers cannot read these manifests. Individual
-protocol and descriptor-schema specs are still at `1.0.x-draft` in their own
-frontmatter.
+Spec-wide version is `4.0.0`, recorded in [`VERSION`](./VERSION) and
+`version.VERSION` in [`version/`](./version/). Major 4 requires a cold-signed
+`settlement_domain_id` on every route and v2 spend authorizations bound to that
+ledger. Independent brokers sharing a payee have independent accounts. See the
+[wholesale account contract](protocols/wholesale-account.md) for coordinated
+upgrade and migration requirements.
 
 Per-protocol versions are tracked in each `protocols/<name>.md` frontmatter, and
 per-schema versions in each `descriptors/<name>.md`. Hybrid SemVer is the

@@ -164,7 +164,7 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 	}
 	seenPerKey := make(map[string]map[string]struct{})
 	for _, st := range snap.SourceTuples {
-		k := uniquenessKey(st.Offering.CapabilityID, st.Offering.OfferingID, st.Offering.Extra, st.Offering.Constraints)
+		k := uniquenessKey(st.Offering.CapabilityID, st.Offering.OfferingID, st.Offering.SettlementDomainID, st.Offering.Extra, st.Offering.Constraints)
 		if _, ok := seenPerKey[k]; !ok {
 			seenPerKey[k] = map[string]struct{}{}
 		}
@@ -198,10 +198,11 @@ func tupleHealthKey(capabilityID, offeringID string) string {
 	return capabilityID + "|" + offeringID
 }
 
-func uniquenessKey(capID, offeringID string, extra, constraints map[string]any) string {
+func uniquenessKey(capID, offeringID, domain string, extra, constraints map[string]any) string {
 	root := map[string]any{
-		"capability_id": capID,
-		"offering_id":   offeringID,
+		"settlement_domain_id": domain,
+		"capability_id":        capID,
+		"offering_id":          offeringID,
 	}
 	if len(extra) > 0 {
 		root["extra"] = extra

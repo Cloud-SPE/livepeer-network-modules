@@ -13,7 +13,7 @@ and the gateway. That separation is load-bearing for two reasons:
 Both sides need stable lifecycle and explicit contracts that survive
 caller restarts and component extraction.
 
-Tickets now fund a stable `(chain, payer, payee, denomination)` wholesale
+Tickets now fund a stable `(chain, payer, payee, settlement_domain_id, denomination)` wholesale
 account. `work_id` remains a replaceable ticket-validation generation, not the
 economic owner. A separately signed, single-purpose authorization reserves
 account credit for one exact job or session; actual cumulative work is debited

@@ -27,6 +27,13 @@ func TestWire_SelectManyRelaysManifestSettlementKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	env.Manifest.PublicationSeq = 10
+	env.Manifest.SpecVersion = "4.0.0"
+	domains := map[string]string{}
+	for i := range env.Manifest.Capabilities {
+		c := &env.Manifest.Capabilities[i]
+		c.SettlementDomainID = "0x" + strings.Repeat(fmt.Sprintf("%x", i+1), 64)
+		domains[c.WorkerURL] = c.SettlementDomainID
+	}
 	for _, digit := range []string{"11", "22"} {
 		env.Manifest.SettlementKeys = append(env.Manifest.SettlementKeys, types.CoordinatorSettlementKey{PublicKey: "0x04" + strings.Repeat(digit, 64), NotBefore: f.clk.Now().Add(-time.Hour), ExpiresAt: f.clk.Now().Add(time.Hour)})
 	}
@@ -66,6 +73,9 @@ func TestWire_SelectManyRelaysManifestSettlementKeys(t *testing.T) {
 				t.Fatalf("routes=%d", len(result.GetRoutes()))
 			}
 			for _, route := range result.GetRoutes() {
+				if route.GetSettlementDomainId() != domains[route.GetWorkerUrl()] {
+					t.Fatalf("domain dropped or crossed between routes: %v", route)
+				}
 				if len(route.GetSettlementKeys()) != 2 {
 					t.Fatalf("%s dropped keys: %+v", route.GetWorkerUrl(), route)
 				}

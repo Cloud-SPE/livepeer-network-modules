@@ -72,7 +72,7 @@ func newOfferings(addr string, caps ...types.BrokerOffering) *types.BrokerOfferi
 }
 
 func sampleCap(id, off string) types.BrokerOffering {
-	return types.BrokerOffering{
+	return types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID:    id,
 		OfferingID:      off,
 		Protocol:        "paid-job/v1",

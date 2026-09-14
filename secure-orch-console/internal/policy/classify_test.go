@@ -509,3 +509,42 @@ func TestClassify_SettlementKeyRotationNamesBothKeys(t *testing.T) {
 		t.Fatal("a delegation change must hold even under the most permissive policy")
 	}
 }
+
+func TestSettlementDomainChangeRequiresReview(t *testing.T) {
+	build := func(seq uint64, domains ...string) []byte {
+		var root map[string]any
+		if err := json.Unmarshal(manifestJSON(t, "4.0.0", seq, ethA, baseTuple()), &root); err != nil {
+			t.Fatal(err)
+		}
+		base := root["capabilities"].([]any)[0].(map[string]any)
+		caps := []any{}
+		for _, d := range domains {
+			c := map[string]any{}
+			for k, v := range base {
+				c[k] = v
+			}
+			c["settlement_domain_id"] = d
+			c["worker_url"] = "https://" + d + ".example"
+			caps = append(caps, c)
+		}
+		root["capabilities"] = caps
+		raw, err := json.Marshal(root)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	before := build(1, "a", "b")
+	unchanged := computeDiff(t, before, build(2, "a", "b"))
+	if len(unchanged.Unchanged) != 2 {
+		t.Fatal("console overwrote independent domains")
+	}
+	changed := computeDiff(t, before, build(2, "a", "c"))
+	got := Classify(changed, ClassifyInput{Bounds: defaultBounds()})
+	if got.Class != ClassCritical {
+		t.Fatalf("domain replacement can auto-sign: %v", got)
+	}
+	if len(changed.Added) != 1 || len(changed.Removed) != 1 {
+		t.Fatal("domain migration must be visible as replacement")
+	}
+}

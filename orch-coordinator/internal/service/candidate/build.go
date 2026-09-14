@@ -284,6 +284,9 @@ func capsToList(caps []types.CapabilityTuple) []any {
 		// is the default, so omitting it keeps every already-signed
 		// manifest canonicalizing to the same bytes it did before the
 		// field existed.
+		if c.SettlementDomainID != "" {
+			entry["settlement_domain_id"] = c.SettlementDomainID
+		}
 		if c.PerUnits > 1 {
 			entry["per_units"] = c.PerUnits
 		}
@@ -320,7 +323,12 @@ func aggregate(sources []types.SourceTuple) ([]types.CapabilityTuple, []types.HA
 	keyed := make(map[string]*group)
 	keyOrder := make([]string, 0)
 
+	domainsByURL := make(map[string]string)
 	for _, s := range sources {
+		if d, ok := domainsByURL[s.WorkerURL]; ok && d != s.Offering.SettlementDomainID {
+			return nil, nil, fmt.Errorf("candidate: worker_url %s identifies different settlement domains", s.WorkerURL)
+		}
+		domainsByURL[s.WorkerURL] = s.Offering.SettlementDomainID
 		key, err := uniquenessKey(s.Offering)
 		if err != nil {
 			return nil, nil, fmt.Errorf("candidate: %w (broker=%s)", err, s.BrokerName)
@@ -408,8 +416,9 @@ func aggregate(sources []types.SourceTuple) ([]types.CapabilityTuple, []types.HA
 // part of identity (Q2 lock).
 func uniquenessKey(o types.BrokerOffering) (string, error) {
 	root := map[string]any{
-		"capability_id": o.CapabilityID,
-		"offering_id":   o.OfferingID,
+		"settlement_domain_id": o.SettlementDomainID,
+		"capability_id":        o.CapabilityID,
+		"offering_id":          o.OfferingID,
 	}
 	if len(o.Extra) > 0 {
 		root["extra"] = o.Extra
@@ -427,17 +436,18 @@ func uniquenessKey(o types.BrokerOffering) (string, error) {
 func tupleFrom(s types.SourceTuple) types.CapabilityTuple {
 	offering := s.Offering
 	return types.CapabilityTuple{
-		CapabilityID:    offering.CapabilityID,
-		OfferingID:      offering.OfferingID,
-		Protocol:        offering.Protocol,
-		Job:             offering.Job,
-		Session:         offering.Session,
-		WorkUnit:        offering.WorkUnit,
-		PricePerUnitWei: offering.PricePerUnitWei,
-		PerUnits:        offering.PerUnits,
-		WorkerURL:       s.WorkerURL,
-		Extra:           offering.Extra,
-		Constraints:     offering.Constraints,
+		SettlementDomainID: offering.SettlementDomainID,
+		CapabilityID:       offering.CapabilityID,
+		OfferingID:         offering.OfferingID,
+		Protocol:           offering.Protocol,
+		Job:                offering.Job,
+		Session:            offering.Session,
+		WorkUnit:           offering.WorkUnit,
+		PricePerUnitWei:    offering.PricePerUnitWei,
+		PerUnits:           offering.PerUnits,
+		WorkerURL:          s.WorkerURL,
+		Extra:              offering.Extra,
+		Constraints:        offering.Constraints,
 	}
 }
 

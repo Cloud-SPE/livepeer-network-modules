@@ -357,7 +357,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			releaseReservation()
 			return nil, protoErr("payment_invalid", "authorization admission rejected: %v", err)
 		}
-		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) {
+		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
 			releaseReservation()
 			return nil, &RetryableError{Err: errors.New("payment daemon returned an invalid account admission")}
 		}
@@ -408,6 +408,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 				ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
 				RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
 				Sender:                sender, OpenFingerprint: fingerprint,
+				SettlementDomainID:       accountPayload.GetSettlementDomainId(),
 				AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 				AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 				AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -461,6 +462,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		CredentialHash:           sessionstore.HashSecret(credential),
 		CallbackTokenHash:        sessionstore.HashSecret(callbackToken),
 		OpenFingerprint:          fingerprint,
+		SettlementDomainID:       accountPayload.GetSettlementDomainId(),
 		AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 		AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 		AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -938,7 +940,7 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		return nil, protoErr("payment_invalid", "authorization revision is malformed")
 	}
 	p := auth.GetPayload()
-	if p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
+	if p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
 		return nil, protoErr("refill_refused", "authorization revision does not continue this session")
 	}
 	oldMaxDebit, _ := new(big.Int).SetString(rec.AuthorizationMaxDebitWei, 10)

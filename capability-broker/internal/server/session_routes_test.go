@@ -227,8 +227,8 @@ func setSessionTestAuthorization(t *testing.T, req *http.Request, gatewaySession
 	if predecessor != "" {
 		revision = 1
 	}
-	payload := &paymentsv1.SpendAuthorizationPayload{
-		Domain: "livepeer-spend-authorization/v1", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+	payload := &paymentsv1.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v2", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
 		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID, Revision: revision, PredecessorAuthorizationId: predecessor,
 		RequestId: requestID, SessionId: gatewaySessionID, Protocol: "paid-session/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example.com",
 		AcceptedPrice: &paymentsv1.AcceptedPrice{PricePerUnitWei: &paymentsv1.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: "participant_minutes", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), QuoteRef: &paymentsv1.QuoteRef{QuoteId: "quote-test", QuoteVersion: 1}},

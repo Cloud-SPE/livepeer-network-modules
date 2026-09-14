@@ -565,7 +565,7 @@ Default is 2 rounds.
 ## 6.5. Authorization-backed workload accounting
 
 The receiver maintains a stable wholesale account per
-`(chain, payer, payee, denomination)`. Recipient-random `work_id` ledgers
+`(chain, payer, payee, settlement_domain_id, denomination)`. Recipient-random `work_id` ledgers
 validate probabilistic tickets and transfer their expected value into that
 account; they never authorize jobs or sessions.
 
@@ -862,3 +862,21 @@ broker started with them will fail to parse its arguments.
 Long-lived workloads are now `paid-session/v1`, where the runtime is
 owned by a remote runner rather than spawned by the broker. Operator
 guidance lives in `capability-broker/docs/operator-runbook.md` §3.
+
+## Settlement-domain upgrade (protocol major 4)
+
+Independent financial ledgers under one payee now have distinct persistent
+`settlement_domain_id` values. Read the
+[identity and migration contract](../../docs/design-docs/settlement-domain-identity.md)
+before upgrading. Drain old authorizations, back up the complete ledger, initialize
+the payment daemon, upgrade the broker/coordinator, cold-sign the new routes and
+update registry and payer/LOC clients together. An ID is generated once by the
+receiver; `--settlement-domain-id` is optional bootstrap import on payment-daemon,
+and a configured/stored mismatch refuses startup. Broker configuration does not
+own this value.
+
+Clients must retain the ID from `SelectedRoute.settlement_domain_id`, compare it
+with `/v1/payment/account` and the ticket-parameter response, include it in funding
+intents and spend authorizations, and compare it again on settlement. Account
+versions are independent across domains. URL changes do not transfer balances.
+The chain probe requires `--settlement-domain-id` from the signed route.

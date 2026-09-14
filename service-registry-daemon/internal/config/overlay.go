@@ -80,7 +80,8 @@ type rawPinNode struct {
 }
 
 type rawPinCapability struct {
-	Name string `yaml:"name"`
+	SettlementDomainID string `yaml:"settlement_domain_id"`
+	Name               string `yaml:"name"`
 	// Protocol is the protocol tag a pinned capability speaks
 	// ("paid-job/v1", "paid-session/v1"). Consumers gate their open path
 	// on it, so a pin without one projects a route they cannot use.
@@ -186,7 +187,7 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 		if rc.Name == "" {
 			return OverlayPinNode{}, fmt.Errorf("capability name missing")
 		}
-		c := types.Capability{Name: rc.Name, Protocol: rc.Protocol, WorkUnit: rc.WorkUnit}
+		c := types.Capability{SettlementDomainID: rc.SettlementDomainID, Name: rc.Name, Protocol: rc.Protocol, WorkUnit: rc.WorkUnit}
 		// Carry `extra` through. This is where the declared
 		// compatibility axes live (offering-axes.md), so a pin that
 		// drops it projects a route a consumer cannot evaluate: it can

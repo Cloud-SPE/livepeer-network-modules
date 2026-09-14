@@ -128,7 +128,8 @@
         "protocol",
         "work_unit",
         "price_per_unit_wei",
-        "worker_url"
+        "worker_url",
+        "settlement_domain_id"
       ],
       "additionalProperties": false,
       "allOf": [
@@ -221,6 +222,14 @@
           "type": "object",
           "description": "Gateway-side filter hints. Same shape as extra; semantics are gateway-defined.",
           "additionalProperties": true
+        },
+        "settlement_domain_id": {
+          "type": "string",
+          "pattern": "^0x[0-9a-f]{64}$",
+          "not": {
+            "const": "0x0000000000000000000000000000000000000000000000000000000000000000"
+          },
+          "description": "Immutable public payment-ledger namespace. Independent ledgers MUST have different IDs even with the same payee; cold-signed on every route."
         }
       }
     },

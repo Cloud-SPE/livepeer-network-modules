@@ -26,16 +26,17 @@ const ()
 // capability-broker/internal/server/registry/offerings.go's wire shape
 // minus the orch identity (carried separately).
 type BrokerOffering struct {
-	CapabilityID    string         `json:"capability_id"`
-	OfferingID      string         `json:"offering_id"`
-	Protocol        string         `json:"protocol"`
-	Job             *JobAxes       `json:"job,omitempty"`
-	Session         *SessionAxes   `json:"session,omitempty"`
-	WorkUnit        WorkUnit       `json:"work_unit"`
-	PricePerUnitWei string         `json:"price_per_unit_wei"`
-	PerUnits        uint64         `json:"per_units,omitempty"`
-	Extra           map[string]any `json:"extra,omitempty"`
-	Constraints     map[string]any `json:"constraints,omitempty"`
+	SettlementDomainID string         `json:"settlement_domain_id,omitempty"`
+	CapabilityID       string         `json:"capability_id"`
+	OfferingID         string         `json:"offering_id"`
+	Protocol           string         `json:"protocol"`
+	Job                *JobAxes       `json:"job,omitempty"`
+	Session            *SessionAxes   `json:"session,omitempty"`
+	WorkUnit           WorkUnit       `json:"work_unit"`
+	PricePerUnitWei    string         `json:"price_per_unit_wei"`
+	PerUnits           uint64         `json:"per_units,omitempty"`
+	Extra              map[string]any `json:"extra,omitempty"`
+	Constraints        map[string]any `json:"constraints,omitempty"`
 }
 
 // JobAxes carries the paid-job/v1 declared axes
@@ -189,6 +190,9 @@ func (b *BrokerOfferings) Validate(expectedOrch string) error {
 		return fmt.Errorf("orch identity mismatch: got %q, want %q", b.OrchEthAddress, expectedOrch)
 	}
 	for i, c := range b.Capabilities {
+		if !regexp.MustCompile(`^0x[0-9a-f]{64}$`).MatchString(c.SettlementDomainID) || c.SettlementDomainID == "0x"+strings.Repeat("0", 64) {
+			return fmt.Errorf("capabilities[%d].settlement_domain_id: canonical nonzero ID required", i)
+		}
 		if c.CapabilityID == "" {
 			return fmt.Errorf("capabilities[%d].capability_id: required", i)
 		}
@@ -268,8 +272,9 @@ type SourceTuple struct {
 // CapabilityTuple is the manifest tuple as the coordinator emits it.
 // Mirrors livepeer-network-protocol/manifest/schema.json #/$defs/capability.
 type CapabilityTuple struct {
-	CapabilityID string `json:"capability_id"`
-	OfferingID   string `json:"offering_id"`
+	SettlementDomainID string `json:"settlement_domain_id,omitempty"`
+	CapabilityID       string `json:"capability_id"`
+	OfferingID         string `json:"offering_id"`
 	// Protocol is the protocol tag ("paid-job/v1", "paid-session/v1").
 	// Manifest spec 1.0.0 replaced the pre-v1 mode field with this plus
 	// the declared axes below.

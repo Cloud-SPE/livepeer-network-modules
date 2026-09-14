@@ -455,7 +455,7 @@ that is the only automatic freeze and it is why `run` is a write.
 `GET /registry/offerings` gains a required root field:
 
 ```json
-{ "spec_version": "3.0.0", "orch_eth_address": "0x…", "offers_revision": "ctl-rev-4182", "capabilities": [ … ] }
+{ "spec_version": "4.0.0", "orch_eth_address": "0x…", "offers_revision": "ctl-rev-4182", "capabilities": [ … ] }
 ```
 
 - `spec_version` MUST equal the protocol module's exported `VERSION` the
@@ -480,7 +480,7 @@ of an operator copying a 130-character public key out of a log line.
 
 ```json
 {
-  "spec_version": "3.0.0",
+  "spec_version": "4.0.0",
   "orch_eth_address": "0xd003…3c7f",
   "keys": [
     {
@@ -588,3 +588,7 @@ frontmatter tracks the document.
 | 1.1.0-draft | 2026-08-29 | Delete `GET /admin/v1/worker-sessions` and `POST /admin/v1/worker-sessions/{id}/kill`. 1.0.0-draft already recorded them as superseded by §3; they are now gone from the broker. The tunnel they managed was keyed on the backend ids of `worker://` backends, which the `capabilities[]` grammar produced and which no longer exists — so the kill route had nothing to key on and reported kills it never performed. A host is disconnected by revoking its credential (§5) or via `POST /admin/v1/runners/{host_id}/disconnect` (§3), and listed by §3. Removal, not additive: a caller of either route now gets 404. |
 | 1.0.1-draft | 2026-08-26 | Add `POST /admin/v1/offers/{id}/confirm-published` — the coordinator's report that the signed manifest now carries the accepted shape, which resolves `superseding → frozen`. Until it lands the broker keeps dispatching the previously published shape. Additive. |
 | 1.0.0-draft | 2026-08-26 | Initial contract (plan 0043 §3.6, §3.7, item 2). Runners (list/get/disconnect), offers (list/get, full-replacement `PUT`, `accept-shape`, disable/enable), enrollment and credentials (`enroll`, list, rotate, revoke, hash-only `PUT` sync), certification (results, per-pair history, `run`), the `spec_version` stamp and frozen-only rule on `/registry/offerings`, error codes, and conformance fixtures. Supersedes `GET/POST /admin/v1/worker-sessions*`. |
+
+Each `/registry/offerings` capability includes the payment-daemon-owned
+`settlement_domain_id`. The broker obtains it from PayeeDaemon Health. The
+coordinator cold-signs it on each route; it is not a broker name or URL hash.

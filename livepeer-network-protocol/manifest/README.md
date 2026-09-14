@@ -4,7 +4,7 @@ JSON Schema for the manifest format orchestrators publish at
 `/.well-known/livepeer-registry.json`. Cross-cutting; any change here forces a
 spec-wide SemVer bump (per [`../PROCESS.md`](../PROCESS.md)).
 
-**Status:** [`schema.json`](./schema.json) — **active** at spec-wide `2.0.0`
+**Status:** [`schema.json`](./schema.json) — **active** at spec-wide `4.0.0`
 (see [`../VERSION`](../VERSION) and [`changelog.md`](./changelog.md)).
 
 ## Files
@@ -22,7 +22,7 @@ spec-wide SemVer bump (per [`../PROCESS.md`](../PROCESS.md)).
 A manifest is a **two-field outer envelope**: a `manifest` payload + a `signature`
 over its JCS-canonicalized form. The payload carries the orch's identity, time
 bounds, and a **flat list of capability tuples** — host is not a registration unit.
-Each tuple has `capability_id`, `offering_id`, `protocol` (`<name>/v<major>` —
+Each tuple has `settlement_domain_id` (the immutable payment ledger ID), `capability_id`, `offering_id`, `protocol` (`<name>/v<major>` —
 `paid-job/v1` or `paid-session/v1`), the matching declared-axes object (`job`
 for paid-job, `session` for paid-session; see
 [`../protocols/offering-axes.md`](../protocols/offering-axes.md)),

@@ -26,6 +26,10 @@ func (s *Server) initSessionEngine() error {
 	if err != nil {
 		return err
 	}
+	if err := s.bindPaymentLedger(store); err != nil {
+		_ = store.Close()
+		return err
+	}
 	s.sessionWS = newSessionWSHub()
 	engine, err := sessionengine.New(sessionengine.Config{
 		Store:   store,

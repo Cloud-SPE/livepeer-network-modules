@@ -21,7 +21,7 @@ import (
 )
 
 // VERSION is the spec-wide SemVer from ../VERSION.
-const VERSION = "3.0.0"
+const VERSION = "4.0.0"
 
 // Major returns the major component of VERSION.
 func Major() int {

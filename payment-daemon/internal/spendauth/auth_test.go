@@ -19,7 +19,7 @@ func TestVerify(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload := &pb.SpendAuthorizationPayload{
+	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Domain: Domain, Payer: ks.Address(), Payee: make([]byte, 20),
 		AuthorizationId: "auth-1", RequestId: "request-1", Protocol: "paid-job/v1",
 		Capability: "custom:any", Offering: "offer", MaxDebitWei: &pb.BigUInt{Value: []byte{10}},
@@ -46,16 +46,16 @@ func TestDigestAndVerifyRejectMalformedAuthorizations(t *testing.T) {
 	if _, err := Digest(nil); err == nil {
 		t.Fatal("nil payload accepted")
 	}
-	if _, err := Digest(&pb.SpendAuthorizationPayload{Domain: "wrong-domain"}); err == nil {
+	if _, err := Digest(&pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Domain: "wrong-domain"}); err == nil {
 		t.Fatal("wrong domain accepted")
 	}
 	if err := Verify(nil); err == nil {
 		t.Fatal("nil authorization accepted")
 	}
-	if err := Verify(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{Domain: Domain, Payer: []byte{1}}}); err == nil {
+	if err := Verify(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Domain: Domain, Payer: []byte{1}}}); err == nil {
 		t.Fatal("short payer accepted")
 	}
-	payload := &pb.SpendAuthorizationPayload{Domain: Domain, Payer: make([]byte, 20)}
+	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Domain: Domain, Payer: make([]byte, 20)}
 	if err := Verify(&pb.SpendAuthorization{Payload: payload, Signature: make([]byte, 64)}); !errors.Is(err, ErrMalformedSignature) {
 		t.Fatalf("short signature error = %v", err)
 	}

@@ -69,13 +69,14 @@ type CoordinatorOrch struct {
 // verbatim means a new axis (or a whole new protocol) needs no change in
 // this daemon, and nothing downstream sees a value this layer reshaped.
 type CoordinatorCapability struct {
-	CapabilityID    string              `json:"capability_id"`
-	OfferingID      string              `json:"offering_id"`
-	Protocol        string              `json:"protocol"`
-	Job             json.RawMessage     `json:"job,omitempty"`
-	Session         json.RawMessage     `json:"session,omitempty"`
-	WorkUnit        CoordinatorWorkUnit `json:"work_unit"`
-	PricePerUnitWei string              `json:"price_per_unit_wei"`
+	SettlementDomainID string              `json:"settlement_domain_id,omitempty"`
+	CapabilityID       string              `json:"capability_id"`
+	OfferingID         string              `json:"offering_id"`
+	Protocol           string              `json:"protocol"`
+	Job                json.RawMessage     `json:"job,omitempty"`
+	Session            json.RawMessage     `json:"session,omitempty"`
+	WorkUnit           CoordinatorWorkUnit `json:"work_unit"`
+	PricePerUnitWei    string              `json:"price_per_unit_wei"`
 	// PerUnits is the price denominator (offering-axes.md §6). Absent
 	// means 1. The envelope decoder rejects unknown fields, so this must
 	// exist here for a manifest that declares it to parse at all.
@@ -165,7 +166,17 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 				"expires_at must be after not_before")
 		}
 	}
+	domainsByURL := make(map[string]string)
 	for i, c := range sm.Manifest.Capabilities {
+		if c.SettlementDomainID != "" || strings.HasPrefix(sm.Manifest.SpecVersion, "4.") {
+			if !regexp.MustCompile(`^0x[0-9a-f]{64}$`).MatchString(c.SettlementDomainID) || c.SettlementDomainID == "0x"+strings.Repeat("0", 64) {
+				return NewValidation(ErrParse, "manifest.capabilities.settlement_domain_id", "canonical nonzero ID required")
+			}
+		}
+		if prior, ok := domainsByURL[c.WorkerURL]; ok && prior != c.SettlementDomainID {
+			return NewValidation(ErrParse, "manifest.capabilities.settlement_domain_id", "one worker URL cannot identify different settlement domains")
+		}
+		domainsByURL[c.WorkerURL] = c.SettlementDomainID
 		if c.CapabilityID == "" {
 			return NewValidation(ErrParse, fmt.Sprintf("manifest.capabilities[%d].capability_id", i), "missing")
 		}
@@ -184,7 +195,7 @@ func validateCoordinatorEnvelope(sm *CoordinatorSignedManifest) error {
 		// extra is either confused or trying to make a consumer read a
 		// different protocol than the one it signed; either way the
 		// manifest is refused rather than silently corrected.
-		for _, reserved := range []string{"protocol", "job", "session"} {
+		for _, reserved := range []string{"protocol", "job", "session", "settlement_domain_id"} {
 			if _, clash := c.Extra[reserved]; clash {
 				return NewValidation(ErrParse,
 					fmt.Sprintf("manifest.capabilities[%d].extra.%s", i, reserved),
@@ -273,10 +284,12 @@ func CoordinatorCanonicalBytes(m CoordinatorManifestPayload) ([]byte, error) {
 // cache/result plumbing can reuse the existing manifest-based path.
 func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 	type capKey struct {
-		name  string
-		extra string
+		domain string
+		name   string
+		extra  string
 	}
 	type capBuilder struct {
+		domain    string
 		name      string
 		protocol  string
 		workUnit  string
@@ -309,12 +322,14 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 			return nil, err
 		}
 		key := capKey{
-			name:  tuple.CapabilityID,
-			extra: string(extraRaw),
+			domain: tuple.SettlementDomainID,
+			name:   tuple.CapabilityID,
+			extra:  string(extraRaw),
 		}
 		cb, ok := nb.caps[key]
 		if !ok {
 			cb = &capBuilder{
+				domain:    tuple.SettlementDomainID,
 				name:      tuple.CapabilityID,
 				protocol:  tuple.Protocol,
 				workUnit:  tuple.WorkUnit.Name,
@@ -356,12 +371,13 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 				return string(cb.offers[i].Constraints) < string(cb.offers[j].Constraints)
 			})
 			caps = append(caps, Capability{
-				Name:              cb.name,
-				Protocol:          cb.protocol,
-				WorkUnit:          cb.workUnit,
-				WorkUnitEstimator: cb.estimator,
-				Offerings:         cb.offers,
-				Extra:             cb.extra,
+				SettlementDomainID: cb.domain,
+				Name:               cb.name,
+				Protocol:           cb.protocol,
+				WorkUnit:           cb.workUnit,
+				WorkUnitEstimator:  cb.estimator,
+				Offerings:          cb.offers,
+				Extra:              cb.extra,
 			})
 		}
 		out = append(out, Node{

@@ -127,6 +127,7 @@ type Record struct {
 	RunnerTerminated bool `json:"runner_terminated,omitempty"`
 	// AccountAuthorizationID is the single-purpose authority and economic
 	// reservation for this workload. WorkID mirrors it for correlation.
+	SettlementDomainID       string `json:"settlement_domain_id,omitempty"`
 	AccountAuthorizationID   string `json:"account_authorization_id,omitempty"`
 	AuthorizationMaxUnits    uint64 `json:"authorization_max_units,omitempty"`
 	AuthorizationMaxDebitWei string `json:"authorization_max_debit_wei,omitempty"`

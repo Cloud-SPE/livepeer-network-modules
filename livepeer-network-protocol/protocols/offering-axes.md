@@ -163,7 +163,7 @@ same curve. New offering prices apply only to new authorization chains.
 Ticket recipient rand is a funding-generation identity only. It may remain
 stable across many account replenishments or rotate without changing any job
 or session identity. Payers key workload state on authorization IDs and
-account state on `(chain, payer, payee, denomination)`, never on recipient rand
+account state on `(chain, payer, payee, settlement_domain_id, denomination)`, never on recipient rand
 or funded value.
 
 Ticket face value and win probability are not identity and are not pinned. A

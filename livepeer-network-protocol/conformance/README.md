@@ -267,3 +267,18 @@ that predates plan 0043 is out of scope, not in violation. The scenarios
 that also need a matched offer and the admin API (`replaces-on-resend`,
 `never-mutates-offer`, `routes-by-local-id`) live with the broker-admin
 fixtures and are not in this suite yet.
+
+## Two-ledger wholesale conformance
+
+The cryptographic/accounting fixture uses two real receiver Bolt stores and one
+payer with the same on-chain payee. Run from the monorepo root:
+
+```sh
+go -C payment-daemon test ./internal/service/sender -run TestIndependentSettlementDomainsConformance -v
+go -C payment-daemon test ./internal/store -run TestSettlementDomain -v
+```
+
+This validates independent funding, versions, account-scoped authorization IDs,
+rejection of cross-domain authorizations and tickets, and URL relocation preserving
+one ledger's credit. The HTTP conformance harness uses the explicit test-only mock
+domain for broker fixtures; it is not evidence of real ticket validation.

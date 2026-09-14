@@ -266,6 +266,7 @@ message ProcessPaymentRequest {
 
 message FundWholesaleAccountRequest {
   bytes payment_bytes = 1;
+  string settlement_domain_id = 2;
 }
 
 message FundWholesaleAccountResponse {
@@ -319,6 +320,7 @@ message AdvanceAuthorizationRequest {
   BigUInt target_reserved_value_wei = 4;
   uint64 advance_seq = 5;
   bytes payment_bytes = 6;
+  string settlement_domain_id = 7;
 }
 
 message AdvanceAuthorizationResponse {
@@ -344,6 +346,7 @@ message SettleAuthorizationRequest {
   string authorization_id = 2;
   uint64 actual_units = 3;
   uint64 settlement_seq = 4;
+  string settlement_domain_id = 5;
 }
 
 message SettleAuthorizationResponse {
@@ -356,6 +359,7 @@ message SettleAuthorizationResponse {
 
 message GetWholesaleAccountRequest {
   bytes payer = 1;
+  string settlement_domain_id = 2;
 }
 
 message GetWholesaleAccountResponse {
@@ -365,6 +369,7 @@ message GetWholesaleAccountResponse {
 message GetSpendAuthorizationRequest {
   bytes payer = 1;
   string authorization_id = 2;
+  string settlement_domain_id = 3;
 }
 
 message GetSpendAuthorizationResponse {

@@ -28,9 +28,10 @@ type offeringsPayload struct {
 }
 
 type offeringsCapabilityV1 struct {
-	CapabilityID string `json:"capability_id"`
-	OfferingID   string `json:"offering_id"`
-	Protocol     string `json:"protocol"`
+	SettlementDomainID string `json:"settlement_domain_id"`
+	CapabilityID       string `json:"capability_id"`
+	OfferingID         string `json:"offering_id"`
+	Protocol           string `json:"protocol"`
 	// Job and Session carry the declared axes through to the
 	// coordinator, which signs them into the manifest verbatim. A
 	// paid-* offering without its axes object produces a manifest that

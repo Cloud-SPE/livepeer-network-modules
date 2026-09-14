@@ -393,8 +393,10 @@ type SelectedRoute struct {
 	// multipart uploads: the request carries no duration, so a consumer
 	// that guesses reserves one number while the seller bills another.
 	WorkUnitEstimator *Estimator `protobuf:"bytes,16,opt,name=work_unit_estimator,json=workUnitEstimator,proto3" json:"work_unit_estimator,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Immutable payment-ledger namespace, bound by the cold-signed tuple.
+	SettlementDomainId string `protobuf:"bytes,17,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *SelectedRoute) Reset() {
@@ -537,6 +539,13 @@ func (x *SelectedRoute) GetWorkUnitEstimator() *Estimator {
 		return x.WorkUnitEstimator
 	}
 	return nil
+}
+
+func (x *SelectedRoute) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 type SettlementKey struct {
@@ -1101,7 +1110,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\fSelectResult\x129\n" +
 	"\x05route\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\x05route\"O\n" +
 	"\x10SelectManyResult\x12;\n" +
-	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\xaf\x05\n" +
+	"\x06routes\x18\x01 \x03(\v2#.livepeer.registry.v1.SelectedRouteR\x06routes\"\xe1\x05\n" +
 	"\rSelectedRoute\x12\x1d\n" +
 	"\n" +
 	"worker_url\x18\x01 \x01(\tR\tworkerUrl\x12\x1f\n" +
@@ -1124,7 +1133,8 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\x0funits_per_price\x18\r \x01(\x04R\runitsPerPrice\x12\x1a\n" +
 	"\bprotocol\x18\x0e \x01(\tR\bprotocol\x12L\n" +
 	"\x0fsettlement_keys\x18\x0f \x03(\v2#.livepeer.registry.v1.SettlementKeyR\x0esettlementKeys\x12O\n" +
-	"\x13work_unit_estimator\x18\x10 \x01(\v2\x1f.livepeer.registry.v1.EstimatorR\x11workUnitEstimator\"\xaf\x01\n" +
+	"\x13work_unit_estimator\x18\x10 \x01(\v2\x1f.livepeer.registry.v1.EstimatorR\x11workUnitEstimator\x120\n" +
+	"\x14settlement_domain_id\x18\x11 \x01(\tR\x12settlementDomainId\"\xaf\x01\n" +
 	"\rSettlementKey\x12\x1d\n" +
 	"\n" +
 	"public_key\x18\x01 \x01(\tR\tpublicKey\x12\x1d\n" +

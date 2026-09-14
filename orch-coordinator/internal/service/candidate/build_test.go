@@ -45,7 +45,7 @@ func sampleSnap() scrape.Snapshot {
 				BrokerName: "b1",
 				BaseURL:    "http://b1:8080",
 				WorkerURL:  "https://b1.example/",
-				Offering: types.BrokerOffering{
+				Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 					CapabilityID:    "openai:chat-completions",
 					OfferingID:      "vllm-h100-batch4",
 					Protocol:        "paid-job/v1",
@@ -227,7 +227,7 @@ func TestAggregate_PriceConflictHardFails(t *testing.T) {
 	snap.SourceTuples = append(snap.SourceTuples, types.SourceTuple{
 		BrokerName: "b2",
 		WorkerURL:  "https://b2.example/",
-		Offering: types.BrokerOffering{
+		Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			Protocol:        "paid-job/v1",
@@ -255,7 +255,7 @@ func TestAggregate_HAPairDedupsToLexMin(t *testing.T) {
 	snap.SourceTuples = append(snap.SourceTuples, types.SourceTuple{
 		BrokerName: "b2",
 		WorkerURL:  "https://aaa.example/",
-		Offering: types.BrokerOffering{
+		Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			Protocol:        "paid-job/v1",
@@ -291,7 +291,7 @@ func TestAggregate_DistinctExtraEmitsBoth(t *testing.T) {
 	snap.SourceTuples = append(snap.SourceTuples, types.SourceTuple{
 		BrokerName: "b2",
 		WorkerURL:  "https://b2.example/",
-		Offering: types.BrokerOffering{
+		Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			CapabilityID:    "openai:chat-completions",
 			OfferingID:      "vllm-h100-batch4",
 			Protocol:        "paid-job/v1",
@@ -414,11 +414,11 @@ func TestPackTarball_Idempotent(t *testing.T) {
 }
 
 func TestUniquenessKey_StableAcrossExtraOrder(t *testing.T) {
-	a, _ := uniquenessKey(types.BrokerOffering{
+	a, _ := uniquenessKey(types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID: "x", OfferingID: "y",
 		Extra: map[string]any{"a": 1, "b": 2},
 	})
-	b, _ := uniquenessKey(types.BrokerOffering{
+	b, _ := uniquenessKey(types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID: "x", OfferingID: "y",
 		Extra: map[string]any{"b": 2, "a": 1},
 	})
@@ -547,7 +547,7 @@ func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
 		{
 			BrokerName: "b1",
 			WorkerURL:  "https://b1.example/",
-			Offering: types.BrokerOffering{
+			Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				CapabilityID:    "openai:chat-completions",
 				OfferingID:      "vllm",
 				Protocol:        "paid-job/v1",
@@ -559,7 +559,7 @@ func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
 		{
 			BrokerName: "b2",
 			WorkerURL:  "https://b2.example/",
-			Offering: types.BrokerOffering{
+			Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				CapabilityID: "video:transcode.live",
 				OfferingID:   "h264",
 				Protocol:     "paid-session/v1",
@@ -605,7 +605,7 @@ func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
 	// additionalProperties:false — assert the exact key set, so any
 	// stray leftover key (the pre-1.0.0 mode field included) fails here.
 	assertKeys(t, job, "capability_id", "offering_id", "protocol", "job",
-		"work_unit", "price_per_unit_wei", "worker_url")
+		"work_unit", "price_per_unit_wei", "worker_url", "settlement_domain_id")
 	wantJob := map[string]any{"transports": []any{"unary", "stream"}}
 	if !reflect.DeepEqual(job["job"], wantJob) {
 		t.Fatalf("job axes = %#v, want %#v", job["job"], wantJob)
@@ -631,7 +631,7 @@ func TestBuild_EmitsProtocolAndDeclaredAxesVerbatim(t *testing.T) {
 		t.Fatal("paid-session tuple must not carry a job object")
 	}
 	assertKeys(t, sess, "capability_id", "offering_id", "protocol", "session",
-		"work_unit", "price_per_unit_wei", "worker_url")
+		"work_unit", "price_per_unit_wei", "worker_url", "settlement_domain_id")
 }
 
 func assertKeys(t *testing.T, entry map[string]any, want ...string) {
@@ -836,5 +836,31 @@ func TestBuild_MergesDiscoveredSettlementKeys(t *testing.T) {
 	}
 	if string(c2.ManifestBytes) != string(c.ManifestBytes) {
 		t.Fatalf("discovered key churned the candidate:\n%s\n%s", c.ManifestBytes, c2.ManifestBytes)
+	}
+}
+
+func TestIndependentDomainsAreNotDeduplicated(t *testing.T) {
+	snap := sampleSnap()
+	other := snap.SourceTuples[0]
+	other.BrokerName = "b2"
+	other.WorkerURL = "https://b2.example/"
+	other.Offering.SettlementDomainID = "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	other.Offering.PricePerUnitWei = "2000000"
+	snap.SourceTuples = append(snap.SourceTuples, other)
+	c, err := Build(snap, BuildOptions{OrchEthAddress: snap.OrchEthAddress, ManifestTTL: time.Hour, PublicationSeq: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Manifest.Capabilities) != 2 || len(c.Metadata.HAEndpoints) != 0 {
+		t.Fatalf("independent domains collapsed: %+v", c.Manifest.Capabilities)
+	}
+	for _, tuple := range c.Manifest.Capabilities {
+		if tuple.SettlementDomainID == "" {
+			t.Fatal("candidate dropped ledger identity")
+		}
+	}
+	snap.SourceTuples[1].WorkerURL = snap.SourceTuples[0].WorkerURL
+	if _, err := Build(snap, BuildOptions{OrchEthAddress: snap.OrchEthAddress, ManifestTTL: time.Hour}); err == nil {
+		t.Fatal("one URL advertised two ledgers")
 	}
 }

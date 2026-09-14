@@ -58,8 +58,9 @@ type Node struct {
 // Capability advertises one named operation. Name is opaque to this
 // daemon — see docs/design-docs/workload-agnostic-strings.md.
 type Capability struct {
-	Name     string `json:"name"`
-	WorkUnit string `json:"work_unit,omitempty"`
+	SettlementDomainID string `json:"settlement_domain_id,omitempty"`
+	Name               string `json:"name"`
+	WorkUnit           string `json:"work_unit,omitempty"`
 	// WorkUnitEstimator is how a client computes a funding ceiling for
 	// this capability, when it can. Nil for every capability whose
 	// ceiling the caller can derive from its own request — which is most

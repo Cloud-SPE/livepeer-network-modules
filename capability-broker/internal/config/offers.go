@@ -207,7 +207,7 @@ func (c *Config) validateOffers() error {
 			return fmt.Errorf("%s: capacity values must be >= 0", ctx)
 		}
 
-		for _, reserved := range []string{"protocol", "job", "session"} {
+		for _, reserved := range []string{"protocol", "job", "session", "settlement_domain_id"} {
 			if _, clash := o.Extra[reserved]; clash {
 				return fmt.Errorf("%s: extra.%s is reserved — the declaration owns that key", ctx, reserved)
 			}

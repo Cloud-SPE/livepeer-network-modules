@@ -10,7 +10,7 @@ import (
 
 func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 	now := time.Now().UTC()
-	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{{
+	cand := &types.ManifestPayload{Capabilities: []types.CapabilityTuple{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
 		Job:      &types.JobAxes{"transports": []any{"unary"}},
 		WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
@@ -51,12 +51,12 @@ func TestBuildView_JoinsBrokerStatusToRow(t *testing.T) {
 			},
 		},
 		SourceTuples: []types.SourceTuple{
-			{BrokerName: "b1", Offering: types.BrokerOffering{
+			{BrokerName: "b1", Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
 				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",
 			}},
-			{BrokerName: "b2", Offering: types.BrokerOffering{
+			{BrokerName: "b2", Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				CapabilityID: "cap", OfferingID: "off", Protocol: "paid-job/v1",
 				Job:      &types.JobAxes{"transports": []any{"unary"}},
 				WorkUnit: types.WorkUnit{Name: "x"}, PricePerUnitWei: "100",

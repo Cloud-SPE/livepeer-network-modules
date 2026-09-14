@@ -60,7 +60,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			return
 		}
 		out := map[string]any{
-			"ticket_params": map[string]any{
+			"settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
 				"win_prob":            new(big.Int).SetBytes(resp.GetTicketParams().GetWinProb()).String(),
@@ -131,7 +131,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
-		AccountFunding: &pb.AccountFundingIntent{TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
+		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
@@ -194,7 +194,7 @@ func receiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient:        recipient,
 		DefaultFaceValue: big.NewInt(1000),
 		DefaultWinProb:   types.MaxWinProb,

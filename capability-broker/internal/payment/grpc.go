@@ -3,6 +3,7 @@ package payment
 import (
 	"context"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"math/big"
 	"time"
 
@@ -16,9 +17,10 @@ import (
 // socket. NewGRPC dials eagerly + Health-probes; gRPC handles
 // reconnection internally for the daemon's lifetime.
 type GRPC struct {
-	conn   *grpc.ClientConn
-	client pb.PayeeDaemonClient
-	socket string
+	conn               *grpc.ClientConn
+	client             pb.PayeeDaemonClient
+	socket             string
+	settlementDomainID string
 }
 
 // NewGRPC dials the unix socket and Health-probes the daemon. Fails
@@ -38,9 +40,15 @@ func NewGRPC(ctx context.Context, socketPath string) (*GRPC, error) {
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	if _, err := g.client.Health(probeCtx, &pb.HealthRequest{}); err != nil {
+	health, err := g.client.Health(probeCtx, &pb.HealthRequest{})
+	if err != nil {
 		_ = conn.Close()
 		return nil, fmt.Errorf("payment-daemon health probe at %s: %w", socketPath, err)
+	}
+	g.settlementDomainID = health.GetSettlementDomainId()
+	if !identity.ValidDomain(g.settlementDomainID) {
+		_ = conn.Close()
+		return nil, fmt.Errorf("payment-daemon requires settlement-domain support")
 	}
 	return g, nil
 }
@@ -55,6 +63,9 @@ func (g *GRPC) Shutdown() error {
 }
 
 func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) (*TicketParams, error) {
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
 	faceValue := []byte(nil)
 	if req.FaceValue != nil {
 		faceValue = req.FaceValue.Bytes()
@@ -71,9 +82,9 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 	}
 	tp := resp.GetTicketParams()
 	if tp == nil {
-		return &TicketParams{}, nil
+		return &TicketParams{SettlementDomainID: g.settlementDomainID}, nil
 	}
-	out := &TicketParams{
+	out := &TicketParams{SettlementDomainID: g.settlementDomainID,
 		Recipient:         append([]byte(nil), tp.GetRecipient()...),
 		FaceValue:         new(big.Int).SetBytes(tp.GetFaceValue()),
 		WinProb:           new(big.Int).SetBytes(tp.GetWinProb()),
@@ -93,6 +104,9 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 }
 
 func (g *GRPC) OpenSession(ctx context.Context, req OpenSessionRequest) (*OpenSessionResult, error) {
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
 	priceBytes := []byte(nil)
 	if req.PricePerWorkUnitWei != nil {
 		priceBytes = req.PricePerWorkUnitWei.Bytes()
@@ -151,12 +165,15 @@ func accountFromProto(in *pb.WholesaleAccountView) *WholesaleAccount {
 		Reserved:  new(big.Int).SetBytes(in.GetReservedValueWei().GetValue()),
 		Debited:   new(big.Int).SetBytes(in.GetDebitedValueWei().GetValue()),
 		Available: new(big.Int).SetBytes(in.GetAvailableValueWei().GetValue()),
-		Version:   in.GetVersion(), ObservedAt: in.GetObservedAt(), ChainID: in.GetChainId(), Denomination: in.GetDenomination(),
+		Version:   in.GetVersion(), ObservedAt: in.GetObservedAt(), ChainID: in.GetChainId(), Denomination: in.GetDenomination(), SettlementDomainID: in.GetSettlementDomainId(),
 	}
 }
 
 func (g *GRPC) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
-	res, err := g.client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: paymentBytes})
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
+	res, err := g.client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, PaymentBytes: paymentBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -164,6 +181,9 @@ func (g *GRPC) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*
 }
 
 func (g *GRPC) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
 	reservation := []byte(nil)
 	if req.Reservation != nil {
 		reservation = req.Reservation.Bytes()
@@ -176,11 +196,14 @@ func (g *GRPC) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationReq
 }
 
 func (g *GRPC) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error) {
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
 	target := []byte(nil)
 	if req.TargetReserved != nil {
 		target = req.TargetReserved.Bytes()
 	}
-	res, err := g.client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{Payer: req.Payer, AuthorizationId: req.AuthorizationID, CumulativeUnits: req.CumulativeUnits, TargetReservedValueWei: &pb.BigUInt{Value: target}, AdvanceSeq: req.AdvanceSeq, PaymentBytes: req.PaymentBytes})
+	res, err := g.client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, CumulativeUnits: req.CumulativeUnits, TargetReservedValueWei: &pb.BigUInt{Value: target}, AdvanceSeq: req.AdvanceSeq, PaymentBytes: req.PaymentBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +211,10 @@ func (g *GRPC) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizatio
 }
 
 func (g *GRPC) SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error) {
-	res, err := g.client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: req.Payer, AuthorizationId: req.AuthorizationID, ActualUnits: req.ActualUnits, SettlementSeq: req.SettlementSeq})
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
+	res, err := g.client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, ActualUnits: req.ActualUnits, SettlementSeq: req.SettlementSeq})
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +222,10 @@ func (g *GRPC) SettleAuthorization(ctx context.Context, req SettleAuthorizationR
 }
 
 func (g *GRPC) GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error) {
-	res, err := g.client.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{Payer: payer})
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
+	res, err := g.client.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, Payer: payer})
 	if err != nil {
 		return nil, err
 	}
@@ -204,7 +233,10 @@ func (g *GRPC) GetWholesaleAccount(ctx context.Context, payer []byte) (*Wholesal
 }
 
 func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
-	res, err := g.client.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: payer, AuthorizationId: authorizationID})
+	if _, err := g.SettlementDomain(ctx); err != nil {
+		return nil, err
+	}
+	res, err := g.client.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: payer, AuthorizationId: authorizationID})
 	if err != nil {
 		return nil, err
 	}
@@ -266,3 +298,17 @@ func (g *GRPC) CloseSession(ctx context.Context, sender []byte, workID string) e
 // Compile-time interface check.
 var _ Client = (*GRPC)(nil)
 var _ AccountClient = (*GRPC)(nil)
+
+// SettlementDomain verifies the ledger on every accounting call, including reconnects.
+func (g *GRPC) SettlementDomain(ctx context.Context) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	h, err := g.client.Health(ctx, &pb.HealthRequest{})
+	if err != nil {
+		return "", err
+	}
+	if h.GetSettlementDomainId() == "" || h.GetSettlementDomainId() != g.settlementDomainID {
+		return "", fmt.Errorf("payment ledger identity changed; restart broker and republish signed routes")
+	}
+	return g.settlementDomainID, nil
+}

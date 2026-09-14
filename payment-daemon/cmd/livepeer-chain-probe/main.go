@@ -52,6 +52,7 @@ type config struct {
 	payeeSocket             string
 	brokerURL               string
 	brokerURI               string
+	settlementDomainID      string
 	recipient               []byte
 	capability              string
 	offering                string
@@ -78,6 +79,7 @@ func main() {
 		payerSocket             = flag.String("payer-socket", "/tmp/lpm-payer.sock", "payer daemon UDS")
 		payeeSocket             = flag.String("payee-socket", "/tmp/lpm-payee.sock", "payee daemon UDS")
 		brokerURL               = flag.String("broker-url", "http://127.0.0.1:8411", "broker base URL")
+		settlementDomainID      = flag.String("settlement-domain-id", "", "wholesale: expected payment-ledger ID from the cold-signed route")
 		brokerURI               = flag.String("broker-uri", "", "wholesale only: externally advertised broker origin signed into authorizations (defaults to --broker-url)")
 		recipient               = flag.String("recipient", "", "required: payee ETH address (0x-prefixed)")
 		capability              = flag.String("capability", "chain:probe", "capability id the broker serves")
@@ -118,7 +120,7 @@ func main() {
 	}
 	cfg := config{
 		payerSocket: *payerSocket, payeeSocket: *payeeSocket, brokerURL: *brokerURL,
-		brokerURI: *brokerURI,
+		brokerURI: *brokerURI, settlementDomainID: *settlementDomainID,
 		recipient: addr, capability: *capability, offering: *offering,
 		workUnit: *workUnit, priceWei: *priceWei, perUnits: *perUnits,
 		protocol: *protocol,

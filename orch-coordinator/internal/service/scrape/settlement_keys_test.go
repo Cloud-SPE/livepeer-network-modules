@@ -47,7 +47,7 @@ func signedAnnouncement(t *testing.T, orch, baseURL string) (types.BrokerSettlem
 }
 
 func offeringsFor(orch string) *types.BrokerOfferings {
-	return &types.BrokerOfferings{SpecVersion: specversion.VERSION, OrchEthAddress: orch, Capabilities: []types.BrokerOffering{{
+	return &types.BrokerOfferings{SpecVersion: specversion.VERSION, OrchEthAddress: orch, Capabilities: []types.BrokerOffering{{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		CapabilityID: "openai:chat-completions", OfferingID: "q", Protocol: "paid-job/v1",
 		Job: &types.JobAxes{"transports": []any{"unary"}}, WorkUnit: types.WorkUnit{Name: "tokens"}, PricePerUnitWei: "1",
 	}}}

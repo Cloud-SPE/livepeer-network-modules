@@ -476,3 +476,26 @@ func TestSessionAdmissionAndNonAdmissionAreMutuallyExclusive(t *testing.T) {
 		}
 	})
 }
+
+func TestSettlementDomainBindingSurvivesRestart(t *testing.T) {
+	s, path := openTemp(t)
+	a := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	b := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if err := s.BindSettlementDomain(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path, testKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	if err := reopened.BindSettlementDomain(a); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.BindSettlementDomain(b); err == nil {
+		t.Fatal("broker workload store moved to another ledger")
+	}
+}

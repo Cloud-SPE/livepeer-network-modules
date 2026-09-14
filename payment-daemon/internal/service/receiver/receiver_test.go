@@ -42,7 +42,7 @@ func stand(t *testing.T) (pb.PayeeDaemonClient, *store.Store, func()) {
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: bytes20(0xaa)}, nil)
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -76,7 +76,7 @@ func standWithAdmin(t *testing.T, token string) (pb.PayeeDaemonClient, pb.PayeeA
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{Recipient: bytes20(0xaa)}, nil)
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: bytes20(0xaa)}, nil)
 	srv := server.NewReceiver(svc, svc, server.ReceiverAdminConfig{Token: token}, sockPath, nil, nil)
 	// Bind before starting the goroutine. Serve binds on the far side of
 	// the `go`, so "the goroutine started" and "the socket exists" are

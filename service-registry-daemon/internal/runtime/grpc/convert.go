@@ -96,9 +96,10 @@ func sourceFromProto(s registryv1.Source) types.Source {
 // capabilityToProto converts a domain Capability.
 func capabilityToProto(c types.Capability) *registryv1.Capability {
 	out := &registryv1.Capability{
-		Name:              c.Name,
-		WorkUnit:          c.WorkUnit,
-		WorkUnitEstimator: domainEstimatorToProto(c.WorkUnitEstimator),
+		SettlementDomainId: c.SettlementDomainID,
+		Name:               c.Name,
+		WorkUnit:           c.WorkUnit,
+		WorkUnitEstimator:  domainEstimatorToProto(c.WorkUnitEstimator),
 	}
 	if len(c.Extra) > 0 {
 		out.ExtraJson = append([]byte(nil), c.Extra...)
@@ -115,9 +116,10 @@ func capabilityFromProto(p *registryv1.Capability) types.Capability {
 		return types.Capability{}
 	}
 	c := types.Capability{
-		Name:              p.GetName(),
-		WorkUnit:          p.GetWorkUnit(),
-		WorkUnitEstimator: domainEstimatorFromProto(p.GetWorkUnitEstimator()),
+		SettlementDomainID: p.GetSettlementDomainId(),
+		Name:               p.GetName(),
+		WorkUnit:           p.GetWorkUnit(),
+		WorkUnitEstimator:  domainEstimatorFromProto(p.GetWorkUnitEstimator()),
 	}
 	if x := p.GetExtraJson(); len(x) > 0 {
 		c.Extra = append([]byte(nil), x...)
@@ -206,6 +208,7 @@ func selectedRouteToProto(r *SelectedRoute) *registryv1.SelectedRoute {
 		return &registryv1.SelectedRoute{}
 	}
 	out := &registryv1.SelectedRoute{
+		SettlementDomainId:  r.SettlementDomainID,
 		WorkerUrl:           r.WorkerURL,
 		EthAddress:          r.EthAddress,
 		Capability:          r.Capability,
@@ -247,6 +250,7 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 		return nil, err
 	}
 	out := &SelectedRoute{
+		SettlementDomainID:  capability.SettlementDomainID,
 		WorkerURL:           n.URL,
 		EthAddress:          string(n.OperatorAddr),
 		Capability:          capability.Name,
@@ -313,6 +317,7 @@ func buildQuoteID(r *SelectedRoute) string {
 	sum := sha256.Sum256([]byte(strings.Join([]string{
 		strings.ToLower(r.EthAddress),
 		r.WorkerURL,
+		r.SettlementDomainID,
 		r.Capability,
 		r.Offering,
 		r.WorkUnit,
@@ -324,6 +329,7 @@ func fingerprintRoute(r *SelectedRoute) []byte {
 	sum := sha256.Sum256(bytes.Join([][]byte{
 		[]byte(strings.ToLower(r.EthAddress)),
 		[]byte(r.WorkerURL),
+		[]byte(r.SettlementDomainID),
 		[]byte(r.Capability),
 		[]byte(r.Protocol),
 		[]byte(r.Offering),

@@ -132,3 +132,11 @@ func (m *metered) GetSpendAuthorization(ctx context.Context, payer []byte, autho
 // Compile-time interface check.
 var _ Client = (*metered)(nil)
 var _ AccountClient = (*metered)(nil)
+
+func (m *metered) SettlementDomain(ctx context.Context) (string, error) {
+	d, ok := m.inner.(DomainClient)
+	if !ok {
+		return "", errors.ErrUnsupported
+	}
+	return d.SettlementDomain(ctx)
+}

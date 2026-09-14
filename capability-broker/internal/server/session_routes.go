@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"math"
 	"math/big"
@@ -347,13 +348,13 @@ func validateSessionAuthorization(wire []byte, callerProof string, raw []byte, b
 	}
 	p := auth.GetPayload()
 	price := p.GetAcceptedPrice()
-	if p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetAuthorizationId() == "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != body.GatewaySessionID || p.GetCapability() != capability || p.GetOffering() != offering {
+	if p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetAuthorizationId() == "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != body.GatewaySessionID || p.GetCapability() != capability || p.GetOffering() != offering {
 		return nil, errors.New("authorization identity or route does not match this session")
 	}
-	if p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+	if !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
 		return nil, errors.New("authorization chain or denomination is invalid")
 	}
-	if brokerURI == "" || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(brokerURI, "/") {
+	if brokerURI == "" || !identity.SameBrokerURI(p.GetBrokerUri(), brokerURI) {
 		return nil, errors.New("authorization broker_uri does not match this broker")
 	}
 	wantPer := spec.PerUnits
@@ -501,7 +502,7 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	}
 	p := auth.GetPayload()
 	spec := s.specForRecord(rec)
-	if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
+	if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session")
 		return
 	}

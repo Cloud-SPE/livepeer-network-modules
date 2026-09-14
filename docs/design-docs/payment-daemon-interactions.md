@@ -27,7 +27,7 @@ retail:    customer -> provider/clearinghouse -> USD usage and holds
 wholesale: payer identity -> orchestrator payee -> wei account and reservations
 ```
 
-The stable wholesale account is keyed by chain, payer, payee, and denomination.
+The stable wholesale account is keyed by chain, payer, payee, settlement domain, and denomination.
 Capability, offering, customer, request, session, quote, and ticket `work_id` do
 not own the account. They scope authorizations and settlements.
 

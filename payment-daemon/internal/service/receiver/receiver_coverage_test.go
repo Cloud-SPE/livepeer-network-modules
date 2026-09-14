@@ -31,7 +31,7 @@ func receiverFixture(t *testing.T) (*Service, *store.Store, *inmemory.KeyStore, 
 	key, _ := crypto.GenerateKey()
 	ks, _ := inmemory.New(key)
 	payee := bytesOf(0xaa, 20)
-	return New(st, Config{Recipient: payee, ChainID: 42161, DefaultFaceValue: big.NewInt(1), DefaultWinProb: types.MaxWinProb}, nil), st, ks, payee
+	return New(st, Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: payee, ChainID: 42161, DefaultFaceValue: big.NewInt(1), DefaultWinProb: types.MaxWinProb}, nil), st, ks, payee
 }
 
 func bytesOf(v byte, n int) []byte {
@@ -45,7 +45,7 @@ func bytesOf(v byte, n int) []byte {
 func baseAuthorization(ks *inmemory.KeyStore, payee []byte) *pb.SpendAuthorizationPayload {
 	now := time.Now().UTC()
 	digest := sha256.Sum256([]byte("request"))
-	return &pb.SpendAuthorizationPayload{
+	return &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Domain: spendauth.Domain, Payer: ks.Address(), Payee: payee, ChainId: 42161, Denomination: "wei",
 		AuthorizationId: "auth", RequestId: "request", BrokerUri: "https://broker.example",
 		Protocol: "paid-job/v1", Capability: "custom:any", Offering: "default",
@@ -132,29 +132,29 @@ func TestAdmitAuthorizationValidationMatrix(t *testing.T) {
 func TestWholesaleLookupAndMutationErrors(t *testing.T) {
 	svc, st, ks, payee := receiverFixture(t)
 	ctx := context.Background()
-	if _, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid account lookup code=%v", status.Code(err))
 	}
-	account, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{Payer: ks.Address()})
+	account, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address()})
 	if err != nil || account.GetAccount().GetChainId() != 42161 || account.GetAccount().GetDenomination() != "wei" {
 		t.Fatalf("account=%+v err=%v", account, err)
 	}
-	if _, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: ks.Address(), AuthorizationId: "missing"}); status.Code(err) != codes.NotFound {
+	if _, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing authorization code=%v", status.Code(err))
 	}
-	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid advance code=%v", status.Code(err))
 	}
-	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{Payer: ks.Address(), AuthorizationId: "missing", AdvanceSeq: 1, TargetReservedValueWei: &pb.BigUInt{}}); status.Code(err) != codes.NotFound {
+	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", AdvanceSeq: 1, TargetReservedValueWei: &pb.BigUInt{}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing advance code=%v", status.Code(err))
 	}
-	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid settle code=%v", status.Code(err))
 	}
-	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{Payer: ks.Address(), AuthorizationId: "missing", SettlementSeq: 1}); status.Code(err) != codes.NotFound {
+	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", SettlementSeq: 1}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing settle code=%v", status.Code(err))
 	}
-	if _, err := svc.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: []byte("bad")}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: []byte("bad")}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("malformed funding code=%v", status.Code(err))
 	}
 	now := time.Now().UTC()
@@ -162,7 +162,7 @@ func TestWholesaleLookupAndMutationErrors(t *testing.T) {
 	if _, err := st.AdmitWholesale(seed, "", nil, now); err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{Payer: ks.Address(), AuthorizationId: "expired"})
+	got, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "expired"})
 	if err != nil || got.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED {
 		t.Fatalf("authorization=%+v err=%v", got, err)
 	}

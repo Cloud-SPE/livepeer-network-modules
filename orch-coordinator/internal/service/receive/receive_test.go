@@ -319,7 +319,7 @@ func TestManifestPayloadMap_RoundTripsSettlementKeys(t *testing.T) {
 		WindowEnd:      time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC),
 		SourceTuples: []types.SourceTuple{{
 			BrokerName: "b1", BaseURL: "http://b1:8080", WorkerURL: "https://b1.example",
-			Offering: types.BrokerOffering{
+			Offering: types.BrokerOffering{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				CapabilityID: "openai:chat-completions", OfferingID: "qwen", Protocol: "paid-job/v1",
 				Job: &types.JobAxes{"transports": []any{"unary"}}, WorkUnit: types.WorkUnit{Name: "tokens"}, PricePerUnitWei: "1",
 			},

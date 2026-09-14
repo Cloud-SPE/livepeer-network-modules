@@ -7,7 +7,7 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
 ```json
 {
   "manifest": {
-    "spec_version": "3.0.0",
+    "spec_version": "4.0.0",
     "publication_seq": 1,
     "issued_at": "2026-05-06T12:34:56Z",
     "expires_at": "2026-06-05T12:34:56Z",
@@ -37,7 +37,8 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
           },
           "region": "us-west-2",
           "gpu_class": "h100"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "openai:audio-transcriptions",
@@ -58,7 +59,8 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
             "model": "whisper-large-v3"
           },
           "region": "us-west-2"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "video:transcode.live",
@@ -82,7 +84,8 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
         "extra": {
           "region": "us-east-1",
           "gpu_class": "intel-arc"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "kibble:doggo-bark-counter:v1",
@@ -97,7 +100,8 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
           "name": "barks"
         },
         "price_per_unit_wei": "100",
-        "worker_url": "https://broker-a.orch.example.com"
+        "worker_url": "https://broker-a.orch.example.com",
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     ]
   },

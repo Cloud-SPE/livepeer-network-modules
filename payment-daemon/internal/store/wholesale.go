@@ -28,8 +28,8 @@ var (
 )
 
 // WholesaleAccount is the durable economic ledger for one payer/payee pair.
-// Chain and denomination are process configuration in v1, so the two addresses
-// fully identify the local record.
+// The database supplies the immutable settlement-domain and chain/payee binding;
+// denomination is wei. The two addresses identify a row within that one ledger.
 type WholesaleAccount struct {
 	Payer       []byte    `json:"payer"`
 	Payee       []byte    `json:"payee"`

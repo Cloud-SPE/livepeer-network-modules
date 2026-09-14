@@ -846,9 +846,11 @@ func (*HealthRequest) Descriptor() ([]byte, []int) {
 type HealthResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Liveness signal. v0.2 returns the literal string "ok" when ready.
-	Status        string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
+	// Public identity of the receiver ledger; absent on payer Health.
+	SettlementDomainId string `protobuf:"bytes,2,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *HealthResponse) Reset() {
@@ -884,6 +886,13 @@ func (*HealthResponse) Descriptor() ([]byte, []int) {
 func (x *HealthResponse) GetStatus() string {
 	if x != nil {
 		return x.Status
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
 	}
 	return ""
 }
@@ -1169,7 +1178,7 @@ func (x *FundingIntent) GetTopUpAllowed() bool {
 type SpendAuthorizationPayload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Domain/version tag. Producers MUST set
-	// "livepeer-spend-authorization/v1".
+	// "livepeer-spend-authorization/v2".
 	Domain                     string         `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
 	Payer                      []byte         `protobuf:"bytes,2,opt,name=payer,proto3" json:"payer,omitempty"`
 	Payee                      []byte         `protobuf:"bytes,3,opt,name=payee,proto3" json:"payee,omitempty"`
@@ -1191,6 +1200,7 @@ type SpendAuthorizationPayload struct {
 	BrokerUri                  string         `protobuf:"bytes,19,opt,name=broker_uri,json=brokerUri,proto3" json:"broker_uri,omitempty"`
 	ChainId                    uint64         `protobuf:"varint,20,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
 	Denomination               string         `protobuf:"bytes,21,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	SettlementDomainId         string         `protobuf:"bytes,22,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -1372,6 +1382,13 @@ func (x *SpendAuthorizationPayload) GetDenomination() string {
 	return ""
 }
 
+func (x *SpendAuthorizationPayload) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
 type SpendAuthorization struct {
 	state         protoimpl.MessageState     `protogen:"open.v1"`
 	Payload       *SpendAuthorizationPayload `protobuf:"bytes,1,opt,name=payload,proto3" json:"payload,omitempty"`
@@ -1432,8 +1449,10 @@ type AccountFundingIntent struct {
 	state                protoimpl.MessageState `protogen:"open.v1"`
 	TargetAvailableWei   *BigUInt               `protobuf:"bytes,1,opt,name=target_available_wei,json=targetAvailableWei,proto3" json:"target_available_wei,omitempty"`
 	ObservedAvailableWei *BigUInt               `protobuf:"bytes,2,opt,name=observed_available_wei,json=observedAvailableWei,proto3" json:"observed_available_wei,omitempty"`
-	unknownFields        protoimpl.UnknownFields
-	sizeCache            protoimpl.SizeCache
+	// Must match the cold-signed route and the observed account.
+	SettlementDomainId string `protobuf:"bytes,3,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AccountFundingIntent) Reset() {
@@ -1480,20 +1499,28 @@ func (x *AccountFundingIntent) GetObservedAvailableWei() *BigUInt {
 	return nil
 }
 
+func (x *AccountFundingIntent) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
 type WholesaleAccountView struct {
-	state             protoimpl.MessageState `protogen:"open.v1"`
-	Payer             []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
-	Payee             []byte                 `protobuf:"bytes,2,opt,name=payee,proto3" json:"payee,omitempty"`
-	CreditedValueWei  *BigUInt               `protobuf:"bytes,3,opt,name=credited_value_wei,json=creditedValueWei,proto3" json:"credited_value_wei,omitempty"`
-	ReservedValueWei  *BigUInt               `protobuf:"bytes,4,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
-	DebitedValueWei   *BigUInt               `protobuf:"bytes,5,opt,name=debited_value_wei,json=debitedValueWei,proto3" json:"debited_value_wei,omitempty"`
-	AvailableValueWei *BigUInt               `protobuf:"bytes,6,opt,name=available_value_wei,json=availableValueWei,proto3" json:"available_value_wei,omitempty"`
-	Version           uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
-	ObservedAt        string                 `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	ChainId           uint64                 `protobuf:"varint,9,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
-	Denomination      string                 `protobuf:"bytes,10,opt,name=denomination,proto3" json:"denomination,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	Payee              []byte                 `protobuf:"bytes,2,opt,name=payee,proto3" json:"payee,omitempty"`
+	CreditedValueWei   *BigUInt               `protobuf:"bytes,3,opt,name=credited_value_wei,json=creditedValueWei,proto3" json:"credited_value_wei,omitempty"`
+	ReservedValueWei   *BigUInt               `protobuf:"bytes,4,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
+	DebitedValueWei    *BigUInt               `protobuf:"bytes,5,opt,name=debited_value_wei,json=debitedValueWei,proto3" json:"debited_value_wei,omitempty"`
+	AvailableValueWei  *BigUInt               `protobuf:"bytes,6,opt,name=available_value_wei,json=availableValueWei,proto3" json:"available_value_wei,omitempty"`
+	Version            uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
+	ObservedAt         string                 `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ChainId            uint64                 `protobuf:"varint,9,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	Denomination       string                 `protobuf:"bytes,10,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,11,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *WholesaleAccountView) Reset() {
@@ -1596,6 +1623,13 @@ func (x *WholesaleAccountView) GetDenomination() string {
 	return ""
 }
 
+func (x *WholesaleAccountView) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
 // SettlementRecord is the broker-authoritative accounting result for a request/session.
 type SettlementRecord struct {
 	state            protoimpl.MessageState             `protogen:"open.v1"`
@@ -1677,6 +1711,7 @@ type SettlementRecord struct {
 	ReleasedValueWei       *BigUInt `protobuf:"bytes,31,opt,name=released_value_wei,json=releasedValueWei,proto3" json:"released_value_wei,omitempty"`
 	AccountFundingValueWei *BigUInt `protobuf:"bytes,32,opt,name=account_funding_value_wei,json=accountFundingValueWei,proto3" json:"account_funding_value_wei,omitempty"`
 	AccountVersion         uint64   `protobuf:"varint,33,opt,name=account_version,json=accountVersion,proto3" json:"account_version,omitempty"`
+	SettlementDomainId     string   `protobuf:"bytes,34,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields          protoimpl.UnknownFields
 	sizeCache              protoimpl.SizeCache
 }
@@ -1942,6 +1977,13 @@ func (x *SettlementRecord) GetAccountVersion() uint64 {
 	return 0
 }
 
+func (x *SettlementRecord) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
 // NonAdmissionRecord is a broker's signed statement that it never
 // admitted an exchange for a request id.
 //
@@ -2005,8 +2047,10 @@ type NonAdmissionRecord struct {
 	// the gap, rather than attest across it.
 	CoverageStartedAt string                     `protobuf:"bytes,9,opt,name=coverage_started_at,json=coverageStartedAt,proto3" json:"coverage_started_at,omitempty"`
 	Outcome           NonAdmissionRecord_Outcome `protobuf:"varint,10,opt,name=outcome,proto3,enum=livepeer.payments.v1.NonAdmissionRecord_Outcome" json:"outcome,omitempty"`
-	unknownFields     protoimpl.UnknownFields
-	sizeCache         protoimpl.SizeCache
+	// Observed financial domain of the broker making this statement.
+	SettlementDomainId string `protobuf:"bytes,11,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *NonAdmissionRecord) Reset() {
@@ -2107,6 +2151,13 @@ func (x *NonAdmissionRecord) GetOutcome() NonAdmissionRecord_Outcome {
 		return x.Outcome
 	}
 	return NonAdmissionRecord_OUTCOME_UNSPECIFIED
+}
+
+func (x *NonAdmissionRecord) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
 }
 
 // TicketStatus reports the payee daemon's disposition for one ticket
@@ -2306,9 +2357,10 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"capability\x12\x1b\n" +
 	"\twork_unit\x18\x02 \x01(\tR\bworkUnit\x12A\n" +
 	"\tofferings\x18\x03 \x03(\v2#.livepeer.payments.v1.OfferingPriceR\tofferings\"\x0f\n" +
-	"\rHealthRequest\"(\n" +
+	"\rHealthRequest\"Z\n" +
 	"\x0eHealthResponse\x12\x16\n" +
-	"\x06status\x18\x01 \x01(\tR\x06status\"\x1f\n" +
+	"\x06status\x18\x01 \x01(\tR\x06status\x120\n" +
+	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\"\x1f\n" +
 	"\aBigUInt\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\fR\x05value\"\xae\x01\n" +
 	"\bQuoteRef\x12\x19\n" +
@@ -2329,7 +2381,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xa4\x06\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xd6\x06\n" +
 	"\x19SpendAuthorizationPayload\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
 	"\x05payer\x18\x02 \x01(\fR\x05payer\x12\x14\n" +
@@ -2359,13 +2411,15 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"broker_uri\x18\x13 \x01(\tR\tbrokerUri\x12\x19\n" +
 	"\bchain_id\x18\x14 \x01(\x04R\achainId\x12\"\n" +
-	"\fdenomination\x18\x15 \x01(\tR\fdenomination\"}\n" +
+	"\fdenomination\x18\x15 \x01(\tR\fdenomination\x120\n" +
+	"\x14settlement_domain_id\x18\x16 \x01(\tR\x12settlementDomainId\"}\n" +
 	"\x12SpendAuthorization\x12I\n" +
 	"\apayload\x18\x01 \x01(\v2/.livepeer.payments.v1.SpendAuthorizationPayloadR\apayload\x12\x1c\n" +
-	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xbc\x01\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xee\x01\n" +
 	"\x14AccountFundingIntent\x12O\n" +
 	"\x14target_available_wei\x18\x01 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x12targetAvailableWei\x12S\n" +
-	"\x16observed_available_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x14observedAvailableWei\"\xf0\x03\n" +
+	"\x16observed_available_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x14observedAvailableWei\x120\n" +
+	"\x14settlement_domain_id\x18\x03 \x01(\tR\x12settlementDomainId\"\xa2\x04\n" +
 	"\x14WholesaleAccountView\x12\x14\n" +
 	"\x05payer\x18\x01 \x01(\fR\x05payer\x12\x14\n" +
 	"\x05payee\x18\x02 \x01(\fR\x05payee\x12K\n" +
@@ -2378,7 +2432,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"observedAt\x12\x19\n" +
 	"\bchain_id\x18\t \x01(\x04R\achainId\x12\"\n" +
 	"\fdenomination\x18\n" +
-	" \x01(\tR\fdenomination\"\xd1\x0f\n" +
+	" \x01(\tR\fdenomination\x120\n" +
+	"\x14settlement_domain_id\x18\v \x01(\tR\x12settlementDomainId\"\x83\x10\n" +
 	"\x10SettlementRecord\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
@@ -2416,7 +2471,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x12reserved_value_wei\x18\x1e \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10reservedValueWei\x12K\n" +
 	"\x12released_value_wei\x18\x1f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10releasedValueWei\x12X\n" +
 	"\x19account_funding_value_wei\x18  \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x16accountFundingValueWei\x12'\n" +
-	"\x0faccount_version\x18! \x01(\x04R\x0eaccountVersion\x1a<\n" +
+	"\x0faccount_version\x18! \x01(\x04R\x0eaccountVersion\x120\n" +
+	"\x14settlement_domain_id\x18\" \x01(\tR\x12settlementDomainId\x1a<\n" +
 	"\x0eBreakdownEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\x9b\x01\n" +
@@ -2428,7 +2484,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"OVERFUNDED\x10\x03\x12\x15\n" +
 	"\x11STOPPED_AT_BUDGET\x10\x04\x12\r\n" +
 	"\tTOPPED_UP\x10\x05\x12\x10\n" +
-	"\fDEBIT_FAILED\x10\x06\"\xed\x03\n" +
+	"\fDEBIT_FAILED\x10\x06\"\x9f\x04\n" +
 	"\x12NonAdmissionRecord\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x1d\n" +
 	"\n" +
@@ -2442,7 +2498,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"observedAt\x12.\n" +
 	"\x13coverage_started_at\x18\t \x01(\tR\x11coverageStartedAt\x12J\n" +
 	"\aoutcome\x18\n" +
-	" \x01(\x0e20.livepeer.payments.v1.NonAdmissionRecord.OutcomeR\aoutcome\"4\n" +
+	" \x01(\x0e20.livepeer.payments.v1.NonAdmissionRecord.OutcomeR\aoutcome\x120\n" +
+	"\x14settlement_domain_id\x18\v \x01(\tR\x12settlementDomainId\"4\n" +
 	"\aOutcome\x12\x17\n" +
 	"\x13OUTCOME_UNSPECIFIED\x10\x00\x12\x10\n" +
 	"\fNOT_ADMITTED\x10\x01\"\xcc\x01\n" +

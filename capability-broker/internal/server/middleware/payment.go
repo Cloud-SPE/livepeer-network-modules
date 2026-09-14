@@ -7,12 +7,12 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"log"
 	"math/big"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -197,15 +197,15 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed, "capability "+capability+"/"+offering+" is not served by this broker")
 		return
 	}
-	if p.GetDomain() != "livepeer-spend-authorization/v1" || p.GetAuthorizationId() == "" || p.GetSessionId() != "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetRequestId() != requestID || p.GetProtocol() != protocol || protocol != "paid-job/v1" || p.GetCapability() != capability || p.GetOffering() != offering {
+	if p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetAuthorizationId() == "" || p.GetSessionId() != "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetRequestId() != requestID || p.GetProtocol() != protocol || protocol != "paid-job/v1" || p.GetCapability() != capability || p.GetOffering() != offering {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization identity or route does not match this job")
 		return
 	}
-	if p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+	if !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization chain or denomination is invalid")
 		return
 	}
-	if brokerURI == "" || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(brokerURI, "/") {
+	if brokerURI == "" || !identity.SameBrokerURI(p.GetBrokerUri(), brokerURI) {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization broker_uri does not match this broker")
 		return
 	}
@@ -250,7 +250,7 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 		livepeerheader.WriteError(w, code, errCode, "admit authorization: "+err.Error())
 		return
 	}
-	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) {
+	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) || admitted.Account.SettlementDomainID != p.GetSettlementDomainId() {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, "payment daemon returned an invalid account admission")
 		return
 	}
@@ -359,7 +359,7 @@ func BuildAuthorizationSettlement(p *paymentsv1.SpendAuthorizationPayload, reser
 	if actual > billedUnits {
 		outcome = paymentsv1.SettlementRecord_STOPPED_AT_BUDGET
 	}
-	return &paymentsv1.SettlementRecord{JobId: jobID, WorkId: p.GetAuthorizationId(), RequestId: p.GetRequestId(), IssuedAt: time.Now().UTC().Format(time.RFC3339Nano), AcceptedQuoteRef: p.GetAcceptedPrice().GetQuoteRef(), WorkUnitName: p.GetAcceptedPrice().GetWorkUnitName(), EstimatedUnits: p.GetMaxTotalUnits(), ActualUnits: actual, BilledUnits: billedUnits, DebitedUnits: billedUnits, FundedValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, BilledValueWei: &paymentsv1.BigUInt{Value: billed.Bytes()}, Outcome: outcome, AuthorizationId: p.GetAuthorizationId(), AuthorizedValueWei: p.GetMaxDebitWei(), ReservedValueWei: &paymentsv1.BigUInt{Value: reserved.Bytes()}, ReleasedValueWei: &paymentsv1.BigUInt{Value: released.Bytes()}, AccountFundingValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, AccountVersion: accountVersion}
+	return &paymentsv1.SettlementRecord{SettlementDomainId: p.GetSettlementDomainId(), JobId: jobID, WorkId: p.GetAuthorizationId(), RequestId: p.GetRequestId(), IssuedAt: time.Now().UTC().Format(time.RFC3339Nano), AcceptedQuoteRef: p.GetAcceptedPrice().GetQuoteRef(), WorkUnitName: p.GetAcceptedPrice().GetWorkUnitName(), EstimatedUnits: p.GetMaxTotalUnits(), ActualUnits: actual, BilledUnits: billedUnits, DebitedUnits: billedUnits, FundedValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, BilledValueWei: &paymentsv1.BigUInt{Value: billed.Bytes()}, Outcome: outcome, AuthorizationId: p.GetAuthorizationId(), AuthorizedValueWei: p.GetMaxDebitWei(), ReservedValueWei: &paymentsv1.BigUInt{Value: reserved.Bytes()}, ReleasedValueWei: &paymentsv1.BigUInt{Value: released.Bytes()}, AccountFundingValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, AccountVersion: accountVersion}
 }
 
 func mapClientErr(err error) (int, string) {

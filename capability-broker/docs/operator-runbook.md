@@ -276,3 +276,21 @@ is the signature of a wrong `external_base_url` — runners cannot reach
 the callback URL, so every session opens, reports nothing, and dies on
 schedule. Thresholds in that file are starting points sized for a busy
 orchestrator; tune them to your own session volume.
+
+## Settlement-domain upgrade (protocol major 4)
+
+Independent financial ledgers under one payee now have distinct persistent
+`settlement_domain_id` values. Read the
+[identity and migration contract](../../docs/design-docs/settlement-domain-identity.md)
+before upgrading. Drain old authorizations, back up the complete ledger, initialize
+the payment daemon, upgrade the broker/coordinator, cold-sign the new routes and
+update registry and payer/LOC clients together. An ID is generated once by the
+receiver; `--settlement-domain-id` is optional bootstrap import on payment-daemon,
+and a configured/stored mismatch refuses startup. Broker configuration does not
+own this value.
+
+Clients must retain the ID from `SelectedRoute.settlement_domain_id`, compare it
+with `/v1/payment/account` and the ticket-parameter response, include it in funding
+intents and spend authorizations, and compare it again on settlement. Account
+versions are independent across domains. URL changes do not transfer balances.
+The chain probe requires `--settlement-domain-id` from the signed route.

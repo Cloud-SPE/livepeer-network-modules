@@ -26,6 +26,10 @@ func (s *Server) initJobIdem() error {
 		if err != nil {
 			return err
 		}
+		if err := s.bindPaymentLedger(store); err != nil {
+			_ = store.Close()
+			return err
+		}
 		s.sessionStore = store
 		s.jobIdem = &boltJobIdem{store: store}
 		return nil

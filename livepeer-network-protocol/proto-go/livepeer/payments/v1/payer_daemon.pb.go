@@ -381,6 +381,7 @@ type CreateSpendAuthorizationRequest struct {
 	BrokerUri                  string                 `protobuf:"bytes,15,opt,name=broker_uri,json=brokerUri,proto3" json:"broker_uri,omitempty"`
 	ChainId                    uint64                 `protobuf:"varint,16,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
 	Denomination               string                 `protobuf:"bytes,17,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	SettlementDomainId         string                 `protobuf:"bytes,18,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -530,6 +531,13 @@ func (x *CreateSpendAuthorizationRequest) GetChainId() uint64 {
 func (x *CreateSpendAuthorizationRequest) GetDenomination() string {
 	if x != nil {
 		return x.Denomination
+	}
+	return ""
+}
+
+func (x *CreateSpendAuthorizationRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
 	}
 	return ""
 }
@@ -1007,7 +1015,7 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
 	"\"ticket_validity_period_observed_at\x18\n" +
 	" \x01(\tR\x1eticketValidityPeriodObservedAt\x12Q\n" +
-	"\x15account_shortfall_wei\x18\f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13accountShortfallWei\"\xc0\x05\n" +
+	"\x15account_shortfall_wei\x18\f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13accountShortfallWei\"\xf2\x05\n" +
 	"\x1fCreateSpendAuthorizationRequest\x12\x14\n" +
 	"\x05payee\x18\x01 \x01(\fR\x05payee\x12)\n" +
 	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x12\x1d\n" +
@@ -1031,7 +1039,8 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\n" +
 	"broker_uri\x18\x0f \x01(\tR\tbrokerUri\x12\x19\n" +
 	"\bchain_id\x18\x10 \x01(\x04R\achainId\x12\"\n" +
-	"\fdenomination\x18\x11 \x01(\tR\fdenomination\"\x94\x01\n" +
+	"\fdenomination\x18\x11 \x01(\tR\fdenomination\x120\n" +
+	"\x14settlement_domain_id\x18\x12 \x01(\tR\x12settlementDomainId\"\x94\x01\n" +
 	" CreateSpendAuthorizationResponse\x12/\n" +
 	"\x13authorization_bytes\x18\x01 \x01(\fR\x12authorizationBytes\x12)\n" +
 	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x12\x14\n" +

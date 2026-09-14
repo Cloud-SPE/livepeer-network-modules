@@ -40,7 +40,7 @@ Inherited from the repo root, plus:
   → byte-identical manifest bytes. `issued_at` is the scrape window end, not
   wall-clock. Capability tuples sorted by `(capability_id, offering_id,
   worker_url)` before serialization.
-- **Uniqueness key for tuple identity.** `(capability_id, offering_id, extra,
+- **Uniqueness key for tuple identity.** `(capability_id, offering_id, settlement_domain_id, extra,
   constraints)` quadruple. `worker_url` is the endpoint, not identity.
   Identical key + different prices → hard-fail loud. Identical key + identical
   price + different `worker_url` → emit one tuple, lex-min URL wins, second URL

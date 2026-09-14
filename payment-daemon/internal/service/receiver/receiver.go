@@ -33,11 +33,13 @@ type Service struct {
 	pb.UnimplementedPayeeDaemonServer
 	pb.UnimplementedPayeeAdminServer
 
-	store     *store.Store
-	logger    *slog.Logger
-	metrics   metrics.Recorder
-	recipient []byte // 20-byte ETH address this daemon receives as
-	chainID   uint64
+	store               *store.Store
+	logger              *slog.Logger
+	metrics             metrics.Recorder
+	recipient           []byte // 20-byte ETH address this daemon receives as
+	chainID             uint64
+	settlementDomainID  string
+	settlementDomainErr error
 
 	// defaultFaceValue / defaultWinProb size ticket params when the caller
 	// does not request a target EV. A target-EV quote retains at least the
@@ -62,6 +64,9 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		return nil, status.Errorf(codes.PermissionDenied, "verify authorization: %v", err)
 	}
 	payload := auth.GetPayload()
+	if s.settlementDomainErr != nil || payload.GetSettlementDomainId() != s.settlementDomainID || s.settlementDomainID == "" {
+		return nil, status.Error(codes.PermissionDenied, "authorization settlement domain does not match receiver ledger")
+	}
 	if !bytes.Equal(payload.GetPayee(), s.recipient) {
 		return nil, status.Error(codes.PermissionDenied, "authorization payee does not match receiver")
 	}
@@ -195,6 +200,9 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 }
 
 func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAuthorizationRequest) (*pb.AdvanceAuthorizationResponse, error) {
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
 	if len(req.GetPayer()) != 20 || req.GetAuthorizationId() == "" || req.GetAdvanceSeq() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "payer, authorization_id, and positive advance_seq are required")
 	}
@@ -245,6 +253,9 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 }
 
 func (s *Service) SettleAuthorization(_ context.Context, req *pb.SettleAuthorizationRequest) (*pb.SettleAuthorizationResponse, error) {
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
 	if len(req.GetPayer()) != 20 || req.GetAuthorizationId() == "" || req.GetSettlementSeq() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "payer, authorization_id, and positive settlement_seq are required")
 	}
@@ -268,6 +279,9 @@ func (s *Service) SettleAuthorization(_ context.Context, req *pb.SettleAuthoriza
 }
 
 func (s *Service) FundWholesaleAccount(ctx context.Context, req *pb.FundWholesaleAccountRequest) (*pb.FundWholesaleAccountResponse, error) {
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
 	var payment pb.Payment
 	if err := proto.Unmarshal(req.GetPaymentBytes(), &payment); err != nil || payment.GetTicketParams() == nil || len(payment.GetSender()) != 20 || len(payment.GetTicketSenderParams()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "funding payment is malformed")
@@ -296,6 +310,9 @@ func (s *Service) FundWholesaleAccount(ctx context.Context, req *pb.FundWholesal
 }
 
 func (s *Service) GetWholesaleAccount(_ context.Context, req *pb.GetWholesaleAccountRequest) (*pb.GetWholesaleAccountResponse, error) {
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
 	if len(req.GetPayer()) != 20 {
 		return nil, status.Error(codes.InvalidArgument, "payer must be 20 bytes")
 	}
@@ -307,6 +324,9 @@ func (s *Service) GetWholesaleAccount(_ context.Context, req *pb.GetWholesaleAcc
 }
 
 func (s *Service) GetSpendAuthorization(_ context.Context, req *pb.GetSpendAuthorizationRequest) (*pb.GetSpendAuthorizationResponse, error) {
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
 	auth, err := s.store.GetWholesaleAuthorization(req.GetPayer(), req.GetAuthorizationId())
 	if errors.Is(err, store.ErrAuthorizationNotFound) {
 		return nil, status.Error(codes.NotFound, "spend authorization not found")
@@ -344,7 +364,7 @@ func (s *Service) wholesaleAccountView(account *store.WholesaleAccount) *pb.Whol
 		ReservedValueWei:  &pb.BigUInt{Value: decimalBytes(account.ReservedWei)},
 		DebitedValueWei:   &pb.BigUInt{Value: decimalBytes(account.DebitedWei)},
 		AvailableValueWei: &pb.BigUInt{Value: account.Available().Bytes()}, Version: account.Version,
-		ObservedAt: account.UpdatedAt.Format(time.RFC3339Nano), ChainId: s.chainID, Denomination: "wei",
+		ObservedAt: account.UpdatedAt.Format(time.RFC3339Nano), ChainId: s.chainID, Denomination: "wei", SettlementDomainId: s.settlementDomainID,
 	}
 }
 
@@ -382,8 +402,9 @@ type Config struct {
 	// Recipient is the 20-byte ETH address this daemon receives as.
 	// Derived at boot from the keystore (or the --orch-address override
 	// for hot/cold split).
-	Recipient []byte
-	ChainID   uint64
+	Recipient          []byte
+	ChainID            uint64
+	SettlementDomainID string
 
 	// DefaultFaceValue is the face_value embedded in newly-issued
 	// TicketParams. Nil = 1e15 wei (~0.001 ETH equivalent at typical
@@ -400,6 +421,7 @@ type Config struct {
 
 // New constructs a receiver Service backed by the given store.
 func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
+	domainID, domainErr := st.InitSettlementDomain(cfg.SettlementDomainID, cfg.ChainID, cfg.Recipient)
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -454,6 +476,7 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 		rec = metrics.NewNoop()
 	}
 	return &Service{
+		settlementDomainID: domainID, settlementDomainErr: domainErr,
 		store:            st,
 		logger:           logger,
 		metrics:          rec,
@@ -1363,7 +1386,10 @@ func (s *Service) GetRoundRevenue(_ context.Context, req *pb.GetRoundRevenueRequ
 
 // Health returns "ok" — the broker probes this at startup.
 func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResponse, error) {
-	return &pb.HealthResponse{Status: "ok"}, nil
+	if s.settlementDomainErr != nil {
+		return nil, status.Error(codes.FailedPrecondition, s.settlementDomainErr.Error())
+	}
+	return &pb.HealthResponse{Status: "ok", SettlementDomainId: s.settlementDomainID}, nil
 }
 
 func mapStoreErr(err error) error {

@@ -99,6 +99,8 @@ message SelectedRoute {
   // multipart uploads: the request carries no duration, so a consumer
   // that guesses reserves one number while the seller bills another.
   Estimator work_unit_estimator = 16;
+  // Immutable payment-ledger namespace, bound by the cold-signed tuple.
+  string settlement_domain_id = 17;
 }
 
 

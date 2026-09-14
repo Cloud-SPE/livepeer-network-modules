@@ -72,7 +72,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 	}
 	paymentHash := sha256.Sum256(paymentBytes)
 	maxDebit := big.NewInt(60)
-	initial := wholesaleAccount{
+	initial := wholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payer: "0x" + hex.EncodeToString(payerAddress), Payee: "0x0000000000000000000000000000000000000002",
 		ChainID: 42161, Denomination: "wei", Credited: "100", Reserved: "60", Debited: "10", Available: "30", Version: 7,
 	}
@@ -120,7 +120,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 		wantID:   "held-mint", wantTgt: "90", wantObs: "30",
 	}
 	payee := &recoveryPayee{payer: payerAddress, authID: "held-auth", maxDebit: maxDebit}
-	cfg := config{brokerURL: server.URL, recipient: []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}, checkpointFile: checkpoint}
+	cfg := config{settlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", brokerURL: server.URL, recipient: []byte{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2}, checkpointFile: checkpoint}
 	if err := verifyWholesaleRecovery(context.Background(), cfg, payer, payee); err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestVerifyWholesaleRecoveryAcrossRestart(t *testing.T) {
 	if verified.Phase != "verified" || verified.VerifiedAt == "" || payee.settleCalls != 2 {
 		t.Fatalf("checkpoint=%+v settle_calls=%d", verified, payee.settleCalls)
 	}
-	if err := probeWholesaleEvidence(context.Background(), config{brokerURL: server.URL, checkpointDir: filepath.Dir(checkpoint)}, payee); err != nil {
+	if err := probeWholesaleEvidence(context.Background(), config{settlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", brokerURL: server.URL, checkpointDir: filepath.Dir(checkpoint)}, payee); err != nil {
 		t.Fatal(err)
 	}
 }

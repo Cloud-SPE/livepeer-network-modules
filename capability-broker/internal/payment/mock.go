@@ -82,7 +82,7 @@ func (m *Mock) mockAccountLocked(payer, payee []byte) *WholesaleAccount {
 	// Unit and broker tests should fail on authorization shape, not on fixture
 	// treasury setup. Production funding is exercised by the receiver suite.
 	float := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	account := &WholesaleAccount{Payer: append([]byte(nil), payer...), Payee: append([]byte(nil), payee...), Credited: new(big.Int).Set(float), Reserved: new(big.Int), Debited: new(big.Int), Available: new(big.Int).Set(float), Version: 1, ChainID: 42161, Denomination: "wei"}
+	account := &WholesaleAccount{SettlementDomainID: MockSettlementDomainID, Payer: append([]byte(nil), payer...), Payee: append([]byte(nil), payee...), Credited: new(big.Int).Set(float), Reserved: new(big.Int), Debited: new(big.Int), Available: new(big.Int).Set(float), Version: 1, ChainID: 42161, Denomination: "wei"}
 	m.wholesaleAccounts[key] = account
 	return account
 }
@@ -91,7 +91,7 @@ func cloneWholesaleAccount(in *WholesaleAccount) *WholesaleAccount {
 	if in == nil {
 		return nil
 	}
-	return &WholesaleAccount{Payer: append([]byte(nil), in.Payer...), Payee: append([]byte(nil), in.Payee...), Credited: new(big.Int).Set(in.Credited), Reserved: new(big.Int).Set(in.Reserved), Debited: new(big.Int).Set(in.Debited), Available: new(big.Int).Set(in.Available), Version: in.Version, ObservedAt: in.ObservedAt, ChainID: in.ChainID, Denomination: in.Denomination}
+	return &WholesaleAccount{SettlementDomainID: in.SettlementDomainID, Payer: append([]byte(nil), in.Payer...), Payee: append([]byte(nil), in.Payee...), Credited: new(big.Int).Set(in.Credited), Reserved: new(big.Int).Set(in.Reserved), Debited: new(big.Int).Set(in.Debited), Available: new(big.Int).Set(in.Available), Version: in.Version, ObservedAt: in.ObservedAt, ChainID: in.ChainID, Denomination: in.Denomination}
 }
 
 func (m *Mock) FundWholesaleAccount(_ context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
@@ -267,7 +267,7 @@ func (m *Mock) GetTicketParams(_ context.Context, req GetTicketParamsRequest) (*
 	}
 	m.mu.Unlock()
 
-	return &TicketParams{
+	return &TicketParams{SettlementDomainID: MockSettlementDomainID,
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         faceValue,
 		WinProb:           big.NewInt(0),
@@ -723,3 +723,8 @@ func bytesEqual(a, b []byte) bool {
 
 // Compile-time interface check.
 var _ Client = (*Mock)(nil)
+
+// MockSettlementDomainID is test-only; production IDs come from the financial ledger.
+const MockSettlementDomainID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+func (m *Mock) SettlementDomain(context.Context) (string, error) { return MockSettlementDomainID, nil }

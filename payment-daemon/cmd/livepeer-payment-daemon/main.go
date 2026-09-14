@@ -70,11 +70,12 @@ const configErrExitCode = 2
 
 func main() {
 	var (
-		mode          = flag.String("mode", "", "required: 'sender' or 'receiver'")
-		socketPath    = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
-		dbPath        = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
-		txintentDB    = flag.String("txintent-db", "", "BoltDB path for the redemption transaction-intent store (receiver, chain mode): every redeemWinningTicket the daemon has signed, its nonce and attempts, so a restart resumes in-flight redemptions instead of re-sending them. Empty = txintents.db beside --db.")
-		maxPaymentWei = flag.String("max-payment-wei", "",
+		mode               = flag.String("mode", "", "required: 'sender' or 'receiver'")
+		socketPath         = flag.String("socket", "", "unix socket the gRPC server listens on (default: per-mode)")
+		settlementDomainID = flag.String("settlement-domain-id", "", "Immutable receiver ledger ID; optional bootstrap import, must match stored ID")
+		dbPath             = flag.String("db", "/var/lib/livepeer/payment-daemon/sessions.db", "BoltDB ledger path: receiver sessions, or sender mint-idempotency records")
+		txintentDB         = flag.String("txintent-db", "", "BoltDB path for the redemption transaction-intent store (receiver, chain mode): every redeemWinningTicket the daemon has signed, its nonce and attempts, so a restart resumes in-flight redemptions instead of re-sending them. Empty = txintents.db beside --db.")
+		maxPaymentWei      = flag.String("max-payment-wei", "",
 			"sender: REQUIRED in chain mode. Largest funded value this daemon will authorize for a single payment, in wei. "+
 				"A circuit breaker against runaway loops and fat-fingered funding, not a price policy — see --max-price-per-unit.")
 		maxTicketFaceValueWei = flag.String("max-ticket-face-value-wei", "",
@@ -164,6 +165,7 @@ func main() {
 		mode:                  *mode,
 		socketPath:            *socketPath,
 		dbPath:                *dbPath,
+		settlementDomainID:    *settlementDomainID,
 		txintentDBPath:        intentDBPath,
 		mintRetention:         *mintRetention,
 		maxPaymentWei:         *maxPaymentWei,
@@ -207,6 +209,7 @@ type bootConfig struct {
 	mode                  string
 	socketPath            string
 	dbPath                string
+	settlementDomainID    string
 	txintentDBPath        string
 	mintRetention         time.Duration
 	maxPaymentWei         string
@@ -409,6 +412,10 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		if len(raw) == 20 {
 			recipient = raw
 		}
+	}
+
+	if _, err := st.InitSettlementDomain(cfg.settlementDomainID, uint64(cfg.expectedChainID), recipient); err != nil {
+		return err
 	}
 
 	svc := receiver.New(st, receiver.Config{Recipient: recipient, ChainID: uint64(cfg.expectedChainID), Recorder: rec}, logger.With("component", "receiver"))

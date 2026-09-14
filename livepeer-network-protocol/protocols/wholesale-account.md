@@ -1,8 +1,8 @@
 ---
 spec_name: wholesale-account
-version: 1.1.0-draft
+version: 2.0.0-draft
 status: draft
-last_updated: 2026-09-11
+last_updated: 2026-09-14
 ---
 
 # Wholesale account and spend authorization
@@ -16,7 +16,7 @@ The key words MUST, MUST NOT, SHOULD, and MAY are interpreted as in RFC 2119.
 ## 1. Stable account
 
 The receiver maintains one economic account per `(chain, payer, payee,
-denomination)`. Tickets credit this account. Requests, sessions, capabilities,
+settlement_domain_id, denomination)`. Tickets credit this account. Requests, sessions, capabilities,
 offerings, quotes, and recipient-random `work_id` generations do not own the
 balance.
 
@@ -36,11 +36,34 @@ local account.
 Admission and settlement MUST be durable and atomic. Concurrent authorization
 admissions MUST NOT reserve the same available value.
 
+
+### 1.1 Settlement domains (protocol major 4)
+
+`settlement_domain_id` MUST identify one independent financial ledger and MUST be
+cold-bound to every route's `worker_url`. It MUST be a nonzero 256-bit public ID
+encoded as `0x` plus 64 lowercase hex digits. The receiver owns and persists it;
+ordinary broker configuration MUST NOT change it. Independent ledgers under the
+same orchestrator MUST use distinct IDs. Account versions and balances are local
+to their complete account tuple. Funding A MUST NOT credit B.
+
+SelectedRoute, SpendAuthorizationPayload, AccountFundingIntent, account observations,
+account RPC requests and SettlementRecord carry the ID. Missing or mismatching IDs
+MUST fail closed before paid work or account mutation. Payers MUST verify an account
+observation and ticket-parameter response name the selected route's domain before
+using them. Ticket parameters carry the ID in their HTTP response envelope; on-chain
+ticket protobufs and redemption signatures are unchanged.
+
+A URL migration with the complete same ledger preserves account identity but requires
+new route-bound authorizations. A new independent ledger starts a new account;
+credit MUST NOT be silently merged or transferred. The exact canonical URI rules,
+bootstrap/restore requirements and migration procedure are defined in
+[settlement-domain identity](../../docs/design-docs/settlement-domain-identity.md).
+
 ## 2. Single-purpose authorization
 
 `SpendAuthorization` is deterministic protobuf signed by the payer using
 keccak256 plus Ethereum personal-sign (EIP-191). Its domain is exactly
-`livepeer-spend-authorization/v1`.
+`livepeer-spend-authorization/v2`.
 
 The signed bytes are unambiguous:
 
@@ -109,7 +132,7 @@ issued -> admitted -> settled
    \-> expired_unused
 ```
 
-`authorization_id` is payer-scoped and idempotent. Reuse with different
+`authorization_id` is scoped to the complete account tuple and is idempotent. Reuse with different
 content MUST fail. Repeated admission or settlement with identical content
 MUST replay the recorded result without a second reservation, execution, or
 debit.
@@ -174,6 +197,13 @@ ticket-session workload path.
 
 ## 8. Conformance
 
+Conformance additionally requires two independent receiver ledgers with one payer
+and payee: funding A leaves B unchanged; versions advance independently; B rejects
+A authorizations and A tickets; both balances can fund work; a URL move preserves
+one ledger while a new ledger starts a new account. See the executable
+[two-ledger fixture](../../payment-daemon/internal/service/sender/settlement_domain_e2e_test.go)
+and [store migration tests](../../payment-daemon/internal/store/settlement_domain_test.go).
+
 Conformance covers: funding-free admission from existing credit, exact
 shortfall funding, concurrent reservation exclusion, replay, altered scope,
 expiry, omitted callback recovery, actual settlement and release, session cap
@@ -204,5 +234,6 @@ route-exit residue rather than allowing it to grow with every request maximum.
 
 | Version | Date | Change |
 |---|---|---|
+| 2.0.0-draft | 2026-09-14 | Requires immutable payment-ledger settlement domains, v2 signed authorizations, domain-bound funding/account observations, independent account versions and explicit migration semantics. |
 | 1.1.0-draft | 2026-09-11 | Makes stable wholesale accounts and single-purpose spend authorization mandatory for every paid workload. Removes offer feature negotiation and payment-only fallback, defines the coordinated drain, and confines tickets to account funding and authorized shortfall funding. |
 | 1.0.0-draft | 2026-09-09 | Introduces stable payer-payee accounts, single-purpose spend authorization, aggregate shortfall funding, and migration-fenced compatibility with ticket-session accounting. |

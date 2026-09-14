@@ -1,6 +1,6 @@
 {
   "manifest": {
-    "spec_version": "3.0.0",
+    "spec_version": "4.0.0",
     "publication_seq": 1,
     "issued_at": "2026-05-06T12:34:56Z",
     "expires_at": "2026-06-05T12:34:56Z",
@@ -13,8 +13,15 @@
         "capability_id": "openai:chat-completions",
         "offering_id": "vllm-h100-batch4",
         "protocol": "paid-job/v1",
-        "job": { "transports": ["unary", "stream"] },
-        "work_unit": { "name": "tokens" },
+        "job": {
+          "transports": [
+            "unary",
+            "stream"
+          ]
+        },
+        "work_unit": {
+          "name": "tokens"
+        },
         "price_per_unit_wei": "1500000",
         "worker_url": "https://broker-a.orch.example.com",
         "extra": {
@@ -23,14 +30,21 @@
           },
           "region": "us-west-2",
           "gpu_class": "h100"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "openai:audio-transcriptions",
         "offering_id": "whisper-large",
         "protocol": "paid-job/v1",
-        "job": { "transports": ["multipart"] },
-        "work_unit": { "name": "audio_seconds" },
+        "job": {
+          "transports": [
+            "multipart"
+          ]
+        },
+        "work_unit": {
+          "name": "audio_seconds"
+        },
         "price_per_unit_wei": "40000",
         "worker_url": "https://broker-a.orch.example.com",
         "extra": {
@@ -38,7 +52,8 @@
             "model": "whisper-large-v3"
           },
           "region": "us-west-2"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "video:transcode.live",
@@ -48,25 +63,38 @@
           "descriptor_schema": "rtmp-hls/v1",
           "metering": "runner-reported",
           "refill": "extensible",
-          "heartbeat": { "interval_seconds": 10, "missed_threshold": 3 },
+          "heartbeat": {
+            "interval_seconds": 10,
+            "missed_threshold": 3
+          },
           "runway_increment_units": 60000
         },
-        "work_unit": { "name": "video-frame-megapixel" },
+        "work_unit": {
+          "name": "video-frame-megapixel"
+        },
         "price_per_unit_wei": "200000",
         "worker_url": "https://broker-b.orch.example.com",
         "extra": {
           "region": "us-east-1",
           "gpu_class": "intel-arc"
-        }
+        },
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       },
       {
         "capability_id": "kibble:doggo-bark-counter:v1",
         "offering_id": "default",
         "protocol": "paid-job/v1",
-        "job": { "transports": ["unary"] },
-        "work_unit": { "name": "barks" },
+        "job": {
+          "transports": [
+            "unary"
+          ]
+        },
+        "work_unit": {
+          "name": "barks"
+        },
         "price_per_unit_wei": "100",
-        "worker_url": "https://broker-a.orch.example.com"
+        "worker_url": "https://broker-a.orch.example.com",
+        "settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
       }
     ]
   },

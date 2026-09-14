@@ -173,8 +173,9 @@ func indexByKey(m *types.ManifestPayload) (map[string]*types.CapabilityTuple, er
 
 func uniquenessKey(c *types.CapabilityTuple) (string, error) {
 	root := map[string]any{
-		"capability_id": c.CapabilityID,
-		"offering_id":   c.OfferingID,
+		"settlement_domain_id": c.SettlementDomainID,
+		"capability_id":        c.CapabilityID,
+		"offering_id":          c.OfferingID,
 	}
 	if len(c.Extra) > 0 {
 		root["extra"] = c.Extra

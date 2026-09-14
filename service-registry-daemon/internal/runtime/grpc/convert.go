@@ -16,7 +16,7 @@ import (
 )
 
 // Conversion between domain types (internal/types) and proto messages
-// (proto/gen/...). Pure functions; no I/O. Tested via round-trip and
+// (the sibling proto-contracts module). Pure functions; no I/O. Tested via round-trip and
 // known-value cases in convert_test.go.
 
 // resolveModeToProto maps a domain ResolveMode to its wire enum.
@@ -77,8 +77,7 @@ func sourceToProto(s types.Source) registryv1.Source {
 	}
 }
 
-// sourceFromProto maps the wire enum back. Used by the publisher path
-// where a consumer authored a Node in proto form.
+// sourceFromProto maps the wire enum back for local conversions and tests.
 func sourceFromProto(s registryv1.Source) types.Source {
 	switch s {
 	case registryv1.Source_SOURCE_MANIFEST:
@@ -280,7 +279,8 @@ func selectedRouteFromResolvedNode(n types.ResolvedNode, f selection.Filter) (*S
 }
 
 // settlementKeysFor carries the orch's delegated settlement keys onto a
-// route. Every currently-valid key, not just the active one: LOC pins
+// route. All advertised keys and validity windows are forwarded; consumers
+// must check the settlement record time. LOC pins
 // this set with its immutable route snapshot, and a record signed just
 // before a rotation has to keep verifying against a snapshot taken
 // before it.

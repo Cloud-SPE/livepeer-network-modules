@@ -16,10 +16,12 @@ lint:
 	$(MAKE) lint-custom
 
 lint-custom:
+	go run ./tools/manifest-doc --check
 	go run ./lint/doc-gardener --root .
 	go run ./lint/no-unverified-manifest --root .
 
 doc-lint:
+	go run ./tools/manifest-doc --check
 	go run ./lint/doc-gardener --root .
 
 coverage:
@@ -63,3 +65,7 @@ docker-push:
 
 clean:
 	rm -rf bin/
+
+.PHONY: docs-generate
+docs-generate:
+	go run ./tools/manifest-doc

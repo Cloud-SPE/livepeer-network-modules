@@ -1,6 +1,6 @@
 # AGENTS.md — livepeer-service-registry
 
-This is the Livepeer Service Registry Daemon repository. The daemon decouples orchestrator/worker discovery from `go-livepeer` by serving a small gRPC surface over a local unix socket. Any application — gateways, bridges, transcoding clients, AI-job dispatchers — can publish capabilities or resolve them without depending on `go-livepeer`'s monolithic discovery code paths.
+This is the Livepeer Service Registry Daemon repository. The daemon decouples orchestrator/worker discovery from `go-livepeer` by serving a small gRPC surface over a local unix socket. Applications — gateways, bridges, transcoding clients, AI-job dispatchers — resolve capabilities and select broker routes without depending on `go-livepeer`'s monolithic discovery code paths.
 
 **Humans steer. Agents execute. Scaffolding is the artifact.**
 
@@ -36,7 +36,7 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 
 ## Toolchain
 
-- Go 1.25+
+- Go version from `go.mod` (currently 1.25.7)
 - `buf` + `protoc` — only in the sibling `proto-contracts/` module, which owns the `.proto` sources and generated stubs this daemon imports
 - `golangci-lint` + custom lints in `lint/`
 
@@ -45,16 +45,16 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 - `make build` — build the daemon binary
 - `make test` — run unit tests (race-enabled)
 - `make lint` — run all lints (golangci-lint + custom)
-- `make doc-lint` — validate knowledge-base cross-links and freshness
+- `make doc-lint` — validate knowledge-base current cross-links, generated examples and review dates
 
 ## Invariants (do not break without a design-doc)
 
 1. **All resolver modes coexist.** Resolver must transparently handle: (a) a full manifest URL `serviceURI`, (b) an opt-in CSV pointer if encountered (read-only fallback), and (c) chainless static-overlay synth when the chain has no entry but the operator overlay supplies pins (`--discovery=overlay-only` deployments). An overlay `manifest_url` may replace the serviceURI lookup and uses the same verified-manifest pipeline. Overlay-only mode constructs no chain provider. Resolver chain lookups may consult both `ServiceRegistry` and `AIServiceRegistry`; the chain provider tries the primary registry first, then the AI registry when the primary has no pointer. See `docs/design-docs/serviceuri-modes.md`.
 2. **Workload-agnostic.** No domain in `internal/` may hard-code "ai", "transcoding", "openai", "llm". Capabilities are opaque strings; the registry doesn't know what they mean. See core-beliefs §3.
 3. **Providers boundary.** No cross-cutting dependency is imported outside `internal/providers/`.
-4. **Manifests are signed.** Resolver rejects an unsigned manifest unless the operator has whitelisted that ethAddress as `unsigned-allowed` in the static overlay. Enforced by `lint/no-unverified-manifest`.
+4. **Manifests are signed.** Resolver rejects an unsigned manifest in every case. The overlay `unsigned_allowed` field permits unsigned static/CSV nodes, never an unsigned coordinator envelope. Signature recovery is enforced by the resolver; `lint/no-unverified-manifest` is only a source-text guard against suspicious decoding.
 5. **No code without a plan.** Non-trivial work starts with an entry in `docs/exec-plans/active/`.
-6. **Test coverage ≥ 75% per package.** CI fails below this threshold.
+6. **Test coverage target ≥ 75% per package.** The current coverage-gate is a stub; enforcement and below-floor packages are tracked in beads `lnm-gpd`.
 
 ## Where to look for X
 

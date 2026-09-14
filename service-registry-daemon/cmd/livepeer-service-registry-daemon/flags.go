@@ -23,7 +23,7 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "unix socket path for gRPC")
 	fs.StringVar(&cfg.StorePath, "store-path", cfg.StorePath, "BoltDB file path")
 	fs.Var((*csvList)(&cfg.ChainRPCURLs), "chain-rpc-urls", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read fails over across the list (required in resolver mode; mutually exclusive with --dev)")
-	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "expected chain ID (sanity check)")
+	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "reserved expected chain ID (currently not enforced)")
 	fs.StringVar(&cfg.ControllerAddress, "controller-address", cfg.ControllerAddress, "Livepeer Controller contract address; used for resolver chain auto-discovery (BondingManager + RoundsManager). Default Arbitrum One")
 	fs.StringVar(&cfg.ServiceRegistryAddress, "service-registry-address", cfg.ServiceRegistryAddress, "optional override for the primary registry contract address; when empty, resolver reads ServiceRegistry from Controller")
 	fs.StringVar(&cfg.AIServiceRegistryAddress, "ai-service-registry-address", cfg.AIServiceRegistryAddress, "AI registry contract address; when set, resolver lookups use this registry instead of the primary/controller-derived registry")
@@ -44,14 +44,14 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.DurationVar(&cfg.ManifestFetchTimeout, "manifest-fetch-timeout", cfg.ManifestFetchTimeout, "HTTP timeout per manifest fetch")
 	fs.DurationVar(&cfg.MaxStale, "max-stale", cfg.MaxStale, "drop last-good after this duration")
 	fs.StringVar(&cfg.StaticOverlayPath, "static-overlay", cfg.StaticOverlayPath, "path to nodes.yaml")
-	fs.BoolVar(&cfg.RejectUnsigned, "reject-unsigned", cfg.RejectUnsigned, "reject unsigned manifests by default")
+	fs.BoolVar(&cfg.RejectUnsigned, "reject-unsigned", cfg.RejectUnsigned, "reject unsigned static/CSV nodes by default; signed envelopes always require verification")
 
 	// Publisher-only
 	fs.StringVar(&cfg.KeystorePath, "keystore-path", cfg.KeystorePath, "V3 JSON keystore for orchestrator key (publisher only)")
 	keystorePasswordFile := fs.String("keystore-password-file", "", "file containing keystore password (defaults to LIVEPEER_KEYSTORE_PASSWORD env)")
-	fs.StringVar(&cfg.OrchAddress, "orch-address", cfg.OrchAddress, "explicit orchestrator address (defaults to keystore address)")
-	fs.StringVar(&cfg.ManifestOut, "manifest-out", cfg.ManifestOut, "if set, write signed manifest JSON here on every SignManifest")
-	fs.DurationVar(&cfg.WorkerProbeTimeout, "worker-probe-timeout", cfg.WorkerProbeTimeout, "HTTP timeout for ProbeWorker")
+	fs.StringVar(&cfg.OrchAddress, "orch-address", cfg.OrchAddress, "deprecated no-op; publisher identity comes from its keystore")
+	fs.StringVar(&cfg.ManifestOut, "manifest-out", cfg.ManifestOut, "deprecated no-op; manifest signing moved to the cold console")
+	fs.DurationVar(&cfg.WorkerProbeTimeout, "worker-probe-timeout", cfg.WorkerProbeTimeout, "HTTP timeout for resolver broker live-health requests")
 
 	// Metrics (both modes)
 	fs.StringVar(&cfg.MetricsListen, "metrics-listen", cfg.MetricsListen, "host:port for the Prometheus /metrics HTTP listener; empty (default) disables it")

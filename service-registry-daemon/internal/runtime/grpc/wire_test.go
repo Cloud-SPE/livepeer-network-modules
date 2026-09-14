@@ -814,3 +814,49 @@ func TestWire_OverlayManifestSelectRetriesUncachedAddress(t *testing.T) {
 		t.Fatalf("incomplete overlay route: %+v", route)
 	}
 }
+
+func TestWire_SelectHonorsUnsignedPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name                                     string
+		overlayAllows, rejectUnsigned, wantRoute bool
+	}{
+		{"default-reject", false, true, false},
+		{"overlay-allows", true, true, true},
+		{"daemon-allows", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWireFixture(t)
+			o, err := config.ParseOverlayYAML([]byte(fmt.Sprintf(`overlay:
+  - eth_address: %q
+    unsigned_allowed: %t
+    pin:
+      - id: static
+        url: https://broker.example.com
+        capabilities:
+          - name: example:work
+            protocol: paid-job/v1
+            work_unit: unit
+            offerings:
+              - id: default
+                price_per_work_unit_wei: "10"
+`, f.addr, tc.overlayAllows)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.server.resolverSvc = resolver.New(resolver.Config{Fetcher: f.fetcher, Cache: f.cache, Audit: f.auditRepo, Clock: f.clk, Overlay: func() *config.Overlay { return o }, OverlayOnly: true, RejectUnsigned: tc.rejectUnsigned})
+			cli := registryv1.NewResolverClient(f.clientConn)
+			req := &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}
+			// Both calls exercise initial synthesis and cached rehydration.
+			for i := 0; i < 2; i++ {
+				result, err := cli.Select(context.Background(), req)
+				if !tc.wantRoute {
+					if status.Code(err) != codes.NotFound {
+						t.Fatalf("unsigned route escaped policy: %v %v", result, err)
+					}
+				} else if err != nil || result.GetRoute().GetWorkerUrl() != "https://broker.example.com" {
+					t.Fatalf("allowed route missing: %v %v", result, err)
+				}
+			}
+		})
+	}
+}

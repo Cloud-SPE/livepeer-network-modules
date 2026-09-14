@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 )
@@ -213,5 +214,36 @@ func TestParseOverlayYAML_ManifestURL(t *testing.T) {
 				t.Fatalf("bad discovery entry: %+v", o.Entries[0])
 			}
 		})
+	}
+}
+
+func TestShippedOverlayExamples(t *testing.T) {
+	for _, path := range []string{"../../registry.example.yaml", "../../examples/static-overlay-only/nodes.yaml"} {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		overlay, err := ParseOverlayYAML(raw)
+		if err != nil {
+			t.Fatalf("%s: %v", path, err)
+		}
+		if len(overlay.Entries) == 0 {
+			t.Fatalf("%s: no examples", path)
+		}
+		for _, entry := range overlay.Entries {
+			if entry.ManifestURL != "" {
+				continue
+			}
+			if !entry.UnsignedAllowed {
+				t.Fatalf("%s: static example missing explicit unsigned policy", path)
+			}
+			for _, pin := range entry.Pin {
+				for _, cap := range pin.Capabilities {
+					if cap.Protocol == "" || cap.WorkUnit == "" || len(cap.Offerings) == 0 {
+						t.Fatalf("%s: incomplete static route %s", path, pin.ID)
+					}
+				}
+			}
+		}
 	}
 }

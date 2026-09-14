@@ -21,7 +21,7 @@ func main() {
 	docsDir := filepath.Join(*root, "docs")
 	if _, err := os.Stat(docsDir); err != nil {
 		fmt.Fprintf(os.Stderr, "doc-gardener: docs/ not found at %s\n", docsDir)
-		os.Exit(0)
+		os.Exit(1)
 	}
 
 	// 1. Walk docs/design-docs/, check frontmatter on each .md.
@@ -45,25 +45,7 @@ func main() {
 		return nil
 	})
 
-	// 2. Cross-link check: every relative .md link in AGENTS.md / DESIGN.md / README.md
-	//    resolves to an existing file.
-	for _, top := range []string{"AGENTS.md", "DESIGN.md", "README.md"} {
-		p := filepath.Join(*root, top)
-		if _, err := os.Stat(p); err != nil {
-			continue
-		}
-		body, _ := os.ReadFile(p)
-		problems = append(problems, checkLinks(p, *root, string(body))...)
-	}
-	// Walk all docs and check too.
-	_ = filepath.WalkDir(docsDir, func(path string, d fs.DirEntry, _ error) error {
-		if d == nil || d.IsDir() || !strings.HasSuffix(path, ".md") {
-			return nil
-		}
-		body, _ := os.ReadFile(path)
-		problems = append(problems, checkLinks(path, *root, string(body))...)
-		return nil
-	})
+	problems = append(problems, checkCurrentLinks(*root)...)
 
 	if len(problems) > 0 {
 		for _, p := range problems {
@@ -71,6 +53,42 @@ func main() {
 		}
 		os.Exit(1)
 	}
+}
+
+// checkCurrentLinks checks every current Markdown file, including examples and
+// lint instructions. Historical references and completed plans retain their
+// original relative paths and are deliberately outside this current-doc gate.
+func checkCurrentLinks(root string) []string {
+	var problems []string
+	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel == "docs/references" || rel == "docs/exec-plans/completed" || strings.HasPrefix(d.Name(), ".") && rel != "." || d.Name() == "node_modules" || d.Name() == "bin" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		problems = append(problems, checkLinks(path, root, string(body))...)
+		return nil
+	})
+	if err != nil {
+		problems = append(problems, fmt.Sprintf("%s: walk: %v", root, err))
+	}
+	return problems
 }
 
 var (

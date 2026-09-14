@@ -18,7 +18,9 @@
 #     over between entries)
 # Optional:
 #   - expose METRICS_PORT for Prometheus
-#   - set STATIC_OVERLAY to bypass chain discovery
+#   - set DISCOVERY_MODE=overlay-only, STATIC_OVERLAY=/etc/livepeer/nodes.yaml
+#     and STATIC_OVERLAY_HOST_PATH to discover signed coordinator manifests
+#     without registry chain RPC
 #
 # Every optional variable carries its default inline (${VAR:-default}) so
 # the .env only needs the Required section of .env.example.
@@ -32,7 +34,7 @@ services:
       - --mode=resolver
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:-}
       - --chain-id=${CHAIN_ID:-42161}
       - --controller-address=${CONTROLLER_ADDRESS:-0xD8E8328501E9645d16Cf49539efC04f734606ee4}
       - --service-registry-address=${SERVICE_REGISTRY_ADDRESS:-}
@@ -55,6 +57,8 @@ services:
     volumes:
       - service-registry-socket:/var/run/livepeer
       - service-registry-state:/var/lib/livepeer
+      # Applied only when STATIC_OVERLAY points at this container path.
+      - ${STATIC_OVERLAY_HOST_PATH:-../registry.example.yaml}:/etc/livepeer/nodes.yaml:ro
 
     read_only: true
     security_opt:

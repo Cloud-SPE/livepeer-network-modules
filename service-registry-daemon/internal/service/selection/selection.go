@@ -1,6 +1,5 @@
 // Package selection holds Filter + rank logic. Used by the resolver
-// gRPC Select() RPC and (occasionally) by tests + the publisher's
-// "did the manifest I just signed satisfy this filter?" sanity check.
+// gRPC Select/SelectMany RPCs and in-process tests.
 //
 // Selection is conjunctive (AND across criteria) and is stable
 // within a single process: the input order of nodes determines tie

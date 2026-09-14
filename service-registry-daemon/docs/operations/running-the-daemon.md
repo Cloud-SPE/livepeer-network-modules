@@ -1,185 +1,148 @@
 # Running the daemon
 
-## Modes
+Use the component Dockerfile/Compose for deployment. `make build` and
+`make test` are host-development targets using the Go version in `go.mod`.
+All commands below are run from `service-registry-daemon/` unless stated.
 
-- `--mode=publisher` — orchestrator-side. Loads keystore, builds + signs manifests, and writes signed JSON to disk for operator-managed hosting. On-chain `ServiceRegistry` writes live in `protocol-daemon`.
-- `--mode=resolver` — consumer-side. Reads on-chain, fetches + verifies manifests, serves resolved nodes via gRPC.
+## Modes and discovery
 
-A single host can run both daemons side-by-side with separate sockets and stores; they don't interact.
+- Resolver mode fetches/verifies manifests, stores cache/audit state and serves
+  inventory and selected routes over a unix socket.
+- Publisher mode loads a V3 keystore and serves GetIdentity/Health only. It
+  does not build/sign/write/host manifests or submit chain transactions.
 
-## Common flags
+Production chain discovery requires `--chain-rpc-urls`. It resolves Controller
+addresses, seeds active orchestrators on round events, and reads serviceURI
+per address. Explicit overlay manifest pointers take precedence.
 
-| Flag | Default | Notes |
-|---|---|---|
-| `--mode` | (required) | `publisher` or `resolver` |
-| `--socket` | `/var/run/livepeer-service-registry.sock` | Unix socket path for gRPC |
-| `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB file (resolver only by default; publisher also uses it for write history) |
-| `--chain-rpc-urls` | _(required for production chain discovery)_ | Comma-separated Ethereum JSON-RPC endpoints, primary first; the daemon fails over between them. No built-in default. Overlay-only mode does not use this option. |
-| `--chain-id` | `42161` | Sanity check; daemon refuses to boot if RPC reports a different chain |
-| `--controller-address` | `0xD8E8...6ee4` (Arbitrum One) | Livepeer Controller. Resolver derives `BondingManager` + `RoundsManager` from it, and `ServiceRegistry` too when `--service-registry-address` is empty. |
-| `--service-registry-address` | `""` | Optional override for the primary registry contract used by resolver `getServiceURI()` lookups. When empty, the resolver reads `ServiceRegistry` from Controller. |
-| `--ai-service-registry-address` | `0x04C0...` (Arbitrum One) | Optional AI registry fallback. Resolver consults it when the primary registry has no pointer for the address. |
-| `--log-format` | `text` | `text` or `json` |
-| `--log-level` | `info` | `debug`, `info`, `warn`, `error` |
-
-## Resolver-only flags
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--discovery` | `chain` | `chain` walks BondingManager pool on each round event (auto-discovery; default). `overlay-only` skips chain enumeration and serviceURI lookups, using signed `manifest_url` pointers or unsigned static pins; the daemon walks `--static-overlay` once at startup and pre-resolves each enabled entry so `ListKnown` / `Select` return the operator-curated pool without per-consumer `Refresh` calls. |
-| `--round-poll-interval` | `1m` | How often the chain-commons timesource polls `RoundsManager.currentRound()` to detect round transitions. Bounds detection latency for cache refreshes; ~19 hour rounds make 1 minute plenty. |
-| `--cache-manifest-ttl` | `600s` | Reuse fetched manifest for this long. Independent of round-anchored chain refreshes. |
-| `--manifest-max-bytes` | `4194304` (4 MiB) | Hard cap on manifest body size; operator-tunable up to 16 MiB |
-| `--manifest-fetch-timeout` | `5s` | HTTP timeout per fetch attempt |
-| `--max-stale` | `1h` | After this, last-good is dropped and `cache_stale_failing` is returned |
-| `--static-overlay` | `""` (none) | Path to operator-curated `nodes.yaml`. Layered on top of chain discovery (overlay wins on policy fields like `enabled` / `tier_allowed` / `weight`). |
-| `--reject-unsigned` | `true` | If `false`, unsigned manifests (CSV-mode) are returned without `allow_unsigned=true` per request |
-| `--worker-probe-timeout` | `5s` | HTTP timeout for the live-health probe of a worker's `/registry/health` during `Select` / `SelectMany`. Despite the name this is **not** publisher-only — it is on the resolver request path. |
-
-The previously-documented `--cache-chain-ttl` flag was removed in plan 0009 §C
-(2026-04-27) when chain-side cache invalidation switched from a fixed TTL to
-round-anchored refreshes via `chain-commons.services.roundclock`.
-
-## Publisher-only flags
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--keystore-path` | (required) | V3 JSON keystore for the orchestrator's eth key |
-| `--keystore-password-file` | (or `LIVEPEER_KEYSTORE_PASSWORD` env) | Password for the keystore |
-| `--orch-address` | (derived from keystore) | Override for hot/cold split (advanced) |
-| `--worker-probe-timeout` | `5s` | Resolver-side worker probing (see the resolver table). |
-
-## Metrics flags (both modes)
-
-| Flag | Default | Notes |
-|---|---|---|
-| `--metrics-listen` | `""` (off) | TCP `host:port` for the Prometheus `/metrics` listener. Empty = no listener. |
-| `--metrics-path` | `/metrics` | URL path the handler is bound to. |
-| `--metrics-max-series-per-metric` | `10000` | Cardinality cap. New label tuples beyond this are logged + dropped. `0` disables the cap. |
-
-Sample `prometheus.yml` scrape config (for `--metrics-listen=:9091`):
+Production overlay-only uses enabled YAML entries as its entire discovery set.
+`manifest_url` points to the coordinator's signed manifest, whose tuples contain
+broker URLs. No registry RPC connection or dev flag is required. Static pins
+are a separate unsigned route source.
 
 ```yaml
-scrape_configs:
-  - job_name: livepeer-service-registry
-    scrape_interval: 15s
-    static_configs:
-      - targets: ['registry-host:9091']
-        labels:
-          mode: resolver   # or publisher
+overlay:
+  - eth_address: "0x0123456789abcdef0123456789abcdef01234567"
+    manifest_url: "https://coordinator.example.com/.well-known/livepeer-registry.json"
 ```
 
-The `/healthz` endpoint on the same listener returns plain-text `ok` for k8s/HTTP liveness probes that prefer not to use gRPC health-checking.
-
-Full metric catalog: [`docs/design-docs/observability.md`](../design-docs/observability.md).
-
-A pre-built Grafana dashboard covering the catalog ships in [`docs/operations/grafana/`](grafana/) — drop the JSON into Grafana's import dialog and pick your Prometheus datasource. UID is `livepeer-service-registry`, so re-imports update in place.
-
-A matching set of Prometheus alert rules ships in [`docs/operations/prometheus/`](prometheus/) — three severity tiers (`page` / `ticket` / `info`), twelve alerts. Drop into your `rule_files:` and reload Prometheus.
-
-## Dev mode
-
-Set `--dev` on either mode. Effects:
-- All providers are replaced with in-memory fakes (Chain, Signer, Verifier, Store).
-- A throwaway eth key is generated at boot (publisher mode).
-- A loud `=== DEV MODE ===` banner prints to stderr.
-- Manifest fetcher accepts `http://localhost:*` URLs.
-
-`--dev` and `--chain-rpc-urls` are mutually exclusive.
-
-## Health
-
-Three liveness surfaces, all real:
-
-- the gRPC `Resolver.Health()` / `Publisher.Health()` methods;
-- the standard `grpc.health.v1.Health` service (plus server reflection) on the same socket;
-- plain-text `GET /healthz` on the metrics listener, when `--metrics-listen` is set.
-
-There is **no** heartbeat file. Earlier drafts of this page described a
-`daemon.alive` file next to `--store-path`; the daemon has never written
-one, so do not build a file-mtime probe around it.
-
-## Shutdown
-
-SIGTERM / SIGINT triggers graceful shutdown:
-1. Stop accepting new gRPC requests (and stop the metrics listener + chain seeder).
-2. Wait up to 10s for the serve goroutines to drain.
-3. Close BoltDB, release file locks.
-4. Exit 0.
-
-Only SIGINT and SIGTERM are handled. A second signal during the drain is
-not special-cased — it does not shorten the wait. Any other signal
-(SIGHUP included) takes the Go runtime default and kills the process.
-
-## Logging
-
-`slog` structured logging. Every entry includes `mode`, `eth_address` (when applicable), and `correlation_id`. Examples:
-
-```
-INFO mode=resolver eth_address=0xabcd...0123 event=manifest_fetched bytes=1842 cache_hit=false took=124ms
-WARN mode=resolver eth_address=0xabcd...0123 event=signature_invalid recovered=0xff... claimed=0xab...
-ERROR mode=publisher event=chain_write_failed err="chain_write_not_implemented"
+```sh
+--mode=resolver --discovery=overlay-only --static-overlay=/path/to/nodes.yaml
 ```
 
-## Hermetic runs that need signatures (`--chain-seed`)
+## Compose
 
-**Production signed discovery:** use `--discovery=overlay-only` and
-`--static-overlay=/path/to/nodes.yaml`, with an expected `eth_address` and
-HTTPS `manifest_url` per coordinator. See [signed coordinator discovery](../design-docs/static-overlay.md#signed-coordinator-discovery)
-for the minimal YAML, refresh behavior and migration from static pins. This
-preserves manifest signature verification and settlement-key delegation, and
-needs no registry chain RPC. Payment daemons still require their normal chain
-configuration.
+```sh
+cp compose/.env.example compose/.env
+# Edit the file for the selected source and image.
+docker compose --env-file compose/.env -f compose/docker-compose.yml config
+docker compose --env-file compose/.env -f compose/docker-compose.yml up -d
+```
 
-Static `pin` nodes remain unsigned and carry no settlement delegation. They
-are distinct from signed manifest discovery entries.
+For overlay-only, set `DISCOVERY_MODE=overlay-only`,
+`STATIC_OVERLAY=/etc/livepeer/nodes.yaml`, and
+`STATIC_OVERLAY_HOST_PATH=/absolute/path/to/nodes.yaml`. `CHAIN_RPC_URLS` may be
+empty. The file must exist on the host; the Compose bind is read-only.
 
-**Hermetic chain-discovery testing:** `--chain-seed` preloads the
-in-memory chain (so it requires `--dev`) with address → serviceURI pairs:
+For chain mode, supply `CHAIN_RPC_URLS`. `STATIC_OVERLAY` defaults to empty, so
+the mounted example file is not applied unless explicitly selected. The daemon
+validates required chain configuration at startup. Compose defaults for TTL,
+metrics port and size cap differ from binary defaults; the env example records
+the Compose values.
+
+Both Compose files keep image tag defaults unchanged. Set `TAG` for the
+resolver or `REGISTRY_IMAGE_TAG` for the identity-only publisher. For local
+build testing, `make docker-build DOCKER_TAG=dev` and set the corresponding tag
+to `dev`. No signing or chain RPC is needed by publisher mode. Its keystore and
+password bind mounts must be readable by runtime UID 65532.
+
+## Binary flags
+
+| Flag | Binary default | Actual behavior |
+|---|---|---|
+| `--mode` | required | resolver or publisher |
+| `--socket` | `/var/run/livepeer-service-registry.sock` | Unix gRPC listener |
+| `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB in production, in-memory in dev |
+| `--chain-rpc-urls` | empty | Comma-separated RPC list; required for production chain discovery only |
+| `--controller-address` | Arbitrum One Controller | Supplies primary registry, pool and round addresses |
+| `--service-registry-address` | empty | Primary registry override; empty derives from Controller |
+| `--ai-service-registry-address` | Arbitrum One AI registry | Secondary lookup when primary has no pointer; empty disables fallback |
+| `--chain-id` | 42161 | Parsed but not currently enforced; do not rely on it as a chain-identity check (`lnm-cuh`) |
+| `--discovery` | chain | chain enumeration or overlay-only configured list |
+| `--round-poll-interval` | 1m | Round-transition polling in chain mode |
+| `--cache-manifest-ttl` | 10m | Synchronous on-demand manifest refresh after this age |
+| `--manifest-max-bytes` | 4194304 | Body size cap, allowed range 1024 through 16 MiB |
+| `--manifest-fetch-timeout` | 5s | Per HTTP attempt, including alternate candidate paths |
+| `--max-stale` | 1h | Age bound for last-good failure fallback; also internal chain freshness bound |
+| `--static-overlay` | empty | YAML loaded once at startup; restart to reload |
+| `--reject-unsigned` | true | Default policy for unsigned static/CSV nodes; never permits unsigned coordinator envelopes |
+| `--worker-probe-timeout` | 5s | Resolver live broker health fetch timeout |
+| `--keystore-path` | empty | Required by production publisher |
+| `--keystore-password-file` | empty | Password file; otherwise LIVEPEER_KEYSTORE_PASSWORD environment value |
+| `--orch-address` | empty | Retained no-op; does not override keystore identity |
+| `--manifest-out` | empty | Retained no-op; removed signing RPCs do not write this path |
+| `--dev` | false | In-memory chain/store; throwaway publisher key; real verifier and HTTP fetcher |
+| `--chain-seed` | empty | Dev-only address/service_uri YAML; incompatible with overlay-only |
+| `--log-format` | text | text or json |
+| `--log-level` | info | debug, info, warn, error |
+| `--metrics-listen` | empty | Optional TCP metrics/liveness listener |
+| `--metrics-path` | /metrics | Metrics route |
+| `--metrics-max-series-per-metric` | 10000 | Label cardinality cap; 0 disables |
+
+## Dev and chain seeds
+
+Dev does not replace the verifier or fetcher with fakes. Without a chain seed
+it forces overlay-only. With `--chain-seed`, it retains chain-style source
+resolution over an in-memory map and performs signed HTTP fetch/verification.
+It cannot be combined with `--chain-rpc-urls`.
 
 ```yaml
-# seed.yaml
 seed:
   - eth_address: "0xabc0000000000000000000000000000000000000"
     service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
 ```
 
+```sh
+./bin/livepeer-service-registry-daemon --mode=resolver --dev   --chain-seed ./seed.yaml --socket /tmp/registry.sock
 ```
-livepeer-service-registry-daemon --mode=resolver --dev \
-  --chain-seed ./seed.yaml --socket /tmp/registry.sock
-```
 
-Serve a **signed** manifest at that URI from any static file server, and
-resolution takes the ordinary well-known path: fetch, canonicalize, verify
-the signature, project `settlement_keys` onto every node from that
-address. Nothing is stubbed except where the serviceURI came from, which
-is the one thing a chain-free run cannot have.
+Serve a properly signed envelope matching the expected identity. Explicit
+chain seeds are force-resolved before readiness; any failure fails startup.
+The [in-process example](../../examples/minimal-e2e/README.md) creates a signed
+test fixture; publisher mode cannot generate one through RPC.
 
-Every explicit seed is resolved synchronously before the daemon announces
-readiness, on both a fresh start and restart. `ListKnown` therefore contains
-the verified seed without a consumer priming call. An unreachable, malformed,
-unsigned, or address-mismatched seeded manifest fails startup; fix the seed or
-its server instead of operating with a silently empty catalog.
+## Startup, refresh and diagnostics
 
-This is the supported seed path for nightly CI that needs signed
-settlements end to end. `--chain-seed` is refused without `--dev`, and
-refused alongside `--discovery=overlay-only` — overlay-only never reads
-the chain, so the seed would be silently ignored.
+Overlay seeding resolves enabled entries before readiness, best-effort.
+Manifest pointers fetch signed publications; static pins synthesize nodes.
+There is no chain lookup in overlay-only. Failed seeds are logged and skipped;
+configured pointers are retried on subsequent Select/Refresh calls. ListKnown
+shows cached candidates only. A successful startup may still have zero routes.
 
-To produce the signed manifest itself, run the daemon in publisher mode or
-see `examples/minimal-e2e`, which builds and signs one in-process.
+Fresh manifest cache entries are reused; stale requests refresh synchronously.
+Forced Refresh bypasses TTL. Wildcard Refresh retries candidates but suppresses
+per-address errors. Use a specific address, logs and audit records to diagnose
+failures. See [cache semantics](../design-docs/resolver-cache.md).
 
-## Overlay-only seed-on-startup
+Health RPC provider booleans and last-success timestamp are placeholders today.
+Standard gRPC health and metrics `/healthz` report liveness, not route readiness.
+Use actual Resolve/Select results and
+[provider metrics](../design-docs/observability.md) for operational checks.
+No heartbeat file or overlay hot-reload handler exists.
 
-When `--mode=resolver` runs with `--discovery=overlay-only` (forced in `--dev` mode), the daemon walks every enabled entry in `--static-overlay` once at startup and calls `ResolveByAddress` for each. Two paths can succeed:
+Logs use slog with call-site fields such as `addr`, `manifest_url`, `mode`,
+capability, offering and `err`. There is no universal correlation_id field.
+Audit events are separately queryable through GetAuditLog.
 
-- **Chain has the address** — the resolver fetches the manifest (or synthesizes legacy from the chain URI). Production overlay-only deployments land here.
-- **Chain has no entry** — the resolver falls into the `static-overlay` synth path and serves the overlay's pin nodes (see [`docs/design-docs/serviceuri-modes.md`](../design-docs/serviceuri-modes.md) §"Mode D"). `--dev` and the `static-overlay-only` example land here.
+## Shutdown
 
-After seed completes, `ListKnown` and `Select` reflect the full pool. Per-address seed errors are logged at `WARN` and skipped — a single missing manifest does not block the rest of the seed.
+SIGINT/SIGTERM starts shutdown of listeners and chain seeder. The lifecycle
+uses a 10-second drain timeout, though individual graceful-stop operations may
+block before that drain. BoltDB closes afterward. A second signal is not
+special-cased. SIGHUP is not an overlay reload gesture; restart the process to
+load edited configuration.
 
-## Examples
-
-End-to-end demo: see `examples/minimal-e2e/`.
-
-Static-overlay-only resolution (no chain RPC needed): see `examples/static-overlay-only/`.
+The metrics listener exposes `/metrics` (configurable), `/healthz`, and a root
+index. It has no authentication; bind/expose it according to your deployment.
+[Grafana](grafana/README.md) and [Prometheus alerts](prometheus/README.md) are
+configurable examples, not proof of healthy chain/discovery state.

@@ -66,8 +66,8 @@ type builtProviders struct {
 	// timesource poller). Drained in reverse on shutdown.
 	closers []func()
 
-	// overlayLoader returns the current static overlay; reload swaps the
-	// pointer atomically so resolver reads see the new value next call.
+	// The overlay is loaded once at startup. The accessor is injectable
+	// for tests; there is no runtime file reload.
 	overlay atomic.Pointer[config.Overlay]
 }
 
@@ -303,7 +303,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 	}
 
 	// Stamp build info — reflects in /metrics for dashboard panels.
-	bp.recorder.SetBuildInfo("dev", string(cfg.Mode), runtimeGoVersion())
+	bp.recorder.SetBuildInfo(version, string(cfg.Mode), runtimeGoVersion())
 	return bp, nil
 }
 

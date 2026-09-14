@@ -127,7 +127,7 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 			Offering:            req.Offering,
 			Address:             addr,
 			AllowLegacyFallback: true,
-			AllowUnsigned:       true, // Select trusts caller; signature filtering done server-side via overlay
+			AllowUnsigned:       false, // Selection honors daemon/overlay unsigned policy.
 		})
 		if err != nil {
 			skippedAddressCount++

@@ -1,80 +1,39 @@
 ---
-title: Workload-agnostic capability strings
+title: Workload-agnostic identifiers
 status: accepted
-last-reviewed: 2026-05-19
+last-reviewed: 2026-09-14
 ---
 
-# Workload-agnostic capability strings
+# Workload-agnostic identifiers
 
-Capability names are opaque to the registry. The daemon does not parse, route on, or interpret them. This document describes the *naming convention* operators and consumers should follow so the strings are machine-friendly across workloads.
+Capability and offering identifiers are opaque strings. The registry uses
+case-insensitive matching in selection and does not infer semantics from a
+namespace, slash, colon or suffix. Reuse discovered identifiers exactly.
 
-## Why opaque?
+A naming convention such as `vendor:operation` helps people coordinate but
+is not a reserved namespace registry or a validation enum. For example,
+`openai:chat-completions` and `openai:/v1/chat/completions` are distinct keys.
+Anyone may introduce a capability without a registry code change.
 
-The single biggest design constraint of this repo (core-beliefs §3) is that adding a new workload type — a new AI backend, a new transcoding profile, a new something-else-entirely — must require zero code changes here. If the registry knew what "transcoding" was, every new transcoding profile would need a code update. By treating capabilities as opaque strings, we push interpretation to the consumer where it belongs.
+Workload behavior comes from the signed `protocol` tag and matching declaration
+axes, interpreted by the gateway and broker. A capability without a slash does
+not imply a streaming session. A protocol tag, not a naming heuristic, chooses
+the consumer's interaction path.
 
-## Convention
+The signed manifest is a flat list of capability/offering tuples. Each tuple
+has an offering ID, work-unit name, nonnegative decimal price numerator and
+optional `per_units` denominator (default 1). The resolver projects tuples into
+nodes with nested capability/offerings lists; those lists are not the signed
+wire format. A selectable route requires a matching offering ID.
 
-`{namespace}:{operation}[-{variant}]`
+Extra and constraints carry opaque JSON objects. The registry preserves them
+and computes route fingerprints; it does not execute workload constraints.
+Signed `protocol`, `job`, and `session` declaration keys may not be shadowed by
+extra metadata. Advertised capacity is not a cross-workload routing guarantee;
+consumers use live broker health and admission responses.
 
-Three parts:
-
-- `namespace` — short identifier for the protocol/family. Examples: `livepeer`, `openai`, `myco`.
-- `operation` — operation identifier within the namespace. Lower-case, stable, machine-friendly.
-- `variant` (optional) — extra qualifier when the capability itself, not the offering, needs disambiguation.
-
-## Reserved namespaces
-
-These are reserved by convention to keep the network coherent. The registry doesn't enforce reservation; consumers and operators agree.
-
-| Namespace | Owner | Examples |
-|---|---|---|
-| `livepeer` | Livepeer protocol | `livepeer:transcoder/h264`, `livepeer:transcoder/hevc`, `livepeer:transcoder/av1`, `livepeer:vtuber-session` |
-| `openai` | OpenAI-compatible HTTP API surface | `openai:chat-completions`, `openai:embeddings`, `openai:images-generations`, `openai:audio-transcriptions` |
-| `huggingface` | Hugging Face inference-API style | `huggingface:text-generation`, `huggingface:image-classification` |
-
-Operator-defined capabilities use a namespace the operator owns (e.g. `myco:custom-pipeline-v3`). The registry is workload-agnostic — any namespace works as long as consumers recognize it.
-
-A capability with no path component (e.g. `livepeer:vtuber-session`) names a streaming-session workload — the consumer establishes a long-lived session via its own protocol after `Select` returns the worker. The first such consumer is the external `livepeer-vtuber-project` (not vendored in this monorepo).
-
-Anyone may publish a manifest with any string. Consumers ignore strings they don't recognize.
-
-## Worker-known formats
-
-The capability strings used in the wild today, by source:
-
-- **Current capability-broker / orch-coordinator examples in this repo** use
-  colon-form OpenAI capability IDs such as `openai:chat-completions`,
-  `openai:embeddings`, and `openai:audio-transcriptions`. Gateways and
-  resolvers should treat the published string as opaque and reuse it exactly.
-- **Older bridge / worker examples** in this repo and adjacent repos may still
-  show slash-form IDs like `openai:/v1/chat/completions`. Treat those as
-  historical examples or compatibility-test inputs, not the preferred current
-  shape.
-- **go-livepeer transcoding** historically used a bitmask `Capability_*` enum (`Capability_TextToImage = 27`, etc.). The canonical form in this stack is the namespaced string per above (`livepeer:ai/text-to-image` and friends — see [`../references/capability-enum-mapping.md`](../references/capability-enum-mapping.md)). Consumers that need the integer form do their own mapping.
-
-## Models
-
-The `offerings` array on a capability is intended for capability instances that have a model or preset dimension (any AI inference, certain transcoding presets). It's optional. A capability with no `offerings` represents itself.
-
-## Constraints
-
-The `constraints` blob on an offering is fully opaque. Common keys we've seen in practice (advisory, not enforced):
-
-- `loaded`: bool — node currently has the offering loaded
-- `min_capacity`: int — concurrent requests supported
-- `runner_version`: string
-- `gpu`: string — GPU class (e.g., `a100-40gb`)
-
-Consumers SHOULD treat unknown keys as a soft signal (informational) and known keys as a hard signal (filter on).
-
-## Don't:
-
-- Encode pricing in the capability name. Use `offerings[].price_per_work_unit_wei`.
-- Encode geo in the capability name. Use node-level `extra` if geo-aware
-  routing metadata needs to publish.
-- Include whitespace, control characters, or non-printable bytes.
-- Encode operator identity. The chain already binds `eth_address` to the operator.
-
-## Migration from go-livepeer's enum
-
-If at some point we need bidirectional mapping with go-livepeer's `Capability_*` enum, the agreed-on table lives in [docs/references/capability-enum-mapping.md](../references/capability-enum-mapping.md). It's a translation reference; neither side is canonical for the other.
+Use the protocol [offering axes](../../../livepeer-network-protocol/protocols/offering-axes.md)
+and [manifest](../../../livepeer-network-protocol/manifest/README.md) as the
+contract. Historical go-livepeer enum mappings in
+[references](../references/capability-enum-mapping.md) are provenance, not a
+current closed capability taxonomy.

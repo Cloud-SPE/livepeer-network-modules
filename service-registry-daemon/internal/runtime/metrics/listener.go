@@ -62,8 +62,13 @@ func NewListener(cfg Config) (*Listener, error) {
 		cfg.ReadHeaderTimeout = 5 * time.Second
 	}
 
+	startedAt := time.Now()
+	metricsHandler := cfg.Recorder.Handler()
 	mux := http.NewServeMux()
-	mux.Handle(cfg.Path, cfg.Recorder.Handler())
+	mux.Handle(cfg.Path, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cfg.Recorder.SetUptimeSeconds(time.Since(startedAt).Seconds())
+		metricsHandler.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))

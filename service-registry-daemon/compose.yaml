@@ -2,11 +2,11 @@
 #
 # Use `compose/docker-compose.yml` for the run-only resolver deployment
 # shape used by gateways. This root-level compose stays as the local
-# publisher-mode example for cold-signing workflows.
+# publisher-mode example for identity diagnostics only.
 #
 # Quick start (publisher):
 #   cp .env.example .env
-#   $EDITOR .env                   # set CHAIN_RPC_URLS (pin REGISTRY_IMAGE_TAG, ORCH_ADDRESS if needed)
+#   $EDITOR .env                   # select REGISTRY_IMAGE_TAG if needed
 #   cp /path/to/your/v3-keystore.json ./keystore.json
 #   printf '%s' 'your-keystore-password' > ./keystore-password
 #   chmod 600 ./keystore-password
@@ -31,26 +31,13 @@ services:
       - --mode=publisher
       - --socket=/var/run/livepeer/service-registry.sock
       - --store-path=/var/lib/livepeer/registry-cache.db
-      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
-      - --chain-id=${CHAIN_ID:-42161}
       - --keystore-path=/etc/livepeer/keystore.json
       - --keystore-password-file=/etc/livepeer/keystore-password
-      # Optional: cold orch identity distinct from the keystore's signing
-      # address. Leave unset to use the keystore address as the orch
-      # identity.
-      # - --orch-address=${ORCH_ADDRESS:-}
-      # Optional: write the signed manifest to a file your HTTP server
-      # (nginx / caddy) maps to /.well-known/livepeer-registry.json so
-      # consumers can fetch the off-chain manifest.
-      # - --manifest-out=/var/lib/livepeer/registry-manifest.json
-      # ServiceRegistry writes now live in protocol-daemon. Publisher
-      # mode here is manifest-signing only.
+      # GetIdentity and Health only. Signing is owned by secure-orch-console.
       # Logging — recommend json for production log aggregators.
       - --log-level=${LOG_LEVEL:-info}
       - --log-format=${LOG_FORMAT:-json}
       # Prometheus listener — remove this flag to disable.
-      # The daemon's recommended port is 9091 per
-      # docs/conventions/ports.md (livepeer-modules-project monorepo).
       - --metrics-listen=:${METRICS_PORT:-9091}
 
     # Uncomment to expose the metrics port to the host. Bind to
@@ -59,17 +46,15 @@ services:
     #   - "127.0.0.1:${METRICS_PORT:-9091}:${METRICS_PORT:-9091}"
 
     volumes:
-      # Keystore + password: read-only bind mounts. Operator produces
-      # these out of band (see running-the-daemon.md for `geth account
-      # new`).
+      # Keystore + password: read-only bind mounts, readable by UID 65532.
       - ./keystore.json:/etc/livepeer/keystore.json:ro
       - ./keystore-password:/etc/livepeer/keystore-password:ro
 
       # Named volumes for state the container writes:
       #   service-registry-socket — gRPC unix socket; siblings (e.g. an
       #                             orchestrator frontend that calls
-      #                             SignManifest) mount this volume.
-      #   service-registry-state  — BoltDB cache + write history.
+      #                             GetIdentity) mount this volume.
+      #   service-registry-state  — BoltDB store.
       - service-registry-socket:/var/run/livepeer
       - service-registry-state:/var/lib/livepeer
 

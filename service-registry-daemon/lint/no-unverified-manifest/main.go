@@ -1,6 +1,6 @@
 // Command no-unverified-manifest checks Go source for direct
 // json.Unmarshal into types.Manifest, which would bypass the
-// boundary-validating DecodeManifest. See lint/README.md.
+// boundary-validating DecodeCoordinatorEnvelope. See lint/README.md.
 package main
 
 import (
@@ -26,7 +26,7 @@ func main() {
 		}
 		// Skip the decoder itself, and this lint's own source (which
 		// references the bad pattern in its description).
-		if strings.Contains(path, "internal/types/decoder.go") {
+		if strings.Contains(path, "internal/types/coordinator_envelope.go") {
 			return nil
 		}
 		if strings.Contains(path, "lint/no-unverified-manifest/") {
@@ -46,7 +46,7 @@ func main() {
 		for idx >= 0 {
 			window := s[idx:min(len(s), idx+200)]
 			if strings.Contains(window, "Manifest") {
-				problems = append(problems, fmt.Sprintf("%s: json.Unmarshal into Manifest detected; use types.DecodeManifest instead", path))
+				problems = append(problems, fmt.Sprintf("%s: json.Unmarshal into Manifest detected; use types.DecodeCoordinatorEnvelope instead", path))
 				break
 			}
 			next := strings.Index(s[idx+1:], "json.Unmarshal")

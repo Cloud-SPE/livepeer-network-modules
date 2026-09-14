@@ -106,7 +106,7 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 	if req.Offering == "" {
 		return nil, types.NewValidation(types.ErrParse, "select.offering", "required")
 	}
-	addrs, err := s.cache.List()
+	addrs, err := s.resolverSvc.CandidateAddresses()
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,13 @@ func summarizeSelectedRoutes(routes []*SelectedRoute, max int) []string {
 // ListKnown returns all eth addresses currently in the cache, with
 // freshness status.
 func (s *Server) ListKnown(_ context.Context) ([]KnownEntry, error) {
-	addrs, err := s.cache.List()
+	var addrs []types.EthAddress
+	var err error
+	if s.resolverSvc != nil {
+		addrs, err = s.resolverSvc.CandidateAddresses()
+	} else {
+		addrs, err = s.cache.List()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +298,7 @@ func (s *Server) Refresh(ctx context.Context, req RefreshRequest) error {
 		return errors.New("grpc: resolver not mounted")
 	}
 	if req.EthAddress == "*" {
-		addrs, err := s.cache.List()
+		addrs, err := s.resolverSvc.CandidateAddresses()
 		if err != nil {
 			return err
 		}

@@ -1,12 +1,55 @@
 ---
 title: Static overlay
 status: verified
-last-reviewed: 2026-05-19
+last-reviewed: 2026-09-14
 ---
 
 # Static overlay
 
 The resolver supports a YAML config file (`--static-overlay=/path/to/nodes.yaml`) that augments and constrains on-chain manifests. This mirrors the `nodes.yaml` posture from `openai-livepeer-bridge` — operators control their candidate pool with gitops; the registry only *adds* discovery without taking away operator authority.
+
+## Signed coordinator discovery
+
+Use `manifest_url` to locate a coordinator without an on-chain `serviceURI`
+lookup. The URL must be absolute HTTPS, without credentials or a fragment.
+
+```yaml
+overlay:
+  - eth_address: "0x0123456789abcdef0123456789abcdef01234567"
+    manifest_url: "https://coordinator.example.com/.well-known/livepeer-registry.json"
+```
+
+The expected orchestrator address is checked against the manifest identity and
+recovered signer. This enters the same signed-manifest pipeline as chain
+resolution: capabilities, offerings, prices, broker endpoints and settlement
+keys come from the verified publication. `unsigned_allowed` is unnecessary;
+unsigned or invalid manifests are rejected even when that flag is set. The
+broker's unsigned `/registry/offerings` response is not a signed manifest.
+
+`manifest_url` takes precedence over the on-chain pointer in either discovery
+mode. With `--discovery=overlay-only`, the daemon also skips chain enumeration
+and chain-provider initialization: no registry `--chain-rpc-urls` or `--dev`
+flag is needed. Only enabled configured addresses are candidates; persisted
+cache entries from an earlier chain-discovery run cannot expand that list.
+Addresses without a manifest pointer can still use static pins;
+overlay-only no longer looks up serviceURI for those addresses. Existing users
+who relied on that lookup must add `manifest_url` or use chain discovery.
+Payment components retain their normal, separate chain configuration and ticket
+validation/redemption requirements.
+
+The existing cache TTL applies. `ResolveByAddress`, `Select`, and `SelectMany`
+fetch updated signed publications on demand after TTL expiry; a forced
+`Refresh` bypasses TTL. Startup warms enabled entries. Selection and Refresh
+also retry configured manifest addresses that failed startup resolution, so a
+recovered coordinator needs no daemon restart. There is no background polling
+of manifests in overlay-only mode. A transport outage may serve the same URL's
+verified last-good publication within `--max-stale`; invalid publications fail
+closed. Changing or removing a pointer invalidates that source's cached entry
+on the next resolution after restart.
+
+`pin.url` retains its separate meaning: an operator-asserted, unsigned static
+route endpoint. It is never fetched as a discovery pointer. Policy fields
+(`enabled`, `weight`, `tier_allowed`) still apply to manifest-derived routes.
 
 ## Schema
 
@@ -62,7 +105,7 @@ Some operators run worker nodes that are not in any on-chain manifest. The `pin`
 
 ## Chainless static-overlay mode
 
-When the resolver is run with `--discovery=overlay-only` and the chain has no entry for an address (e.g. an unregistered orchestrator, or `--dev` mode with no chain at all), the resolver synthesizes the result purely from the overlay's pin nodes for that address. This is `ModeStaticOverlay` in [serviceuri-modes.md](serviceuri-modes.md) §"Mode D".
+When an entry has no `manifest_url` and the resolver is run with `--discovery=overlay-only` (or the chain has no entry for an address) (e.g. an unregistered orchestrator, or `--dev` mode with no chain at all), the resolver synthesizes the result purely from the overlay's pin nodes for that address. This is `ModeStaticOverlay` in [serviceuri-modes.md](serviceuri-modes.md) §"Mode D".
 
 Two preconditions must be met or the resolver returns `not_found` instead:
 

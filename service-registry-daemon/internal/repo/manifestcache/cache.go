@@ -79,16 +79,17 @@ var Bucket = []byte("manifest_cache")
 // Entry is one cache record. Field shape mirrors
 // docs/design-docs/resolver-cache.md Entry struct.
 type Entry struct {
-	EthAddress     types.EthAddress
-	ResolvedURI    string
-	Mode           types.ResolveMode
-	Manifest       *types.Manifest // nil for legacy mode
-	LegacyURL      string          // set for legacy mode
-	FetchedAt      time.Time
-	ChainSeenAt    time.Time
-	ManifestSHA256 [32]byte
-	PublicationSeq uint64
-	SchemaVersion  string
+	EthAddress         types.EthAddress
+	OverlayManifestURL string // configured overlay pointer; empty for chain-derived entries
+	ResolvedURI        string
+	Mode               types.ResolveMode
+	Manifest           *types.Manifest // nil for legacy mode
+	LegacyURL          string          // set for legacy mode
+	FetchedAt          time.Time
+	ChainSeenAt        time.Time
+	ManifestSHA256     [32]byte
+	PublicationSeq     uint64
+	SchemaVersion      string
 }
 
 // Repo is the cache repository interface used by service/.

@@ -55,6 +55,14 @@ Node{
 
 This is what old `go-livepeer` transcoding clients effectively get today (a URL to dial). The synthesized `[]Node` of length 1 lets a new resolver-aware consumer treat legacy and modern orchestrators uniformly.
 
+## Explicit overlay manifest pointers
+
+An overlay `manifest_url` replaces the chain pointer lookup and enters the
+same signed-manifest mode as a URL serviceURI. In `--discovery=overlay-only`,
+coordinators are enumerated from YAML and no chain provider is constructed.
+See [static overlay](static-overlay.md#signed-coordinator-discovery). Static
+pins remain the separate unsigned synthesis mode below.
+
 ## Mode D — static-overlay synth (chainless fallback)
 
 If `getServiceURI(addr)` returns `not_found` AND the operator overlay carries an enabled entry for the address with at least one pin node, the resolver synthesizes a result from the overlay alone:

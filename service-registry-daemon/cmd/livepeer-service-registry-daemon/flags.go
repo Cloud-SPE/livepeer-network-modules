@@ -33,8 +33,8 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.StringVar(&cfg.ChainSeedPath, "chain-seed", cfg.ChainSeedPath,
 		"YAML file of address → serviceURI pairs preloaded into the in-memory chain (--dev only). "+
 			"Lets a hermetic run resolve through the signed manifest path — real signature "+
-			"verification and real settlement_keys, no chain. Overlay-only is unsigned by "+
-			"construction and carries no settlement delegation.")
+			"verification and real settlement_keys, no chain. For production chain-free "+
+			"discovery use overlay manifest_url entries.")
 
 	// Resolver-only
 	discovery := fs.String("discovery", string(cfg.Discovery), `cache seeding source: "chain" (walk BondingManager pool on each round event) or "overlay-only" (--static-overlay only)`)

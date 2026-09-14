@@ -193,3 +193,25 @@ overlay:
 		t.Fatalf("extra lost its contents: %s", caps[0].Extra)
 	}
 }
+
+func TestParseOverlayYAML_ManifestURL(t *testing.T) {
+	for _, uri := range []string{"https://coordinator.example/.well-known/livepeer-registry.json", "https://coordinator.example/manifest.json?revision=1", "http://coordinator.example/manifest.json", "/manifest.json", "https://", "https://user:secret@coordinator.example/manifest.json", "https://coordinator.example/manifest.json#fragment"} {
+		t.Run(uri, func(t *testing.T) {
+			raw := "overlay:\n  - eth_address: \"0xabcdef0000000000000000000000000000000000\"\n    manifest_url: \"" + uri + "\"\n"
+			o, err := ParseOverlayYAML([]byte(raw))
+			valid := uri == "https://coordinator.example/.well-known/livepeer-registry.json" || uri == "https://coordinator.example/manifest.json?revision=1"
+			if !valid {
+				if err == nil {
+					t.Fatal("accepted invalid manifest URL")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if o.Entries[0].ManifestURL != uri || len(o.Entries[0].Pin) != 0 || o.Entries[0].UnsignedAllowed {
+				t.Fatalf("bad discovery entry: %+v", o.Entries[0])
+			}
+		})
+	}
+}

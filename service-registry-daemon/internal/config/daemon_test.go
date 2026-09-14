@@ -110,3 +110,12 @@ func TestValidate_ChainSeedWithDevIsAccepted(t *testing.T) {
 		t.Fatalf("--chain-seed with --dev = %v; want accepted", err)
 	}
 }
+
+func TestDaemonValidate_OverlayOnlyWithoutRPC(t *testing.T) {
+	d := DefaultDaemon()
+	d.Mode = ModeResolver
+	d.Discovery = DiscoveryOverlayOnly
+	if err := d.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}

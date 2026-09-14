@@ -138,7 +138,7 @@ func (d *Daemon) Validate() error {
 	}
 	if d.ChainSeedPath != "" && d.Discovery == DiscoveryOverlayOnly {
 		return fmt.Errorf("config: --chain-seed and --discovery=overlay-only are contradictory: " +
-			"overlay-only never reads the chain, so the seed would be ignored — and overlay pins " +
+			"overlay-only never reads the chain, so use overlay manifest_url entries instead of a chain seed; static pins " +
 			"are unsigned, which is the reason to use a seed in the first place")
 	}
 	if d.Mode == ModeResolver {
@@ -163,10 +163,9 @@ func (d *Daemon) Validate() error {
 		if d.ManifestFetchTimeout <= 0 {
 			return fmt.Errorf("config: --manifest-fetch-timeout must be > 0")
 		}
-		// Every production resolver reads the chain — at minimum to
-		// resolve ServiceRegistry from the Controller — and there is
-		// deliberately no built-in endpoint to fall back to.
-		if !d.Dev && len(d.ChainRPCURLs) == 0 {
+		// Chain discovery requires an explicit RPC endpoint. Overlay-only
+		// resolves coordinator URLs without constructing chain providers.
+		if !d.Dev && d.Discovery == DiscoveryChain && len(d.ChainRPCURLs) == 0 {
 			return fmt.Errorf("config: --chain-rpc-urls is required in resolver mode (comma-separated, primary first)")
 		}
 	}

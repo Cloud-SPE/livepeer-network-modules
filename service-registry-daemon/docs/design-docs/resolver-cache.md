@@ -1,7 +1,7 @@
 ---
 title: Resolver cache
 status: verified
-last-reviewed: 2026-04-28
+last-reviewed: 2026-09-14
 ---
 
 # Resolver cache
@@ -14,16 +14,24 @@ The resolver caches manifests so consumer apps don't pay an HTTP round-trip per 
 
 The cache key does NOT include the resolved URL — if an operator updates `setServiceURI` on chain, the resolver invalidates the cache entry on the next chain read and re-fetches the manifest from the new URL.
 
+An overlay `manifest_url` takes precedence over chain lookup. Cache entries
+record that configured pointer separately from `ResolvedURI`; changing or
+removing it prevents reuse of the old source. The manifest TTL and forced
+refresh apply equally to overlay and chain manifests. When fetching fails
+with a transport error, a verified entry for the same source can be served
+within max-stale; schema and signature failures do not use that fallback.
+
 ## Storage
 
 `providers/store/chaincommonsadapter` (over `chain-commons.providers.store.bolt`) provides a single `manifest_cache` bucket. Entries are versioned and serialized as Go-gob (no protobuf — internal-only, no need for cross-language stability).
 
-Cache entry shape (`internal/repo/manifestcache/entry.go`):
+Cache entry shape (`internal/repo/manifestcache/cache.go`):
 
 ```go
 type Entry struct {
     EthAddress       string                  // lower-cased
-    ResolvedURI      string                  // the on-chain serviceURI seen at last fetch (empty for StaticOverlay mode)
+    OverlayManifestURL string                // configured manifest_url; empty for chain discovery
+    ResolvedURI      string                  // chain or overlay manifest pointer (empty for StaticOverlay mode)
     Mode             types.ResolveMode       // WellKnown | CSV | Legacy | StaticOverlay
     Manifest         *types.Manifest         // nil for Legacy / StaticOverlay modes
     LegacyURL        string                  // set for Legacy mode

@@ -65,6 +65,7 @@ func run(ctx context.Context, args []string) error {
 			CacheManifestTTL: cfg.CacheManifestTTL,
 			MaxStale:         cfg.MaxStale,
 			RejectUnsigned:   cfg.RejectUnsigned,
+			OverlayOnly:      cfg.Discovery == config.DiscoveryOverlayOnly,
 			LiveHealth:       bp.liveHealth,
 		})
 		srvCfg.Resolver = resolverSvc
@@ -128,10 +129,9 @@ func run(ctx context.Context, args []string) error {
 
 	// Overlay-only resolver: walk the overlay once at startup so
 	// ListKnown / Select return the operator-curated pool without a
-	// per-consumer Refresh roundtrip. Each ResolveByAddress drops into
-	// either the chain path (production overlay-only with a real RPC) or
-	// the chainless static-overlay synth path (dev / static-overlay-only
-	// example). Per-address errors are logged and swallowed.
+	// per-consumer Refresh roundtrip. Each address uses its signed manifest_url
+	// or unsigned static pins. Per-address errors are logged and swallowed;
+	// subsequent Select/Refresh calls retry configured manifest pointers.
 	if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryOverlayOnly {
 		seedOverlayCache(ctx, resolverSvc, bp.overlayAccessor(), bp.log)
 	}
@@ -185,7 +185,7 @@ func seedOverlayCache(ctx context.Context, r *resolver.Service, o *config.Overla
 		}
 		if _, err := r.ResolveByAddress(ctx, req); err != nil {
 			log.Warn("overlay-only seed: ResolveByAddress failed",
-				"addr", e.EthAddress, "err", err)
+				"addr", e.EthAddress, "manifest_url", e.ManifestURL, "err", err)
 		}
 	}
 }

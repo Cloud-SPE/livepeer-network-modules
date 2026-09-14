@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -782,4 +783,34 @@ func signedEnvelopeFor(t *testing.T, addr types.EthAddress, uri string, now time
 		t.Fatal(err)
 	}
 	return body
+}
+
+func TestWire_OverlayManifestSelectRetriesUncachedAddress(t *testing.T) {
+	f := newWireFixture(t)
+	overlay, err := config.ParseOverlayYAML([]byte(fmt.Sprintf("overlay:\n  - eth_address: %q\n    manifest_url: %q\n", f.addr, f.uri)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server.resolverSvc = resolver.New(resolver.Config{
+		// No chain provider: a lookup would panic and fail the RPC.
+		Fetcher: f.fetcher, Verifier: verifier.New(), Cache: f.cache,
+		Audit: f.auditRepo, Overlay: func() *config.Overlay { return overlay },
+		Clock: f.clk, RejectUnsigned: true, OverlayOnly: true,
+	})
+	cli := registryv1.NewResolverClient(f.clientConn)
+	req := &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}
+	if _, err := cli.Select(context.Background(), req); err == nil {
+		t.Fatal("expected no route before publication")
+	}
+	// A failed startup fetch leaves no cache entry. Selection must discover
+	// the configured address and retry, without a Resolve/Refresh roundtrip.
+	f.signManifestForFixture([]types.Node{{ID: "broker", URL: "https://broker.example.com", Capabilities: []types.Capability{{Name: "example:work", WorkUnit: "unit", Offerings: []types.Offering{{ID: "default", PricePerWorkUnitWei: "42"}}}}}})
+	result, err := cli.Select(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := result.GetRoute()
+	if route.GetEthAddress() != string(f.addr) || route.GetWorkerUrl() != "https://broker.example.com" || route.GetPricePerWorkUnitWei() != "42" || route.GetWorkUnit() != "unit" || route.GetUnitsPerPrice() != 1 || route.GetQuoteId() == "" || len(route.GetRouteFingerprint()) == 0 {
+		t.Fatalf("incomplete overlay route: %+v", route)
+	}
 }

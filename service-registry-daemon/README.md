@@ -106,6 +106,28 @@ docker compose logs -f
 
 The image is ~21 MB (distroless/static base, pure-Go build, runs as nonroot uid 65532). Tags published per release; pin to a specific version (e.g. `v3.0.1`) rather than `latest` for production. Multi-arch images (amd64 + arm64) are tracked in [tech-debt](docs/exec-plans/tech-debt-tracker.md) under `docker-multi-arch`.
 
+### Discover coordinators from YAML
+
+To bypass on-chain orchestrator enumeration and `serviceURI` lookups, run with
+`--mode=resolver --discovery=overlay-only --static-overlay=/path/to/nodes.yaml`:
+
+```yaml
+overlay:
+  - eth_address: "0x0123456789abcdef0123456789abcdef01234567"
+    manifest_url: "https://coordinator.example.com/.well-known/livepeer-registry.json"
+```
+
+The registry fetches and verifies the coordinator's signed manifest, then uses
+the normal capabilities, pricing, settlement-key and route-selection pipeline.
+This production mode needs no registry chain RPC or `--dev` flag. Payment
+components keep their existing chain configuration. Use `manifest_url` for
+discovery; `pin.url` still means an unsigned static route.
+
+Manifest refresh uses the existing TTL on resolver/selection requests; forced
+Refresh fetches immediately. Restart to reload edited YAML. See
+[static overlay](docs/design-docs/static-overlay.md#signed-coordinator-discovery)
+for policy, failure handling and migration details.
+
 ### See it end-to-end
 
 ```sh

@@ -14,7 +14,7 @@ A single host can run both daemons side-by-side with separate sockets and stores
 | `--mode` | (required) | `publisher` or `resolver` |
 | `--socket` | `/var/run/livepeer-service-registry.sock` | Unix socket path for gRPC |
 | `--store-path` | `/var/lib/livepeer/registry-cache.db` | BoltDB file (resolver only by default; publisher also uses it for write history) |
-| `--chain-rpc-urls` | _(required outside `--dev`)_ | Comma-separated Ethereum JSON-RPC endpoints, primary first; the daemon fails over between them. No built-in default: the daemon refuses to start without it. |
+| `--chain-rpc-urls` | _(required for production chain discovery)_ | Comma-separated Ethereum JSON-RPC endpoints, primary first; the daemon fails over between them. No built-in default. Overlay-only mode does not use this option. |
 | `--chain-id` | `42161` | Sanity check; daemon refuses to boot if RPC reports a different chain |
 | `--controller-address` | `0xD8E8...6ee4` (Arbitrum One) | Livepeer Controller. Resolver derives `BondingManager` + `RoundsManager` from it, and `ServiceRegistry` too when `--service-registry-address` is empty. |
 | `--service-registry-address` | `""` | Optional override for the primary registry contract used by resolver `getServiceURI()` lookups. When empty, the resolver reads `ServiceRegistry` from Controller. |
@@ -26,7 +26,7 @@ A single host can run both daemons side-by-side with separate sockets and stores
 
 | Flag | Default | Notes |
 |---|---|---|
-| `--discovery` | `chain` | `chain` walks BondingManager pool on each round event (auto-discovery; default). `overlay-only` disables auto-discovery; the daemon walks `--static-overlay` once at startup and pre-resolves each enabled entry so `ListKnown` / `Select` return the operator-curated pool without per-consumer `Refresh` calls. |
+| `--discovery` | `chain` | `chain` walks BondingManager pool on each round event (auto-discovery; default). `overlay-only` skips chain enumeration and serviceURI lookups, using signed `manifest_url` pointers or unsigned static pins; the daemon walks `--static-overlay` once at startup and pre-resolves each enabled entry so `ListKnown` / `Select` return the operator-curated pool without per-consumer `Refresh` calls. |
 | `--round-poll-interval` | `1m` | How often the chain-commons timesource polls `RoundsManager.currentRound()` to detect round transitions. Bounds detection latency for cache refreshes; ~19 hour rounds make 1 minute plenty. |
 | `--cache-manifest-ttl` | `600s` | Reuse fetched manifest for this long. Independent of round-anchored chain refreshes. |
 | `--manifest-max-bytes` | `4194304` (4 MiB) | Hard cap on manifest body size; operator-tunable up to 16 MiB |
@@ -123,21 +123,18 @@ ERROR mode=publisher event=chain_write_failed err="chain_write_not_implemented"
 
 ## Hermetic runs that need signatures (`--chain-seed`)
 
-There are two chain-free ways to run a resolver, and they are not
-interchangeable.
+**Production signed discovery:** use `--discovery=overlay-only` and
+`--static-overlay=/path/to/nodes.yaml`, with an expected `eth_address` and
+HTTPS `manifest_url` per coordinator. See [signed coordinator discovery](../design-docs/static-overlay.md#signed-coordinator-discovery)
+for the minimal YAML, refresh behavior and migration from static pins. This
+preserves manifest signature verification and settlement-key delegation, and
+needs no registry chain RPC. Payment daemons still require their normal chain
+configuration.
 
-**`--discovery=overlay-only`** serves the pin nodes in `--static-overlay`.
-Those pins are *operator-asserted and unsigned by construction*: the
-resolver marks them `unsigned`, and they carry **no settlement
-delegation**. That is deliberate. `settlement_keys` say which hot keys are
-authorized to sign settlement records, and their authority comes from the
-orchestrator's cold key signing the manifest that lists them. A YAML file
-on the resolver host asserting the same thing establishes nothing — it is
-precisely the claim the signature exists to make. So overlay-only is right
-for routing and capacity curation, and wrong for anything a clearinghouse
-will settle against.
+Static `pin` nodes remain unsigned and carry no settlement delegation. They
+are distinct from signed manifest discovery entries.
 
-**`--chain-seed`** is the path when signatures matter. It preloads the
+**Hermetic chain-discovery testing:** `--chain-seed` preloads the
 in-memory chain (so it requires `--dev`) with address → serviceURI pairs:
 
 ```yaml

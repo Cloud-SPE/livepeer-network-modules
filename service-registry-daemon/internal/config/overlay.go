@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	"gopkg.in/yaml.v3"
@@ -21,6 +22,7 @@ type Overlay struct {
 // OverlayEntry is one operator-curated record per orchestrator.
 type OverlayEntry struct {
 	EthAddress      types.EthAddress
+	ManifestURL     string // optional signed coordinator manifest pointer; bypasses serviceURI
 	Enabled         bool
 	TierAllowed     []string // nil = no tier filter
 	Weight          int      // 1..1000; 0 means "default" → 100
@@ -61,6 +63,7 @@ type rawOverlay struct {
 
 type rawEntry struct {
 	EthAddress      string       `yaml:"eth_address"`
+	ManifestURL     string       `yaml:"manifest_url"`
 	Enabled         *bool        `yaml:"enabled"`
 	TierAllowed     []string     `yaml:"tier_allowed"`
 	Weight          *int         `yaml:"weight"`
@@ -125,8 +128,15 @@ func ParseOverlayYAML(raw []byte) (*Overlay, error) {
 		if _, dup := o.byAddr[addr]; dup {
 			return nil, fmt.Errorf("overlay[%d]: duplicate eth_address %s", i, addr)
 		}
+		if re.ManifestURL != "" {
+			u, err := url.Parse(re.ManifestURL)
+			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+				return nil, fmt.Errorf("overlay[%d].manifest_url: must be an absolute HTTPS URL without credentials or fragment", i)
+			}
+		}
 		entry := OverlayEntry{
 			EthAddress:      addr,
+			ManifestURL:     re.ManifestURL,
 			Enabled:         true, // default
 			TierAllowed:     append([]string(nil), re.TierAllowed...),
 			Weight:          100,

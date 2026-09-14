@@ -164,7 +164,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 	// Resolver production deployments resolve ServiceRegistry from the
 	// Controller by default so operators don't need to pass the address
 	// explicitly. The explicit flag remains as an override.
-	if cfg.Mode == config.ModeResolver && !cfg.Dev {
+	if cfg.Mode == config.ModeResolver && !cfg.Dev && cfg.Discovery == config.DiscoveryChain {
 		var err error
 		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs})
 		if err != nil {
@@ -239,24 +239,15 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		// Seed the in-memory chain so a chain-free deployment can still
 		// resolve through the SIGNED path.
 		//
-		// Without this the only chain-free mode is overlay-only, whose
-		// pins are operator-asserted and unsigned by construction — they
-		// carry no settlement delegation and never will, because an
-		// unsigned file asserting which keys may sign settlements is
-		// exactly the claim a signature is supposed to establish. A
-		// hermetic CI run that needs signed settlements therefore cannot
-		// use overlay-only, and had no supported alternative.
-		//
-		// With a seed it points the resolver at a locally served signed
-		// manifest and takes the ordinary well-known path: real
-		// signature verification, real settlement_keys, no chain.
+		// Chain seeds exercise chain-style discovery in dev. Overlay manifest_url
+		// entries provide signed discovery independently of this seed.
 		seeded, err := seedChain(mem, cfg.ChainSeedPath)
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain seed: %w", err)
 		}
 		bp.chainSeed = seeded
 		bp.chain = mem
-	} else if cfg.Mode == config.ModeResolver {
+	} else if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryChain {
 		serviceRegistryAddress := cfg.ServiceRegistryAddress
 		if serviceRegistryAddress == "" && cfg.Mode == config.ModeResolver {
 			serviceRegistryAddress = controllerAddrs.ServiceRegistry.Hex()
@@ -271,7 +262,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}
 		bp.chain = eth
 	} else {
-		// Publisher mode doesn't read on-chain serviceURI pointers.
+		// Overlay-only and publisher modes do not read serviceURI pointers.
 		bp.chain = chain.NewInMemory("")
 	}
 	bp.chain = chain.WithMetrics(bp.chain, bp.recorder)
@@ -306,7 +297,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		bp.overlay.Store(config.EmptyOverlay())
 	}
 
-	if cfg.Mode != config.ModeResolver || cfg.Dev {
+	if cfg.Mode != config.ModeResolver || cfg.Dev || cfg.Discovery == config.DiscoveryOverlayOnly {
 		// Overlay-only / publisher / dev: discovery is the no-op.
 		bp.discovery = discovery.NewDisabled()
 	}

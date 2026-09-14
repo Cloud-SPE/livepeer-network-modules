@@ -49,12 +49,12 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 
 ## Invariants (do not break without a design-doc)
 
-1. **All resolver modes coexist.** Resolver must transparently handle: (a) a full manifest URL `serviceURI`, (b) an opt-in CSV pointer if encountered (read-only fallback), and (c) chainless static-overlay synth when the chain has no entry but the operator overlay supplies pins (`--discovery=overlay-only` deployments). An overlay `manifest_url` may replace the serviceURI lookup and uses the same verified-manifest pipeline. Overlay-only mode constructs no chain provider. Resolver chain lookups may consult both `ServiceRegistry` and `AIServiceRegistry`; the chain provider tries the primary registry first, then the AI registry when the primary has no pointer. See `docs/design-docs/serviceuri-modes.md`.
+1. **All resolver modes coexist.** Resolver must transparently handle: (a) a full manifest URL `serviceURI`, (b) an opt-in CSV pointer if encountered (read-only fallback), and (c) chainless static-overlay synth when the chain has no entry but the operator overlay supplies pins (`--discovery=overlay-only` deployments). An overlay `manifest_url` may replace the serviceURI lookup and uses the same verified-manifest pipeline. Overlay-only mode constructs no chain provider. Resolver chain lookups use the configured `AIServiceRegistry` address (nonempty by default); clear it to use the primary `ServiceRegistry`. There is no cross-contract fallback. See `docs/design-docs/serviceuri-modes.md`.
 2. **Workload-agnostic.** No domain in `internal/` may hard-code "ai", "transcoding", "openai", "llm". Capabilities are opaque strings; the registry doesn't know what they mean. See core-beliefs §3.
 3. **Providers boundary.** No cross-cutting dependency is imported outside `internal/providers/`.
 4. **Manifests are signed.** Resolver rejects an unsigned manifest in every case. The overlay `unsigned_allowed` field permits unsigned static/CSV nodes, never an unsigned coordinator envelope. Signature recovery is enforced by the resolver; `lint/no-unverified-manifest` is only a source-text guard against suspicious decoding.
 5. **No code without a plan.** Non-trivial work starts with an entry in `docs/exec-plans/active/`.
-6. **Test coverage target ≥ 75% per package.** The current coverage-gate is a stub; enforcement and below-floor packages are tracked in beads `lnm-gpd`.
+6. **Test coverage target ≥ 75% per package.** `make coverage-check` enforces this for every executable cmd/internal package, including packages without tests. Examples and development tools are outside the shipped daemon coverage boundary.
 
 ## Where to look for X
 

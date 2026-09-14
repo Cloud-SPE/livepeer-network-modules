@@ -45,9 +45,10 @@ func run(ctx context.Context, args []string) error {
 	auditRepo := audit.WithMetrics(audit.New(bp.store), bp.recorder)
 
 	srvCfg := grpc.Config{
-		Cache:  cacheRepo,
-		Audit:  auditRepo,
-		Logger: bp.log,
+		Diagnostics: bp.diagnostics.Snapshot,
+		Cache:       cacheRepo,
+		Audit:       auditRepo,
+		Logger:      bp.log,
 	}
 	var resolverSvc *resolver.Service
 	switch cfg.Mode {

@@ -46,21 +46,31 @@ invalid coordinator envelopes. Static YAML cannot delegate settlement keys.
 Signed claims authenticate their author; they do not prove present capacity,
 that a broker honors its advertised price, or valid ticket funding.
 
-## Current implementation limits
+## Publication validity and replay protection
 
-Protocol requirements and daemon enforcement must not be conflated:
+After signature recovery, the resolver requires `issued_at <= now < expires_at`
+and a strictly positive validity window. Cache hits and last-good fallbacks
+recheck that window; TTL cannot extend a signed publication's lifetime. Old
+cache records without expiry are refetched. Keep resolver clocks synchronized.
 
-- Issued-at/expiry must be present, but fetch/cache resolution does not enforce
-  the publication's current validity window.
-- Publication sequence is propagated and cached; lower-sequence or conflicting
-  same-sequence publications are not rejected by a monotonic replay guard.
-- All signed settlement keys are forwarded, with their validity windows, rather
-  than filtered against current time. Consumers must check record-time validity.
-- `spec_version` presence is checked; this daemon does not negotiate supported
-  major versions or evaluate every protocol-specific axis.
+For each orchestrator address the store retains the highest accepted
+`publication_seq` and hash of the canonical signed payload. Lower sequences and
+conflicting payloads at the same sequence are rejected. Identical payloads can
+be refetched despite whitespace or signature encoding changes. The watermark
+survives coordinator URL changes, cache deletion and restart. Signed routes are
+not returned if durable acceptance fails. Deleting the database resets this
+history; back up and preserve it across upgrades.
 
-Expiry/replay enforcement is tracked in `lnm-dnh`. Do not interpret cache
-freshness or `quote_version` as proof that those missing checks ran.
+On upgrade, an old cache without a canonical hash accepts the same sequence
+only if its raw document matches; a higher sequence can establish a new hash.
+Watermark and cache writes are separate: a crash after watermark persistence
+can require a refetch, but does not permit an older cached publication.
+
+All advertised settlement keys retain their signed validity windows, including
+historical keys. Consumers check record-time validity. `spec_version` presence
+is checked; this daemon does not negotiate supported major versions or evaluate
+every protocol-specific axis. Publication validity/replay failures are returned
+as `parse_error` details (InvalidArgument); Select skips rejected candidates.
 
 ## Moving a coordinator
 

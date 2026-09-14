@@ -54,10 +54,10 @@ flowchart TD
 
 **Question:** does the orch publicly claim this capability exists right now?
 
-**Source of truth:** the signed manifest hosted at the orch's on-chain
-`serviceURI`. The capability is healthy at this layer iff a valid signed
+**Source of truth:** the coordinator's signed manifest, discovered through
+on-chain `serviceURI` or an overlay `manifest_url`. The capability is healthy at this layer iff a valid signed
 manifest currently lists `(capability_id, offering_id, worker_url)` with a
-non-zero price.
+nonnegative declared price.
 
 **Freshness budget:** minutes to hours. Manifest changes go through the
 operator-driven sign cycle (see [`trust-model.md`](./trust-model.md)) —
@@ -65,14 +65,15 @@ they're never instantaneous and they shouldn't be.
 
 **Who consumes it:**
 
-- the resolver (`service-registry-daemon`) on its per-round refresh
+- the resolver (`service-registry-daemon`) on fetch, cache reuse and round refresh
 - the orch-coordinator when building / verifying candidates
 - third-party scrapers building market-data feeds
 
 **Failure modes:**
 
 - manifest signature invalid → resolver refuses, route disappears
-- on-chain `serviceURI` points at a 404 → resolver refuses, route disappears
+- manifest retrieval fails → only a source-matching last-good publication within
+  max-stale and signed expiry can continue serving signed routes
 - manifest doesn't list the requested capability → not a "failure," just
   "not offered"
 
@@ -387,7 +388,8 @@ are Layer 1.
 
 The resolver is where Layer 1 and Layer 2 get composed for routing:
 
-1. verify and cache signed manifests from the orch `serviceURI`
+1. verify and cache signed manifests from chain `serviceURI` or configured
+   coordinator `manifest_url`
 2. maintain a short-TTL cache of broker live health
 3. return only tuples that pass both checks:
    - present in a valid signed manifest
@@ -476,3 +478,15 @@ symptom.
 - [`./trust-model.md`](./trust-model.md) — the sign-cycle that gates Layer 1
 - [`../../capability-broker/`](../../capability-broker/) — where `/healthz`
   and `/registry/health` are implemented
+
+## Registry discovery implementation (2026-09-14)
+
+The registry can locate the coordinator through on-chain serviceURI or a static
+overlay manifest_url. Both paths verify the signed publication against the
+expected orchestrator address; the URL host is not the trust anchor. Overlay-only
+discovery does not disable payment or ticket chain requirements. See the
+[current manifest contract](../../service-registry-daemon/docs/product-specs/manifest-contract.md)
+and [overlay contract](../../service-registry-daemon/docs/design-docs/static-overlay.md)
+for enforced validation and policy. Targeted route selection requires fresh
+broker tuple readiness when live-health fetching is configured; inventory
+resolution can retain signed inventory when live-health data is unavailable.

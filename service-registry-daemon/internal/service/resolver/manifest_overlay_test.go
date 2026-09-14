@@ -33,6 +33,9 @@ func publishOverlayFixture(t *testing.T, f *fixture, price string) {
 	if err := json.Unmarshal(body, &env); err != nil {
 		t.Fatal(err)
 	}
+	if cached, ok, err := f.cache.Get(f.addr); err == nil && ok {
+		env.Manifest.PublicationSeq = cached.PublicationSeq + 1
+	}
 	env.Manifest.SettlementKeys = []types.CoordinatorSettlementKey{{PublicKey: "0x04" + strings.Repeat("11", 64), NotBefore: f.clk.Now().Add(-time.Hour), ExpiresAt: f.clk.Now().Add(time.Hour)}}
 	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
 	if err != nil {

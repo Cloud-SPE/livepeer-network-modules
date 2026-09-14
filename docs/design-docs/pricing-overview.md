@@ -117,14 +117,15 @@ beyond JSON's safe-integer range (per the manifest schema).
 ### 2. Manifest publishing — signed, off-chain, pointed to on-chain
 
 The broker advertises its priced capabilities to the orch-coordinator, which
-builds a manifest, the service-registry-daemon signs it with the orch cold
-key, and the coordinator hosts it at the on-chain `serviceURI`.
+builds a manifest, the secure-orch-console signs it with the orch cold
+key, and the coordinator hosts it. Registry discovery locates it through
+on-chain `serviceURI` or a configured overlay `manifest_url`.
 
 - Manifest JSON schema — [`livepeer-network-protocol/manifest/schema.json`](../../livepeer-network-protocol/manifest/schema.json)
   - Each capability tuple has `capability_id`, `offering_id`,
-    `price_per_unit_wei`, `work_unit_name` (line ~71-100)
-- Signing path — [`service-registry-daemon/`](../../service-registry-daemon/)
-  publisher and trust-model:
+    `price_per_unit_wei`, `per_units`, `work_unit.name`
+- Signing path — [`secure-orch-console/`](../../secure-orch-console/)
+  and trust-model:
   [`docs/design-docs/trust-model.md`](./trust-model.md)
 - On-chain footprint is one URI pointer — pricing itself stays off-chain
   ([`architecture-overview.md`](./architecture-overview.md))

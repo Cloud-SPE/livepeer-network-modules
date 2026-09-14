@@ -50,7 +50,7 @@ type Service struct {
 	verifier    verifier.Verifier
 	cache       manifestcache.Repo
 	audit       audit.Repo
-	overlay     func() *config.Overlay // accessor so reload swaps the value atomically
+	overlay     func() *config.Overlay // startup overlay accessor, injectable in tests
 	clock       clock.Clock
 	log         logger.Logger
 	rec         metrics.Recorder
@@ -324,6 +324,11 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	nodes = s.filterLiveHealthy(ctx, nodes, req)
 	s.logResolvedResult("resolver: returning fresh result", addr, mode, nodes, types.Fresh)
 
+	if manifest != nil {
+		if err := manifest.ValidAt(s.clock.Now()); err != nil {
+			return nil, err
+		}
+	}
 	// 7. Cache write.
 	entry := &manifestcache.Entry{
 		EthAddress:         addr,
@@ -342,6 +347,9 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	}
 	if err := s.cache.Put(entry); err != nil {
 		s.log.Warn("cache write failed", "addr", addr, "err", err)
+		if manifest != nil {
+			return nil, err
+		}
 	} else {
 		s.rec.IncCacheWrite()
 	}
@@ -424,6 +432,12 @@ func (s *Service) fetchAndVerifyManifest(ctx context.Context, addr types.EthAddr
 			lastErr = fmt.Errorf("%w: recovered %s, expected %s", types.ErrSignatureMismatch, recovered, addr)
 			continue
 		}
+		if err := manifest.ValidAt(s.clock.Now()); err != nil {
+			s.rec.IncManifestVerify(metrics.OutcomeExpired)
+			lastErr = err
+			continue
+		}
+		manifest.CanonicalSHA256 = bytes32SHA256(canonical)
 		s.rec.IncManifestVerify(metrics.OutcomeVerified)
 
 		out := projectManifest(addr, manifest, publicationSeq)
@@ -517,6 +531,9 @@ func (s *Service) cacheFresh(e *manifestcache.Entry, now time.Time) bool {
 	if e == nil {
 		return false
 	}
+	if e.Mode == types.ModeWellKnown && (e.Manifest == nil || e.Manifest.ValidAt(now) != nil) {
+		return false
+	}
 	if e.Mode == types.ModeLegacy {
 		// legacy depends only on chain URI; reuse if within chainTTL.
 		return now.Sub(e.ChainSeenAt) < s.chainTTL
@@ -538,6 +555,9 @@ func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Ent
 	case types.ModeWellKnown:
 		if e.Manifest == nil {
 			return nil, fmt.Errorf("%w: cache entry mode=well-known but manifest nil", types.ErrParse)
+		}
+		if err := e.Manifest.ValidAt(s.clock.Now()); err != nil {
+			return nil, err
 		}
 		nodes = projectManifest(req.Address, e.Manifest, e.PublicationSeq)
 	case types.ModeCSV:
@@ -581,6 +601,11 @@ func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Ent
 		filtered = append(filtered, n)
 	}
 	filtered = s.filterLiveHealthy(ctx, filtered, req)
+	if e.Manifest != nil {
+		if err := e.Manifest.ValidAt(s.clock.Now()); err != nil {
+			return nil, err
+		}
+	}
 	s.logResolvedResult("resolver: returning cached result", req.Address, e.Mode, filtered, freshness)
 	return &types.ResolveResult{
 		EthAddress:      req.Address,

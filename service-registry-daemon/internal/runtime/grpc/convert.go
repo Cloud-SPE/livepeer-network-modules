@@ -444,9 +444,8 @@ func timeFromProto(p *timestamppb.Timestamp) time.Time {
 	return p.AsTime().UTC()
 }
 
-// nodesFromProto converts a list of proto Nodes to types.Node (NOT
-// ResolvedNode — the publisher BuildManifest takes the manifest-shape
-// type, which has a thinner field set).
+// nodesFromProto converts inventory proto Nodes to the thinner internal Node
+// projection for local adapters and tests. It is not a signed payload decoder.
 func nodesFromProto(ps []*registryv1.Node) []types.Node {
 	out := make([]types.Node, 0, len(ps))
 	for _, p := range ps {

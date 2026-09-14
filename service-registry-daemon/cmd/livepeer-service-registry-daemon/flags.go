@@ -23,7 +23,7 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.StringVar(&cfg.SocketPath, "socket", cfg.SocketPath, "unix socket path for gRPC")
 	fs.StringVar(&cfg.StorePath, "store-path", cfg.StorePath, "BoltDB file path")
 	fs.Var((*csvList)(&cfg.ChainRPCURLs), "chain-rpc-urls", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read fails over across the list (required in resolver mode; mutually exclusive with --dev)")
-	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "reserved expected chain ID (currently not enforced)")
+	fs.Int64Var(&cfg.ChainID, "chain-id", cfg.ChainID, "expected chain ID; all production discovery RPC endpoints are checked at startup")
 	fs.StringVar(&cfg.ControllerAddress, "controller-address", cfg.ControllerAddress, "Livepeer Controller contract address; used for resolver chain auto-discovery (BondingManager + RoundsManager). Default Arbitrum One")
 	fs.StringVar(&cfg.ServiceRegistryAddress, "service-registry-address", cfg.ServiceRegistryAddress, "optional override for the primary registry contract address; when empty, resolver reads ServiceRegistry from Controller")
 	fs.StringVar(&cfg.AIServiceRegistryAddress, "ai-service-registry-address", cfg.AIServiceRegistryAddress, "AI registry contract address; when set, resolver lookups use this registry instead of the primary/controller-derived registry")

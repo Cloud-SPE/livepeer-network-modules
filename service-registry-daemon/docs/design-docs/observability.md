@@ -1,7 +1,7 @@
 ---
 title: Observability — Prometheus metrics catalog
 status: verified
-last-reviewed: 2026-04-28
+last-reviewed: 2026-09-14
 ---
 
 # Observability — Prometheus metrics catalog
@@ -26,11 +26,11 @@ scrape_configs:
       - targets: ['registry-host:9091']
 ```
 
-When `--metrics-listen` is unset, the daemon installs the [Noop recorder](../../internal/providers/metrics/noop.go) and never opens a TCP socket — zero runtime cost, no exposition surface.
+When `--metrics-listen` is unset, the daemon installs the [Noop recorder](../../internal/providers/metrics/noop.go) and never opens a TCP socket — no metrics exposition surface.
 
 ## Cardinality philosophy
 
-Every metric below carries label values from a closed enum. **No metric ever labels by `eth_address`, model name, URL, or any user-controlled string** — those would explode Prometheus memory at network scale (10k+ orchestrators × everything else).
+Operational outcome labels use bounded values; build version and RPC method labels are diagnostic strings. **No metric ever labels by `eth_address`, model name, URL, or any user-controlled string** — those would explode Prometheus memory at network scale (10k+ orchestrators × everything else).
 
 Per-orchestrator drill-down lives in the **audit log**, queryable via the `Resolver.GetAuditLog(eth_address, since, limit)` gRPC. Two-tool workflow:
 
@@ -73,7 +73,7 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 | `livepeer_registry_manifest_fetch_bytes` | Histogram | — | Capacity planning; spot operators bumping into the size cap. |
 | `livepeer_registry_manifest_verifications_total` | Counter | `outcome` | **Critical**: `signature_mismatch ≠ 0` means MITM or operator misconfiguration. |
 | `livepeer_registry_signature_verify_duration_seconds` | Histogram | — | secp256k1 recover is CPU-bound; sanity check. |
-| `livepeer_registry_manifest_fetcher_last_success_timestamp_seconds` | Gauge | — | Alert when stale > N minutes. |
+| `livepeer_registry_manifest_fetcher_last_success_timestamp_seconds` | Gauge | — | Age of last success; correlate with recent failed attempts. |
 
 ### Label values
 
@@ -86,7 +86,7 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 |---|---|---|---|
 | `livepeer_registry_cache_lookups_total` | Counter | `result` | Cache hit ratio. |
 | `livepeer_registry_cache_writes_total` | Counter | — | Refresh activity. |
-| `livepeer_registry_cache_evictions_total` | Counter | `reason` | Distinguish "operator moved" from "we gave up". |
+| `livepeer_registry_cache_evictions_total` | Counter | `reason` | Explicit cache deletions; TTL expiry does not delete records. |
 | `livepeer_registry_cache_entries` | Gauge | — | Cardinality watch — should track the active orchestrator set. |
 | `livepeer_registry_audit_events_total` | Counter | `kind` | Long-tail security signal — `signature_invalid` rate is the big one. |
 
@@ -101,9 +101,9 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 | Metric | Type | Labels | What it answers |
 |---|---|---|---|
 | `livepeer_registry_chain_reads_total` | Counter | `outcome` | RPC error rate against your chain endpoint. |
-| `livepeer_registry_chain_writes_total` | Counter | `outcome` | Publisher-side; should be near zero in steady state. |
+| `livepeer_registry_chain_writes_total` | Counter | `outcome` | Reserved; this daemon does not write chain state. |
 | `livepeer_registry_chain_read_duration_seconds` | Histogram | — | RPC tail latency — early warning for endpoint degradation. |
-| `livepeer_registry_chain_last_success_timestamp_seconds` | Gauge | — | Alert when stale > N minutes. |
+| `livepeer_registry_chain_last_success_timestamp_seconds` | Gauge | — | Age of last success; correlate with recent failed attempts. |
 
 ### Label values
 
@@ -120,13 +120,6 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 ### Label values
 
 - `overlay_reloads_total outcome`: `ok` `parse_error` `io_error`
-
-## Publisher
-
-| Metric | Type | Labels | What it answers |
-|---|---|---|---|
-
-### Label values
 
 
 ## gRPC
@@ -174,38 +167,19 @@ See [`docs/operations/grafana/README.md`](../operations/grafana/README.md) for i
 
 ## Alert rules
 
-A production-ready, drop-in alert-rules file ships at [`docs/operations/prometheus/alerts.yaml`](../operations/prometheus/alerts.yaml). Three severity tiers (`page` / `ticket` / `info`), twelve alerts covering security (signature mismatch), availability (chain stale, daemon down, error-rate spike), latency (chain p99, resolve p99), and quality-of-life informational signals (mixed versions, recent restart, overlay reload failures, cardinality cap proximity). See [`docs/operations/prometheus/README.md`](../operations/prometheus/README.md) for install / Prometheus Operator / tuning instructions.
+An example alert-rules file ships at [`docs/operations/prometheus/alerts.yaml`](../operations/prometheus/alerts.yaml). Three severity tiers (`page` / `ticket` / `info`), fourteen alerts covering security (signature mismatch), availability (chain stale, daemon down, error-rate spike), latency (chain p99, resolve p99), and quality-of-life informational signals (mixed versions, recent restart, overlay reload failures, cardinality cap proximity). See [`docs/operations/prometheus/README.md`](../operations/prometheus/README.md) for install / Prometheus Operator / tuning instructions.
 
-The terser starter set below is retained for inline context — prefer the shipping `alerts.yaml`:
+Registered metrics and enum values do not imply every event is emitted. There is no
+runtime overlay reload, automatic cache eviction, chain publication, or audit
+retention job. Overlay load failure is fatal and can occur before the first scrape.
+Use process availability and startup logs for that failure. The uptime gauge is
+updated on scrape from metrics-listener creation; build_info uses the binary's
+stamped version. Fetch success measures HTTP retrieval, not signature validity.
 
-```yaml
-groups:
-  - name: livepeer-service-registry
-    rules:
-      - alert: SignatureMismatchSpike
-        expr: rate(livepeer_registry_manifest_verifications_total{outcome="signature_mismatch"}[5m]) > 0.1
-        for: 5m
-        annotations:
-          summary: "Manifest signatures are failing verification"
-
-      - alert: ChainRPCStale
-        expr: (time() - livepeer_registry_chain_last_success_timestamp_seconds) > 300
-        for: 1m
-        annotations:
-          summary: "No successful chain reads in 5 minutes"
-
-      - alert: ResolveLatencyHigh
-        expr: histogram_quantile(0.99, sum by (le, mode) (rate(livepeer_registry_resolve_duration_seconds_bucket[5m]))) > 2
-        for: 10m
-        annotations:
-          summary: "p99 resolve latency > 2s"
-
-      - alert: GRPCErrorRateHigh
-        expr: sum(rate(livepeer_registry_grpc_requests_total{code!="OK"}[5m])) / sum(rate(livepeer_registry_grpc_requests_total[5m])) > 0.05
-        for: 5m
-        annotations:
-          summary: "gRPC error rate > 5%"
-```
+The shipped chain and fetcher alerts require recent attempts for the same
+`job,instance`; age alone is not a failure signal for idle or overlay-only daemons.
+Dashboard age thresholds are visual aids, not proof of an outage. The detailed
+[gRPC contract](../product-specs/grpc-surface.md) describes diagnostic health.
 
 ## Provider boundary
 

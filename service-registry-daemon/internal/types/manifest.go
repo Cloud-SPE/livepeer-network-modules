@@ -5,30 +5,22 @@ import (
 	"time"
 )
 
-// SchemaVersion is the manifest schema version this codebase produces.
-// Validators accept the caret-compatible range rooted at this version:
-// >= 3.0.1 and < 4.0.0.
+// SchemaVersion names the historical internal node projection used by local helpers.
+// Published envelopes carry the protocol spec_version instead.
 const SchemaVersion = "3.0.1"
 
 // SignatureAlgEthPersonal is the only signature algorithm v3 accepts.
 const SignatureAlgEthPersonal = "eth-personal-sign"
 
-// Manifest is the JSON document an operator publishes at the exact URL
-// returned by getServiceURI(). The struct tags produce the canonical
-// key set; field order at marshal time is fixed by the canonical-bytes
-// procedure (see CanonicalBytes).
-//
-// Field-level conventions:
-//   - SchemaVersion: required, currently always "3.0.1".
-//   - EthAddress: required, lower-cased 0x-prefixed.
-//   - IssuedAt: required, RFC3339 UTC.
-//   - Nodes: required, non-empty.
-//   - Signature: filled in by the publisher; zero-valued before signing.
+// Manifest is the internal resolver projection of the signed coordinator payload.
+// It is not the published wire schema.
 type Manifest struct {
-	SchemaVersion string    `json:"schema_version"`
-	EthAddress    string    `json:"eth_address"`
-	IssuedAt      time.Time `json:"issued_at"`
-	Nodes         []Node    `json:"nodes"`
+	SchemaVersion   string    `json:"schema_version"`
+	EthAddress      string    `json:"eth_address"`
+	IssuedAt        time.Time `json:"issued_at"`
+	ExpiresAt       time.Time `json:"expires_at"`
+	CanonicalSHA256 [32]byte  `json:"-"`
+	Nodes           []Node    `json:"nodes"`
 	// SettlementKeys are the orch's delegated settlement-signing keys,
 	// verified as part of the manifest and projected onto every route so
 	// a consumer can check a broker's settlement signature without
@@ -38,7 +30,7 @@ type Manifest struct {
 }
 
 // SettlementKey is one delegated key with its validity window. All
-// currently-valid keys are carried, newest first: a record signed just
+// advertised keys are carried with their windows: a record signed just
 // before a rotation must still verify, so the outgoing key stays until
 // its expires_at.
 type SettlementKey struct {
@@ -147,4 +139,12 @@ type Estimator struct {
 	Exactness string `json:"exactness"`
 	Package   string `json:"package,omitempty"`
 	Fixtures  string `json:"fixtures,omitempty"`
+}
+
+// ValidAt checks the signed publication window with an exclusive expiry boundary.
+func (m *Manifest) ValidAt(now time.Time) error {
+	if m == nil || m.IssuedAt.IsZero() || m.ExpiresAt.IsZero() || !m.ExpiresAt.After(m.IssuedAt) || now.Before(m.IssuedAt) || !now.Before(m.ExpiresAt) {
+		return NewValidation(ErrManifestExpired, "manifest", "publication is outside its issued_at/expires_at window")
+	}
+	return nil
 }

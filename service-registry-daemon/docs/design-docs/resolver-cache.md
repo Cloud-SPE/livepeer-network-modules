@@ -23,7 +23,7 @@ for orchestrators that leave the active pool.
 
 | Mode | Fresh-cache condition |
 |---|---|
-| Signed manifest / CSV | Age since fetch below manifest TTL, and age since source check below internal chain TTL |
+| Signed manifest / CSV | Age since fetch below manifest TTL, and age since source check below internal chain TTL; signed entries must also be within their publication window |
 | Legacy / static pins | Age since source check below internal chain TTL |
 
 Manifest TTL defaults to 10 minutes. Internal chain TTL uses `MaxStale`
@@ -47,9 +47,9 @@ in-memory overlay. The file is loaded only at startup; edit it and restart.
 ## Failure behavior
 
 - A chain lookup failure can serve a source-matching last-good entry while
-  its fetch age is below max-stale.
+  its fetch age is below max-stale and the signed publication has not expired.
 - Manifest transport failure can serve a verified entry for the same URI and
-  source while its fetch age is below max-stale.
+  source while its fetch age is below max-stale and the signed publication has not expired.
 - Invalid schema/signature responses and oversized manifest bodies do not use
   the manifest-outage last-good path.
 - Explicit overlay manifest pointers never downgrade to legacy routes.
@@ -64,7 +64,7 @@ resolver does not specifically emit `cache_stale_failing` in that path.
 Failed refreshes leave the cache record intact. URL changes overwrite it after
 successful resolution. Forced Refresh does not delete it. There is no LRU,
 automatic max-stale eviction, or periodic cache cleanup. Max-stale bounds reuse
-on failure; it is not a retention policy or manifest-expiry check.
+on failure; it is not a retention policy. Signed expiry is checked separately on every return.
 
 ## Audit and concurrency
 
@@ -75,10 +75,10 @@ address/timestamp keys can overwrite one another.
 
 Resolver call sites emit `manifest_fetched`, `signature_invalid`, and
 `fallback_used` for relevant branches. Other enum values are reserved; their
-presence does not mean every cache transition is audited. The stored body hash
-is not currently used to enforce publication monotonicity or generate changed/
-unchanged events. See [manifest validation limits](../product-specs/manifest-contract.md).
-
-BoltDB transactions protect individual store writes. This does not make
-concurrent fetches ordered by publication sequence; replay protection is
-tracked separately in `lnm-dnh`.
+presence does not mean every cache transition is audited. Canonical payload hashes
+and publication sequences enforce a persistent address-scoped replay watermark;
+raw body hashes also support migration from old cache records. Repository
+acceptance is serialized. Watermark persistence precedes cache replacement,
+and signed routes fail closed on persistence errors. See the
+[manifest contract](../product-specs/manifest-contract.md) for expiry, restart,
+source-change and database-reset semantics.

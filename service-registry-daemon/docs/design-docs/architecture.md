@@ -43,7 +43,7 @@ The trusted address comes from the caller/chain discovery or configured YAML.
 A pointer identifies a location, not authority to replace the signer. Both the
 manifest's claimed address and recovered signer must match the expected address.
 The [manifest contract](../product-specs/manifest-contract.md) distinguishes
-these implemented checks from outstanding expiry/replay enforcement.
+these implemented checks from expiry and durable replay enforcement.
 
 ## Resolution
 

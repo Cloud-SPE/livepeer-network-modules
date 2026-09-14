@@ -66,8 +66,8 @@ password bind mounts must be readable by runtime UID 65532.
 | `--chain-rpc-urls` | empty | Comma-separated RPC list; required for production chain discovery only |
 | `--controller-address` | Arbitrum One Controller | Supplies primary registry, pool and round addresses |
 | `--service-registry-address` | empty | Primary registry override; empty derives from Controller |
-| `--ai-service-registry-address` | Arbitrum One AI registry | Secondary lookup when primary has no pointer; empty disables fallback |
-| `--chain-id` | 42161 | Parsed but not currently enforced; do not rely on it as a chain-identity check (`lnm-cuh`) |
+| `--ai-service-registry-address` | Arbitrum One AI registry | Sole serviceURI lookup contract when nonempty; empty selects primary registry |
+| `--chain-id` | 42161 | Expected identity; every production chain-discovery RPC endpoint must respond with this chain ID at startup |
 | `--discovery` | chain | chain enumeration or overlay-only configured list |
 | `--round-poll-interval` | 1m | Round-transition polling in chain mode |
 | `--cache-manifest-ttl` | 10m | Synchronous on-demand manifest refresh after this age |
@@ -124,7 +124,7 @@ Forced Refresh bypasses TTL. Wildcard Refresh retries candidates but suppresses
 per-address errors. Use a specific address, logs and audit records to diagnose
 failures. See [cache semantics](../design-docs/resolver-cache.md).
 
-Health RPC provider booleans and last-success timestamp are placeholders today.
+Health RPC provider booleans reflect the last completed operation; unused providers are healthy, and unattempted required providers are not. The timestamp is the last actual successful serviceURI read.
 Standard gRPC health and metrics `/healthz` report liveness, not route readiness.
 Use actual Resolve/Select results and
 [provider metrics](../design-docs/observability.md) for operational checks.

@@ -12,7 +12,7 @@ anchors, Mermaid rendering or whether code changed after a review.
 - [Static overlay](static-overlay.md): parsing, trust policy and configuration.
 - [Cache](resolver-cache.md): synchronous refresh and bounded failure fallback.
 - [gRPC design](grpc-surface.md) and [consumer contract](../product-specs/grpc-surface.md).
-- [Manifest contract](../product-specs/manifest-contract.md): implementation checks and outstanding expiry/replay enforcement.
+- [Manifest contract](../product-specs/manifest-contract.md): implementation checks and expiry and durable replay enforcement.
 - [Protocol manifest](../../../livepeer-network-protocol/manifest/README.md) and [schema](../../../livepeer-network-protocol/manifest/schema.json): signed wire format.
 - [Observability](observability.md): metrics and operational limits.
 - [Identifiers](workload-agnostic-strings.md): workload-agnostic matching.

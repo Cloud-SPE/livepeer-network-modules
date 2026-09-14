@@ -109,4 +109,4 @@ This is the protocol module's [minimal envelope](../../../livepeer-network-proto
 }
 ```
 
-The signed wire shape is the outer manifest/signature envelope, not the resolver's node projection. The coordinator builds the payload, the cold console signs the entire canonical payload, and the coordinator hosts the signed result. See the [manifest contract](../product-specs/manifest-contract.md) for implemented checks and outstanding expiry/replay enforcement.
+The signed wire shape is the outer manifest/signature envelope, not the resolver's node projection. The coordinator builds the payload, the cold console signs the entire canonical payload, and the coordinator hosts the signed result. See the [manifest contract](../product-specs/manifest-contract.md) for implemented checks and expiry and durable replay enforcement.

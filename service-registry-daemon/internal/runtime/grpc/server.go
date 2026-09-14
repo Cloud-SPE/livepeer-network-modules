@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/diagnostics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
@@ -20,6 +21,7 @@ import (
 // optional Resolver and Publisher handlers; presence is determined by
 // daemon mode at construction.
 type Server struct {
+	diagnostics  func() diagnostics.Snapshot
 	resolverSvc  *resolver.Service
 	publisherSvc *publisher.Service
 	cache        manifestcache.Repo
@@ -29,11 +31,12 @@ type Server struct {
 
 // Config wires the server.
 type Config struct {
-	Resolver  *resolver.Service  // nil in publisher mode
-	Publisher *publisher.Service // nil in resolver mode
-	Cache     manifestcache.Repo
-	Audit     audit.Repo
-	Logger    logger.Logger
+	Diagnostics func() diagnostics.Snapshot
+	Resolver    *resolver.Service  // nil in publisher mode
+	Publisher   *publisher.Service // nil in resolver mode
+	Cache       manifestcache.Repo
+	Audit       audit.Repo
+	Logger      logger.Logger
 }
 
 // NewServer constructs a Server. Returns an error if neither service
@@ -46,6 +49,7 @@ func NewServer(c Config) (*Server, error) {
 		c.Logger = logger.Discard()
 	}
 	return &Server{
+		diagnostics:  c.Diagnostics,
 		resolverSvc:  c.Resolver,
 		publisherSvc: c.Publisher,
 		cache:        c.Cache,
@@ -349,12 +353,16 @@ func (s *Server) Health(_ context.Context) HealthResult {
 			cacheSize = len(list)
 		}
 	}
+	observed := diagnostics.Snapshot{}
+	if s.diagnostics != nil {
+		observed = s.diagnostics()
+	}
 	return HealthResult{
 		Mode:              mode,
-		ChainOK:           true, // placeholder; v1 doesn't actively probe
-		ManifestFetcherOK: true,
+		ChainOK:           observed.ChainOK,
+		ManifestFetcherOK: observed.ManifestFetcherOK,
 		CacheSize:         cacheSize,
-		LastChainSuccess:  time.Now().UTC(),
+		LastChainSuccess:  observed.LastChainSuccess,
 	}
 }
 

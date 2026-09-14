@@ -631,8 +631,9 @@ state.
 - Resolver semantics keep their existing shape but the response now carries
   `protocol`.
 
-The current `service-registry-daemon` resolver/publisher split keeps working; what
-changes is the manifest schema and the coordinator UX.
+The coordinator composes and hosts publications; `secure-orch-console` signs
+them with the cold key. The registry verifies and resolves them. Its retained
+Publisher RPC surface provides identity and health only.
 
 **Two on-chain registries point at the same well-known URL.** Livepeer mainnet
 (Arbitrum One) has two distinct contracts that name a `serviceURI` per orch:
@@ -647,6 +648,13 @@ the same URL in both. The on-chain pointer fetch is per-contract, but the
 manifest URL it points at is unified. See
 [`../../livepeer-network-protocol/manifest/README.md`](../../livepeer-network-protocol/manifest/README.md)
 for the manifest-side write-up.
+
+A static overlay can replace the on-chain pointer lookup with an explicit
+coordinator `manifest_url` and expected `eth_address`. In overlay-only mode only
+configured enabled nodes are discovered and no registry chain provider is built.
+The signed manifest still supplies broker routes, capabilities, prices and
+settlement keys; payment and ticket chain requirements are independent. See the
+[overlay contract](../../service-registry-daemon/docs/design-docs/static-overlay.md).
 
 ### Resolver fetch flow
 
@@ -663,7 +671,7 @@ sequenceDiagram
     participant Coord as orch-coordinator<br/>(public host)
     participant BM as BondingManager
 
-    Note over GW,Coord: Per-round refresh (cron-driven, ~19h on Arbitrum One)
+    Note over GW,Coord: Chain-mode refresh (round-event driven)
     SRD->>BM: GetFirstTranscoderInPool /<br/>GetNextTranscoderInPool
     BM-->>SRD: orch addresses
     loop for each orch
@@ -677,7 +685,7 @@ sequenceDiagram
     end
 
     Note over GW,SRD: On the hot path
-    GW->>SRD: Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)
+    GW->>SRD: Resolver.Select(capability_id,<br/>offering_id, tier?, min_weight?)
     SRD-->>GW: route { worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit_wei, extra }
 ```
 
@@ -888,7 +896,7 @@ consistent across products.
 flowchart TD
     Cust["customer request"] --> Shell["client shell"]
     Shell --> Auth["AuthResolver<br/>(bearer → customer + balance)"]
-    Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id?, tier?, min_weight?)"]
+    Auth --> Resolve["Resolver.Select(capability_id,<br/>offering_id, tier?, min_weight?)"]
     Resolve --> Tuple["route tuple<br/>{ worker_url, eth_address,<br/>protocol, work_unit,<br/>price_per_unit, extra }"]
     Tuple --> ProtoSwitch{protocol?}
 

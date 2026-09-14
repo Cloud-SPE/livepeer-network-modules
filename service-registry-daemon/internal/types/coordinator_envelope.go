@@ -383,6 +383,7 @@ func (sm *CoordinatorSignedManifest) ToManifest() (*Manifest, error) {
 		SchemaVersion:  sm.Manifest.SpecVersion,
 		EthAddress:     sm.Manifest.Orch.EthAddress,
 		IssuedAt:       sm.Manifest.IssuedAt,
+		ExpiresAt:      sm.Manifest.ExpiresAt,
 		Nodes:          out,
 		SettlementKeys: keys,
 		Signature: Signature{

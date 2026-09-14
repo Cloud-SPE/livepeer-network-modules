@@ -67,9 +67,13 @@ is configured with which contract address(es) to query for a given orch's
 2. JCS-canonicalize `manifest` payload.
 3. Recover signer from `signature.value` (secp256k1).
 4. Confirm signer == `manifest.orch.eth_address`.
-5. Confirm `eth_address` matches the orch's on-chain `ServiceRegistry` entry.
-6. Confirm `now < expires_at`.
-7. Confirm `publication_seq > last_seen[eth_address]` (anti-rollback within
-   the validity window — resolver caches the last-seen value per
-   `eth_address` and rejects equal-or-lower).
+5. Confirm `eth_address` matches the expected orchestrator identity from chain
+   discovery or the operator's configured overlay entry.
+6. Confirm `issued_at <= now < expires_at` and `issued_at < expires_at`.
+7. For a new publication, require `publication_seq > last_seen[eth_address]`.
+   A refetch at the same sequence is idempotent only when its canonical signed
+   payload matches the already accepted payload. Reject lower sequences and
+   conflicting equal-sequence payloads. Persist the address-scoped high-water
+   mark across cache eviction, source changes and process restart; resetting
+   that durable state resets local replay history.
 8. Index capability tuples for `Resolver.Select(capability_id, offering_id, ...)`.

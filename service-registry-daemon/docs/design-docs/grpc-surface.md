@@ -30,7 +30,7 @@ plus `units_per_price`, not necessarily a normalized one-unit price. Consumers
 match opaque capability/offering identifiers and implement the selected
 protocol. There is no registry-side payment authorization.
 
-Provider diagnostics in Health are placeholders today. ListKnown freshness is
+Provider diagnostics in Health reflect completed provider operations; see the product contract. ListKnown freshness is
 not populated, wildcard Refresh swallows per-address errors, and static-overlay
 domain mode maps to wire UNSPECIFIED. These are documented implementation
 limits, not readiness or consistency guarantees.

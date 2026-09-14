@@ -2,7 +2,7 @@
 id: 0011
 slug: registry-doc-contract-sweep
 title: Align registry documentation with executable contracts
-status: active
+status: completed
 owner: codex
 opened: 2026-09-14
 ---
@@ -22,3 +22,13 @@ Correct deployment examples and CLI descriptions where they advertise unsupporte
 ## Validation
 
 Run documentation generation twice for deterministic output, document/link lint, all Go lints and race tests, the in-process example, YAML parser validation of shipped overlays, and Compose config validation. Compare historical paths with HEAD to ensure they are unchanged. Verify local Docker build if available; do not publish or change image tags.
+
+## Validation result
+
+Completed 2026-09-14. Full ship-check passes (lint, race tests and per-package
+coverage). Every executable daemon package exceeds 75%; seeder coverage is 100%.
+Generated documentation and current links pass. Both Compose configurations
+validate; Prometheus checks all 14 rules and the per-instance idle/failure
+regression passes. Historical references and previously completed plans were
+preserved. Image publication and Blueclaw environment acceptance are separate
+release work, tracked in lnm-yer.

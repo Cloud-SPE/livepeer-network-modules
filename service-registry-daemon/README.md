@@ -120,8 +120,8 @@ make docs-generate
 
 `make test` uses the race detector. Go lint enforces dependency boundaries;
 [custom lints](lint/README.md) check documentation and suspicious manifest
-decoding. The documented 75% coverage target is not yet enforced by the stub
-coverage-gate tool (`lnm-gpd`).
+decoding. `make coverage-check` enforces 75% statement coverage for each executable
+cmd/internal package; `make ship-check` includes that gate.
 
 The [minimal example](examples/minimal-e2e/README.md) signs a test manifest
 in-process with a throwaway key and selects routes. The

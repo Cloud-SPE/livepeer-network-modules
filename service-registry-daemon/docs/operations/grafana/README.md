@@ -100,3 +100,13 @@ The dashboard displays metrics; it does NOT ship alert rules. The `observability
 | `signature_mismatch` rate panel always at 0 | This is the desired state. Configure an alert to page when it goes non-zero. |
 | Cache hit ratio stuck at 0 | Daemon was just restarted; cache is empty. Should warm up within a few minutes of normal traffic. |
 | `Top error registry codes` empty | Same — until something errors, the table has no rows. Filter labels include `registry_code != "_unset_"`. |
+
+## Runtime interpretation (2026-09-14)
+
+Chain and manifest last-success timestamps can age while an instance is idle.
+Overlay-only constructs no chain provider. Correlate age panels with failed
+attempts; the shipped alerts match those attempts per job and instance.
+Overlay loading happens once at startup and an invalid file prevents startup;
+there is no previous overlay retained by a hot-reload loop. Some metrics reserve
+labels for operations not implemented by this daemon; see the
+[metrics catalog](../../design-docs/observability.md).

@@ -29,9 +29,12 @@ allows an unsigned coordinator envelope. See [manifest contract](../product-spec
 
 ## Chain lookup and detection
 
-The chain provider queries primary `ServiceRegistry`, then optional
-`AIServiceRegistry` if primary has no pointer. The primary address comes from
-Controller unless overridden. A provider error is not the same as not-found.
+When `--ai-service-registry-address` is nonempty, that contract is the sole
+pointer source. Its default is the Arbitrum AI registry. Set the flag to an
+empty string to use primary `ServiceRegistry`, whose address comes from
+Controller unless overridden. There is no fallback between the two contracts.
+All configured production discovery RPC endpoints must match `--chain-id`
+at startup. A provider error is not the same as not-found.
 
 `internal/service/resolver/mode.go` trims the pointer and counts commas:
 

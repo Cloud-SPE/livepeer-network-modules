@@ -49,7 +49,7 @@ The route's `eth_address` is the orchestrator identity, not a runner identity.
 - `units_per_price` comes from signed `per_units` (zero/absent normalizes to 1).
   Do not assume prices have been divided to a per-single-unit value.
 - `quote_version` is the publication sequence for manifest-derived routes,
-  otherwise zero. It is not evidence of resolver replay protection.
+  otherwise zero. The resolver rejects rollback and conflicting same-sequence signed payloads.
 - `quote_id` is `resolver:v1:` plus SHA-256 of lower-case eth address, worker
   URL, capability, offering and work unit, joined by `|`.
 - `constraint_fingerprint` hashes the canonical JSON constraints object;
@@ -98,11 +98,13 @@ Wildcard Refresh uses all candidate addresses and swallows individual resolve
 errors; use an address-specific call and audit/logs for error details. It
 refreshes known/configured addresses, not the entire chain pool.
 
-Health currently sets `chain_ok` and `manifest_fetcher_ok` to true and
-`last_chain_success` to the current time. Only mode and cache size are actual
-state. Standard gRPC health and metrics `/healthz` are liveness signals. None
-prove chain availability, successful manifest discovery or selectable routes.
-Real provider outcomes are available through metrics/logs (`lnm-cuh`).
+Health reports the most recently completed serviceURI read and manifest HTTP
+fetch. Before the first attempt a required provider is false. Unused providers
+are true (not required), so overlay-only has chain_ok=true and no chain-success
+timestamp; publisher needs neither provider. NotFound from a chain read is a
+successful RPC. Failures preserve the last actual successful chain timestamp.
+These observations do not actively probe or imply a valid signature or a
+selectable route. Standard gRPC health and metrics /healthz are liveness signals.
 
 ## Publisher
 
@@ -119,7 +121,7 @@ Errors carry `registry_error_code` in a `google.protobuf.Struct` status detail.
 | `not_found` | NotFound | Missing/disabled discovery entry, missing chain pointer, or no selectable routes |
 | `manifest_unavailable` | Unavailable | HTTP/transport retrieval failed without usable fallback |
 | `signature_mismatch` | Unauthenticated | Claimed/recovered signer differs from expected address |
-| `parse_error` | InvalidArgument | Malformed manifest, address or request, including malformed signatures |
+| `parse_error` | InvalidArgument | Malformed manifest, address or request, including malformed signatures, invalid publication windows, and replay/conflicting sequences |
 | `unknown_field` | InvalidArgument | Unknown envelope field where classified separately |
 | `manifest_too_large` | ResourceExhausted | Body exceeds fetch size cap |
 | `chain_unavailable` | Unavailable | Chain lookup failed without usable last-good |

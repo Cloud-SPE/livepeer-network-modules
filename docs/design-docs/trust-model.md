@@ -141,9 +141,8 @@ sequenceDiagram
 
     Note over SOC,OC: 2. Upload — first verification
     SOC->>OC: POST signed manifest
-    OC->>Chain: read on-chain orch identity for this orch_addr
-    Chain-->>OC: pubkey / address
-    OC->>OC: verify(sig, canonical_bytes, orch_pubkey)
+    OC->>OC: recover signer from canonical bytes
+    OC->>OC: compare recovered address with configured orch identity
     alt verify ok
         OC->>OC: atomic-swap publish at /.well-known/livepeer-registry.json
     else verify fails
@@ -155,8 +154,8 @@ sequenceDiagram
     Chain-->>SRD: well-known manifest URL
     SRD->>OC: GET /.well-known/livepeer-registry.json
     OC-->>SRD: signed manifest
-    SRD->>Chain: read on-chain orch identity (or use cached)
-    SRD->>SRD: verify(sig, canonical_bytes, orch_pubkey)
+    SRD->>SRD: recover signer and compare with expected orch address
+    SRD->>SRD: enforce publication window and persistent sequence watermark
     alt verify ok
         SRD->>SRD: cache for Resolver.Select
     else verify fails
@@ -297,3 +296,15 @@ These hold for every published manifest, by construction:
   signing UI
 - [`../../orch-coordinator/`](../../orch-coordinator/) — the public host
   that serves the signed manifest
+
+## Registry discovery implementation (2026-09-14)
+
+The registry can locate the coordinator through on-chain serviceURI or a static
+overlay manifest_url. Both paths verify the signed publication against the
+expected orchestrator address; the URL host is not the trust anchor. Overlay-only
+discovery does not disable payment or ticket chain requirements. See the
+[current manifest contract](../../service-registry-daemon/docs/product-specs/manifest-contract.md)
+and [overlay contract](../../service-registry-daemon/docs/design-docs/static-overlay.md)
+for enforced validation and policy. Targeted route selection requires fresh
+broker tuple readiness when live-health fetching is configured; inventory
+resolution can retain signed inventory when live-health data is unavailable.

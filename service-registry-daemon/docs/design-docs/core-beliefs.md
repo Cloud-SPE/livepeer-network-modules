@@ -20,7 +20,7 @@ The expected orchestrator address anchors trust. Discovery uses a chain pointer
 or an operator-configured coordinator URL; the recovered signer must match the
 expected address. Coordinator envelopes must be signed. `unsigned_allowed`
 only governs unsigned static/CSV nodes, not unsigned manifests. Expiry and
-publication replay enforcement remain implementation work (`lnm-dnh`).
+publication replay enforcement are required on fetch and cache reuse.
 
 The cold key stays on the signing host. The coordinator builds and hosts signed
 publications; the cold console signs them. Registry publisher mode is
@@ -48,7 +48,7 @@ explicitly unsigned and separate from coordinator manifest pointers.
 - Fresh entries avoid chain lookup and manifest fetch; live-health work may
   still run. Stale entries refresh synchronously. Round seeding is separate.
 - The package coverage target remains at least 75%. The current coverage-gate
-  executable is a stub and does not enforce that target (`lnm-gpd`).
+  executable enforces that target for every executable cmd/internal package.
 - Documentation is updated alongside observable behavior. Active docs describe
   current code; historical references and completed plans remain immutable.
 - Beads owns work items. Nontrivial design changes get an execution-plan design

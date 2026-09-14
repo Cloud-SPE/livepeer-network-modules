@@ -39,6 +39,8 @@ recovery remains the resolver's responsibility.
 ## Other gates
 
 `layer-check` is a stub; golangci-lint depguard enforces configured import
-boundaries. `coverage-gate` is also a stub. `make coverage-check` runs coverage
-and invokes it, but does not currently enforce the documented 75% floor.
+boundaries. `make coverage-check` enforces 75% statement coverage per executable
+cmd/internal package. Package inventory catches missing tests and profile records.
+Examples and development tooling are excluded from the daemon coverage boundary;
+they have separate tests. `make ship-check` includes the coverage gate.
 Tracked in beads `lnm-gpd`. No current CI contract should claim otherwise.

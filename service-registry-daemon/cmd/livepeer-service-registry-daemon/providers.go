@@ -27,6 +27,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
 	clockadapter "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock/chaincommonsadapter"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/diagnostics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/discovery"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/livehealthfetcher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
@@ -41,18 +42,19 @@ import (
 )
 
 // builtProviders holds the set of providers needed by the services. The
-// resolver needs all I/O providers; the publisher needs Signer + Chain.
+// resolver uses discovery/fetch providers; publisher only needs a loaded identity.
 type builtProviders struct {
-	cfg        *config.Daemon
-	log        logger.Logger
-	store      store.Store
-	chain      chain.Chain
-	signer     signer.Signer
-	verify     verifier.Verifier
-	fetcher    manifestfetcher.ManifestFetcher
-	liveHealth livehealthfetcher.Fetcher
-	clock      clock.Clock
-	recorder   metrics.Recorder
+	diagnostics *diagnostics.State
+	cfg         *config.Daemon
+	log         logger.Logger
+	store       store.Store
+	chain       chain.Chain
+	signer      signer.Signer
+	verify      verifier.Verifier
+	fetcher     manifestfetcher.ManifestFetcher
+	liveHealth  livehealthfetcher.Fetcher
+	clock       clock.Clock
+	recorder    metrics.Recorder
 
 	// Resolver chain-discovery dependencies (nil unless in resolver
 	// mode with --discovery=chain). roundclock + discovery feed the
@@ -77,7 +79,7 @@ func (bp *builtProviders) addCloser(fn func()) {
 
 // build assembles providers from cfg. Dev mode uses fakes; production
 // dials chain RPC and loads the keystore.
-func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
+func build(ctx context.Context, cfg *config.Daemon) (_ *builtProviders, buildErr error) {
 	// Clock: chain-commons-backed via thin adapter.
 	clk, err := clockadapter.New(cclock.System())
 	if err != nil {
@@ -88,6 +90,11 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		clock:  clk,
 		verify: verifier.New(),
 	}
+	defer func() {
+		if buildErr != nil {
+			bp.Close()
+		}
+	}()
 	bp.log = logger.New(logger.Config{Level: cfg.LogLevel, Format: cfg.LogFormat})
 
 	// Recorder: Prometheus when --metrics-listen is set, Noop otherwise.
@@ -166,6 +173,9 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 	// explicitly. The explicit flag remains as an override.
 	if cfg.Mode == config.ModeResolver && !cfg.Dev && cfg.Discovery == config.DiscoveryChain {
 		var err error
+		if err := chain.ValidateRPCChainIDs(ctx, cfg.ChainRPCURLs, cfg.ChainID); err != nil {
+			return nil, err
+		}
 		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs})
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
@@ -265,7 +275,8 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		// Overlay-only and publisher modes do not read serviceURI pointers.
 		bp.chain = chain.NewInMemory("")
 	}
-	bp.chain = chain.WithMetrics(bp.chain, bp.recorder)
+	bp.diagnostics = diagnostics.New(cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryChain, cfg.Mode == config.ModeResolver)
+	bp.chain = bp.diagnostics.WrapChain(chain.WithMetrics(bp.chain, bp.recorder))
 
 	// Manifest fetcher (resolver only, but cheap to always build)
 	bp.fetcher = manifestfetcher.WithMetrics(
@@ -276,6 +287,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}),
 		bp.recorder,
 	)
+	bp.fetcher = bp.diagnostics.WrapFetcher(bp.fetcher)
 	bp.liveHealth = livehealthfetcher.New(cfg.WorkerProbeTimeout)
 
 	// Static overlay (resolver only)

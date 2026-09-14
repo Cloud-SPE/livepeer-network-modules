@@ -33,7 +33,7 @@ const (
 
 // Daemon is the validated daemon-level configuration. Built by the
 // runtime layer from CLI flags. Fields are immutable once built; a
-// reload (overlay change) creates a new struct.
+// overlay changes require a daemon restart.
 type Daemon struct {
 	Mode       Mode
 	SocketPath string

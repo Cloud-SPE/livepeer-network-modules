@@ -3,8 +3,8 @@
 Use the replacement registry image digest recorded in the
 [release record](../../../infra/build/v2.0.0-release.md). The tag remains
 v2.0.0; a cached image with that tag does not prove the fix is installed.
-Pull and recreate the registry container, then check its --version output
-against the recorded source revision. Preserve its database volume across upgrades.
+Pull and recreate the registry container, then check the version field in its startup logs
+against the recorded source revision (or the build_info metric when enabled). Preserve its database volume across upgrades.
 
 Configure coordinator discovery with the operator's expected signing identity:
 

@@ -32,7 +32,7 @@
 
 services:
   broker:
-    image: ${BROKER_IMAGE:-tztcloud/livepeer-capability-broker:dev}
+    image: ${BROKER_IMAGE:-tztcloud/livepeer-capability-broker:v2.0.0}
     command: ["--config", "/cfg/host-config.yaml"]
     environment:
       BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:-conformance-admin-token}
@@ -42,7 +42,7 @@ services:
       - ./settle.key:/cfg/settle.key:ro
 
   conformance:
-    image: ${CONFORMANCE_IMAGE:-tztcloud/livepeer-conformance:dev}
+    image: ${CONFORMANCE_IMAGE:-tztcloud/livepeer-conformance:v2.0.0}
     depends_on: [broker]
     command:
       - --broker-url=http://broker:8080

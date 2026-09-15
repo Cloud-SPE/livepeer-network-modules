@@ -24,7 +24,10 @@ secure-orch side to run:
 ## Prerequisites
 
 - A separate secure-orch / protocol host already running `protocol-daemon`
-  and exposing `/var/run/livepeer/protocol.sock` on this host.
+  and a deliberately configured local transport endpoint at
+  `/var/run/livepeer/protocol.sock` on this host. A Docker volume does not
+  forward a socket across machines. The scenario does not create that
+  transport or expose protocol gRPC over public TCP.
 - One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
   primary first). The payout executor takes its list from the
   `executor.rpc_urls` key of its config file instead.
@@ -34,7 +37,8 @@ secure-orch side to run:
 - A funded payout hot wallet:
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_FILE`
   - `POOL_PAYOUT_EXECUTOR_KEYSTORE_PASSWORD_FILE`
-- A real coordinator config at `./coordinator-config.yaml`
+- Real coordinator and controller configs with your orchestrator address and
+  public broker/member URLs; copy the examples before editing them.
 - A delegated settlement signing key for the broker, minted with
   `livepeer-capability-broker settlement-key generate`. This is a hot broker
   key, not the cold orchestrator key. Its public half must be delegated by the
@@ -169,3 +173,39 @@ proves that a missing key fails closed:
   `listen.attach_quic: ":8443"`; set
   `bootstrap.public_broker_quic_addr: "<public-host>:8443"` in the controller
   config so member bundles advertise the same endpoint.
+
+## v2.0.0 deployment alignment
+
+Read [the stack audit and upgrade notes](../STACKS.md) before upgrading existing
+stores. `v2.0.0` is a mutable image tag, not a protocol version or proof that all
+components were rebuilt together. Build the approved source set and record image
+digests. Publication of new paid-path contracts is coordinated separately.
+
+Copy `pool-controller/examples/pool-controller-config.compose.yaml` to a private
+operator config and set `POOL_CONTROLLER_CONFIG` to its path. Set the real
+`identity.orch_eth_address`, `bootstrap.public_controller_url` (member HTTPS URL),
+`bootstrap.public_broker_url` and QUIC address. Keep the authenticated internal
+`bootstrap.broker_admin_url` and `broker_admin_auth` configuration. Edit the payout
+config if needed; its keystore paths refer to `/etc/livepeer/keystore.json` and
+`/etc/livepeer/keystore-password` inside the container, not host paths.
+
+| Endpoint | Default host binding | Exposure |
+|---|---|---|
+| Coordinator admin | `127.0.0.1:8080` | Private operator access; configurable `COORDINATOR_ADMIN_BIND`. |
+| Coordinator manifest | `0.0.0.0:8081` | Public HTTPS proxy upstream. |
+| Broker | `0.0.0.0:8082` | Public HTTPS proxy; restrict its authenticated admin paths. |
+| Pool controller admin | `127.0.0.1:8083` | Private operator access. |
+| Pool member portal/API | `127.0.0.1:8084` | Separate member HTTPS proxy upstream. |
+| Broker attach | UDP `8443` | Direct runner QUIC attach. |
+| Metrics | Loopback | Private monitoring. |
+
+The member listener is `listen.member: ":8084"` in the controller config.
+Proxy the member domain only to this listener, never to port 8083. A proxy in a
+container must share a Docker network and use service ports, or use an explicitly
+configured reachable host address; its own loopback is not the host's loopback.
+Existing configs without `listen.member` must add it for this mapping to work.
+
+Do not mount the cold orchestrator keystore into the public host. The receiver and
+payout executor use their own designated wallets. Take complete backups and
+follow [settlement-domain migration](../../../docs/design-docs/settlement-domain-release.md)
+when upgrading the financial contract.

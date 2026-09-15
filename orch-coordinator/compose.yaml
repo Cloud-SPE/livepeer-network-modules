@@ -3,7 +3,7 @@
 # capability-broker image once the multi-process smoke is in scope.
 services:
   coordinator:
-    image: tztcloud/livepeer-orch-coordinator:dev
+    image: ${REGISTRY:-tztcloud}/livepeer-orch-coordinator:${TAG:-v2.0.0}
     build:
       context: ..
       dockerfile: orch-coordinator/Dockerfile

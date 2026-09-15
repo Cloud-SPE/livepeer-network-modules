@@ -22,6 +22,7 @@ services:
     profiles: [receiver]
     command:
       - --mode=receiver
+      - --orch-address=${ORCH_ADDRESS:?set ORCH_ADDRESS to the orchestrator payee address}
       - --socket=/var/run/livepeer/payment-daemon.sock
       - --db=/var/lib/livepeer/payment-daemon/sessions.db
       - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
@@ -45,6 +46,7 @@ services:
     profiles: [sender]
     command:
       - --mode=sender
+      - --db=/var/lib/livepeer/payer/payer.db
       - --socket=/var/run/livepeer/payer-daemon.sock
       - --chain-rpc-urls=${CHAIN_RPC_URLS:?set CHAIN_RPC_URLS to a comma-separated list of Arbitrum RPC endpoints, primary first}
       - --keystore-path=/etc/livepeer/sender-keystore.json
@@ -55,6 +57,7 @@ services:
     environment:
       LIVEPEER_KEYSTORE_PASSWORD: ${LIVEPEER_SENDER_KEYSTORE_PASSWORD:-}
     volumes:
+      - payer-daemon-db:/var/lib/livepeer/payer
       - payment-daemon-run:/var/run/livepeer
       - ${SENDER_KEYSTORE_FILE:-./run/sender-keystore.json}:/etc/livepeer/sender-keystore.json:ro
       - ${SENDER_KEYSTORE_PASSWORD_FILE:-./run/sender-keystore-password}:/etc/livepeer/sender-keystore-password:ro
@@ -73,5 +76,6 @@ services:
     restart: "no"
 
 volumes:
+  payer-daemon-db: {}
   payment-daemon-run: {}
   payment-daemon-db: {}

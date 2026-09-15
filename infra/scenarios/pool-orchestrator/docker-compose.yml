@@ -82,9 +82,9 @@ services:
       - --log-format=${COORDINATOR_LOG_FORMAT:-text}
       - --secure-orch-url=${COORDINATOR_SECURE_ORCH_URL:-}
     ports:
-      - "${COORDINATOR_LISTEN_PORT:-8080}:8080"
+      - "${COORDINATOR_ADMIN_BIND:-127.0.0.1}:${COORDINATOR_LISTEN_PORT:-8080}:8080"
       - "${COORDINATOR_PUBLIC_PORT:-8081}:8081"
-      - "${COORDINATOR_METRICS_PORT:-9091}:9091"
+      - "${COORDINATOR_METRICS_BIND:-127.0.0.1}:${COORDINATOR_METRICS_PORT:-9091}:9091"
     volumes:
       - ${COORDINATOR_CONFIG:-./coordinator-config.yaml}:/etc/livepeer/orch-coordinator.yaml:ro
       - coordinator-data:/srv/data
@@ -100,8 +100,9 @@ services:
     environment:
       POOL_CONTROLLER_ADMIN_TOKEN: ${POOL_CONTROLLER_ADMIN_TOKEN:?set POOL_CONTROLLER_ADMIN_TOKEN to the pool-controller admin bearer (openssl rand -hex 32)}
     ports:
-      - "${POOL_CONTROLLER_PORT:-8080}:8080"
-      - "${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
+      - "${POOL_CONTROLLER_MEMBER_BIND:-127.0.0.1}:${POOL_CONTROLLER_MEMBER_PORT:-8084}:8084"
+      - "${POOL_CONTROLLER_BIND:-127.0.0.1}:${POOL_CONTROLLER_PORT:-8083}:8080"
+      - "${POOL_CONTROLLER_METRICS_BIND:-127.0.0.1}:${POOL_CONTROLLER_METRICS_PORT:-9090}:9090"
     volumes:
       - ${POOL_CONTROLLER_CONFIG:-../../../pool-controller/examples/pool-controller-config.compose.yaml}:/etc/livepeer/pool-controller.yaml:ro
       - ${POOL_CONTROLLER_DATA_DIR:-./run/pool-controller}:/var/lib/livepeer/pool-controller

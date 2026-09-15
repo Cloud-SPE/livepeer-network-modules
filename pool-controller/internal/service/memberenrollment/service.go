@@ -347,7 +347,7 @@ func bundleEnv(input BundleInput) string {
 	return "POOL_CONTROLLER_URL=" + input.ControllerURL + "\n" +
 		"POOL_ENROLLMENT_ID=" + input.Enrollment.ID + "\n" +
 		"POOL_MEMBER_ETH_ADDRESS=" + input.Enrollment.MemberEthAddress + "\n" +
-		"POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token\n" +
+		"POOL_ENROLLMENT_TOKEN_FILE=/workspace/enrollment-token\n" +
 		"LIVEPEER_HOST_ID=" + input.Enrollment.ID + "\n" +
 		"LIVEPEER_BROKER_URL=" + input.BrokerURL + "\n" +
 		"LIVEPEER_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
@@ -394,10 +394,11 @@ func bundleReadme(input BundleInput) string {
 		"images from the Pool's published template catalog, pinned to the GPUs\n" +
 		"assigned to you.\n\n" +
 		"## Leaving\n\n" +
-		"`docker compose down` stops everything. To leave properly, retire the\n" +
+		"To leave properly, retire the\n" +
 		"host from the member portal first: your placements drain, in-flight\n" +
 		"work finishes, and you stop being sent new jobs before the containers\n" +
-		"go away.\n\n" +
+		"go away. Then run `docker compose -f runners.compose.yaml down` and\n" +
+		"`docker compose down` to stop the runner project and agent.\n\n" +
 		"Enrollment: `" + input.Enrollment.ID + "`\n"
 }
 
@@ -410,16 +411,12 @@ func bundleReadme(input BundleInput) string {
 // 0044 §3.4), so the bundle is a bootstrap — the one thing that has to
 // arrive out of band — and the runner set is live state.
 //
-// The generated file is included from here rather than merged into it,
-// so `docker compose up` in this directory starts the agent and
-// whatever the agent has decided should run alongside it.
+// Runners use a separate Compose project on the agent-owned network. The
+// agent applies runners.compose.yaml; the bootstrap does not include it.
 func bundleCompose(input BundleInput) string {
-	return "include:\n" +
-		"  - path: ./runners.compose.yaml\n" +
-		"    required: false\n" +
-		"services:\n" +
+	return "name: livepeer-agent-" + bundleNetworkID(input) + "\nservices:\n" +
 		"  pool_member_agent:\n" +
-		"    image: ghcr.io/cloud-spe/livepeer-pool-member-agent:latest\n" +
+		"    image: ${REGISTRY:-tztcloud}/livepeer-pool-member-agent:${TAG:-v2.0.0}\n" +
 		"    restart: unless-stopped\n" +
 		"    gpus: all\n" +
 		"    env_file: .env\n" +
@@ -434,7 +431,6 @@ func bundleCompose(input BundleInput) string {
 		"      - \"${LIVEPEER_EDGE_RTMPS_PORT:-1936}:1936\"\n" +
 		"    volumes:\n" +
 		"      - ./edge:/etc/livepeer/edge:ro\n" +
-		"      - ./enrollment-token:/run/livepeer/enrollment-token:ro\n" +
 		"      - ./pool-member-agent.yaml:/etc/livepeer/pool-member-agent.yaml:ro\n" +
 		// The agent writes the runner compose file and drives docker,
 		// so it needs the socket and a place to write. This is the
@@ -447,7 +443,8 @@ func bundleCompose(input BundleInput) string {
 		// resolution correct when the agent itself runs in a container.
 		"      - /var/lib/livepeer-resource-admission:/var/lib/livepeer-resource-admission\n" +
 		"      - ./:/workspace\n" +
-		"    working_dir: /workspace\n"
+		"    working_dir: /workspace\n" +
+		"networks:\n  default:\n    name: livepeer-member-" + bundleNetworkID(input) + "\n"
 }
 
 func bundleUpdateScript() string {
@@ -466,5 +463,13 @@ func bundleAgentConfig(input BundleInput) string {
 	return "enrollment_id: " + input.Enrollment.ID + "\n" +
 		"controller_url: " + input.ControllerURL + "\n" +
 		"broker_url: " + input.BrokerURL + "\n" +
-		"token_file: /run/livepeer/enrollment-token\n"
+		"token_file: /workspace/enrollment-token\n"
+}
+
+// Shared with the member agent's desired-state renderer. Separate projects
+// prevent runner --remove-orphans from deleting the agent; a shared network
+// keeps runner service names reachable from the agent.
+func bundleNetworkID(input BundleInput) string {
+	sum := sha256.Sum256([]byte(input.Enrollment.ID))
+	return hex.EncodeToString(sum[:8])
 }

@@ -214,11 +214,27 @@ images named by the pool's template catalog, pinned to the GPUs assigned to
 that member, and `runners.compose.yaml` can be read at any time to see exactly
 what is running and which template and assignment it came from.
 
-> **Nothing starts from the shipped catalog yet.** The five templates in the
-> repo's `templates/` directory carry no `runner_compose` block — the v1 images
-> and model ids are still open (`lnm-v12`) — so the fragment they render has no
-> `image`. The loop itself is built and tested; a pool that wants containers to
-> actually come up must add `runner_compose.image` to the templates it enables.
+The agent image includes the Docker CLI and Compose plugin. The bootstrap starts
+only the agent; it does not include a not-yet-generated runner file. Agent and
+runners use separate Compose projects (`livepeer-agent-<id>` and
+`livepeer-runners-<id>`) on one `livepeer-member-<id>` network, where `<id>` is
+the first 16 hex digits of SHA-256 over the enrollment ID. The agent creates the
+network; runners reference it as external. Runner reconciliation cannot remove
+the agent as an orphan. An empty desired state stops the runner project without
+removing its volumes or the shared network.
+
+The enrollment token is `/workspace/enrollment-token` on the writable bundle
+directory mount. A read-only single-file mount prevents atomic credential
+rotation. The bootstrap image defaults to
+`tztcloud/livepeer-pool-member-agent:v2.0.0`; `REGISTRY` and `TAG` can be set in
+its `.env` for an explicitly selected build.
+
+For an existing bundle, drain work before replacing it. Preserve credentials,
+sealing/admission state, model storage, and the old Compose project name. Stop the
+old runner project without `-v` before enabling the new project names; otherwise
+old runners may stay up alongside the new ones. Retain the original files until
+the upgraded agent has reconciled and reattached successfully. When leaving,
+retire/drain first, then stop `runners.compose.yaml` and the agent Compose project.
 
 ## What the agent puts on the wire
 

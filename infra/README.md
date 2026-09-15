@@ -99,3 +99,10 @@ that **runs** the prebuilt image — no `build:` blocks. The matching
 That keeps the build path (`infra/scripts/build-images.sh`), the
 module-local run path (`<component>/compose/`), and the staged topology
 examples (`infra/scenarios/`) cleanly separated.
+
+## Stack validation
+
+See [active stack coverage and upgrade notes](scenarios/STACKS.md). Run
+`python3 infra/scripts/check-stacks.py` from the repo root to render every active
+base/overlay combination with synthetic inputs. It starts no containers and
+does not load operator `.env` files.

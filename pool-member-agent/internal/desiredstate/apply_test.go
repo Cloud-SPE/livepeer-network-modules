@@ -2,8 +2,11 @@ package desiredstate
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -377,5 +380,58 @@ func TestComposeRunnerWriteComposeReplacesTheFileAtomically(t *testing.T) {
 		if strings.HasSuffix(entry.Name(), ".tmp") {
 			t.Fatalf("left %s behind; a stale temp file is a compose file nobody knows the age of", entry.Name())
 		}
+	}
+}
+
+func TestRunnerComposeProjectIsolation(t *testing.T) {
+	doc := Document{EnrollmentID: "host-test", Services: []Service{{Name: "runner", ComposeFragment: "  runner:\n    image: busybox:1\n"}}}
+	out := RenderCompose(doc)
+	sum := sha256.Sum256([]byte(doc.EnrollmentID))
+	id := fmt.Sprintf("%x", sum[:8])
+	if !strings.Contains(out, "name: livepeer-runners-"+id) || !strings.Contains(out, "external: true\n    name: livepeer-member-"+id) {
+		t.Fatal(out)
+	}
+	if os.Getenv("CHECK_COMPOSE") == "1" {
+		for _, d := range []Document{doc, {EnrollmentID: doc.EnrollmentID}} {
+			p := filepath.Join(t.TempDir(), "runners.compose.yaml")
+			if err := os.WriteFile(p, []byte(RenderCompose(d)), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cmd := exec.Command("docker", "compose", "-f", p, "config", "--quiet")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("runner compose: %v: %s", err, out)
+			}
+		}
+	}
+}
+
+func TestEmptyRunnerProjectDownPreservesAgent(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "runners.compose.yaml")
+	fake := filepath.Join(dir, "docker")
+	args := filepath.Join(dir, "args")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$TEST_COMPOSE_ARGS\"\n"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TEST_COMPOSE_ARGS", args)
+	runner := ComposeRunner{Binary: fake, Args: []string{"compose"}}
+	if err := runner.WriteCompose(path, RenderCompose(Document{EnrollmentID: "host-test"})); err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.Pull(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(args); !os.IsNotExist(err) {
+		t.Fatal("empty project should not pull")
+	}
+	if err := runner.Up(context.Background(), path); err != nil {
+		t.Fatal(err)
+	}
+	out, err := os.ReadFile(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(out), "down\n--remove-orphans\n") || strings.Contains(string(out), "--volumes") {
+		t.Fatalf("unsafe teardown: %s", out)
 	}
 }

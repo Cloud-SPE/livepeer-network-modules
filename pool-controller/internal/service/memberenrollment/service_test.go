@@ -3,6 +3,10 @@ package memberenrollment
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -126,7 +130,7 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 		}
 	}
 	envBody := zipFileBody(t, zr, ".env")
-	if !bytes.Contains(envBody, []byte("POOL_ENROLLMENT_TOKEN_FILE=/run/livepeer/enrollment-token")) {
+	if !bytes.Contains(envBody, []byte("POOL_ENROLLMENT_TOKEN_FILE=/workspace/enrollment-token")) {
 		t.Fatalf(".env missing token file: %s", string(envBody))
 	}
 	// The agent reads LIVEPEER_* to attach and POOL_* to reach the
@@ -158,10 +162,13 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 	if !bytes.Contains(composeBody, []byte("gpus: all")) {
 		t.Fatalf("compose missing gpu access: %s", string(composeBody))
 	}
-	// The agent writes runners.compose.yaml itself; the bundle includes
-	// it optionally so a first boot with no placements still starts.
-	if !bytes.Contains(composeBody, []byte("runners.compose.yaml")) {
-		t.Fatalf("compose does not include the agent-written runner file: %s", string(composeBody))
+	// First boot must not depend on an absent generated file, or share the
+	// runner project (whose remove-orphans could kill the agent).
+	if bytes.Contains(composeBody, []byte("include:")) || !bytes.Contains(composeBody, []byte("name: livepeer-agent-")) || !bytes.Contains(composeBody, []byte("name: livepeer-member-")) {
+		t.Fatalf("invalid bootstrap project/network: %s", composeBody)
+	}
+	if bytes.Contains(composeBody, []byte("enrollment-token:ro")) {
+		t.Fatal("token rotation needs a writable directory mount")
 	}
 	if !bytes.Contains(composeBody, []byte("/var/run/docker.sock")) {
 		t.Fatalf("agent cannot start runners without the docker socket: %s", string(composeBody))
@@ -239,4 +246,47 @@ func zipFileBody(t *testing.T, zr *zip.Reader, name string) []byte {
 	}
 	t.Fatalf("zip file %s not found", name)
 	return nil
+}
+
+// Render the actual first-boot archive with Compose, not just string assertions.
+// No containers are started and all credentials are synthetic.
+func TestBundleComposeFirstBoot(t *testing.T) {
+	if os.Getenv("CHECK_COMPOSE") != "1" {
+		t.Skip("set CHECK_COMPOSE=1 to validate using Docker Compose")
+	}
+	raw, err := RenderBundleZip(BundleInput{ControllerURL: "https://members.example.com", BrokerURL: "https://broker.example.com", Token: "test-token", Enrollment: types.HostEnrollment{ID: "host-test", BrokerSessionCredential: "test-credential"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	for _, f := range zr.File {
+		if err := os.WriteFile(filepath.Join(dir, f.Name), zipFileBody(t, zr, f.Name), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cmd := exec.Command("docker", "compose", "--env-file", filepath.Join(dir, ".env"), "-f", filepath.Join(dir, "docker-compose.yaml"), "config", "--format", "json")
+	cmd.Env = append(os.Environ(), "REGISTRY=tztcloud", "TAG=v2.0.0")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("first boot Compose invalid: %v: %s", err, out)
+	}
+	var model struct {
+		Name     string `json:"name"`
+		Services map[string]struct {
+			Image string `json:"image"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal(out, &model); err != nil {
+		t.Fatal(err)
+	}
+	if len(model.Services) != 1 || model.Services["pool_member_agent"].Image != "tztcloud/livepeer-pool-member-agent:v2.0.0" {
+		t.Fatalf("unexpected bootstrap: %s", out)
+	}
+	if model.Name != "livepeer-agent-"+bundleNetworkID(BundleInput{Enrollment: types.HostEnrollment{ID: "host-test"}}) {
+		t.Fatal(model.Name)
+	}
 }

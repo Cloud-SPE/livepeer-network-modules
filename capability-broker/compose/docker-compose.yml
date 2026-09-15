@@ -37,21 +37,21 @@
 
 services:
   capability-broker:
-    image: ${REGISTRY}/livepeer-capability-broker:${TAG}
+    image: ${REGISTRY:-tztcloud}/livepeer-capability-broker:${TAG:-v2.0.0}
     command:
       - --config=/etc/livepeer/host-config.yaml
       - --listen=:8080
       - --metrics=:9090
     environment:
-      LOG_LEVEL: ${BROKER_LOG_LEVEL}
+      LOG_LEVEL: ${BROKER_LOG_LEVEL:-info}
       BROKER_ADMIN_TOKEN: ${BROKER_ADMIN_TOKEN:-}
     ports:
-      - "${BROKER_LISTEN_PORT}:8080"
+      - "${BROKER_LISTEN_PORT:-8080}:8080"
       - "${BROKER_QUIC_PORT:-8443}:8443/udp"
-      - "${BROKER_METRICS_PORT}:9090"
+      - "${BROKER_METRICS_BIND:-127.0.0.1}:${BROKER_METRICS_PORT:-9090}:9090"
     volumes:
-      - ${BROKER_CONFIG}:/etc/livepeer/host-config.yaml:ro
-      - ${PAYMENT_DAEMON_SOCKET_DIR}:/var/run/livepeer
+      - ${BROKER_CONFIG:-../examples/host-config.example.yaml}:/etc/livepeer/host-config.yaml:ro
+      - ${PAYMENT_DAEMON_SOCKET_DIR:-/var/run/livepeer}:/var/run/livepeer
       # Durable broker state. Required for paid-session capabilities;
       # harmless (and still useful for job idempotency) without them.
       - broker-state:/var/lib/livepeer

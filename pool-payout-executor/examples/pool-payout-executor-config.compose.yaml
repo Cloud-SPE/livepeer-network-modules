@@ -15,8 +15,8 @@ executor:
     - https://arb1.arbitrum.io/rpc
     - https://arbitrum.publicnode.com
   chain_id: 42161
-  keystore_path: ./keystore.json
-  keystore_password_path: ./keystore-password
+  keystore_path: /etc/livepeer/keystore.json
+  keystore_password_path: /etc/livepeer/keystore-password
   # Blocks a payout must be mined before it is reported paid; the intent
   # processor waits for confirmation_blocks - 1 blocks after inclusion
   # (minimum one).

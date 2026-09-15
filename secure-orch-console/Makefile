@@ -32,7 +32,7 @@ run: ## Foreground the binary against ./run/ (requires a V3 keystore at ./run/ke
 			--keystore-password-file=/srv/password \
 			--last-signed=/srv/lib/last-signed.json \
 			--audit-log=/srv/log/audit.log.jsonl \
-			--listen=127.0.0.1:8080
+			--listen=0.0.0.0:8080
 
 smoke: ## In-container go test (-race, full surface)
 	docker build \

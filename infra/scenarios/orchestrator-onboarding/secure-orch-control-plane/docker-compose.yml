@@ -43,7 +43,7 @@ services:
       - --log-format=${LOG_FORMAT:-json}
       - --metrics-listen=:${PROTOCOL_METRICS_PORT:-9094}
     ports:
-      - "${PROTOCOL_METRICS_PORT:-9094}:${PROTOCOL_METRICS_PORT:-9094}"
+      - "${PROTOCOL_METRICS_BIND:-127.0.0.1}:${PROTOCOL_METRICS_PORT:-9094}:${PROTOCOL_METRICS_PORT:-9094}"
     volumes:
       - ${KEYSTORE_FILE:-/opt/livepeer/keystore.json}:/etc/livepeer/keystore.json:ro
       - ${KEYSTORE_PASSWORD_FILE:-/opt/livepeer/keystore-password}:/etc/livepeer/keystore-password:ro
@@ -75,7 +75,7 @@ services:
       - --log-level=${LOG_LEVEL:-info}
       - --log-format=${LOG_FORMAT:-json}
     ports:
-      - "${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
+      - "${REGISTRY_METRICS_BIND:-127.0.0.1}:${REGISTRY_METRICS_PORT:-9095}:${REGISTRY_METRICS_PORT:-9095}"
     volumes:
       - socket:/var/run/livepeer
       - state:/var/lib/livepeer
@@ -94,7 +94,7 @@ services:
       - --audit-rotate-size=104857600
       - --listen=${SECURE_ORCH_LISTEN:-0.0.0.0:8081}
     ports:
-      - "${SECURE_ORCH_PORT:-8081}:8081"
+      - "${SECURE_ORCH_BIND:-127.0.0.1}:${SECURE_ORCH_PORT:-8081}:8081"
     environment:
       PROTOCOL_DAEMON_SOCKET: /var/run/livepeer/protocol.sock
       SECURE_ORCH_ADMIN_TOKENS: ${SECURE_ORCH_ADMIN_TOKENS:?set SECURE_ORCH_ADMIN_TOKENS to at least one admin bearer token (openssl rand -hex 32)}

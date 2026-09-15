@@ -34,7 +34,7 @@ services:
       - --last-signed=/var/lib/secure-orch/last-signed.json
       - --audit-log=/var/log/secure-orch/audit.log.jsonl
       - --audit-rotate-size=${AUDIT_ROTATE_SIZE:-104857600}
-      - --listen=${SECURE_ORCH_LISTEN:-127.0.0.1:8080}
+      - --listen=${SECURE_ORCH_LISTEN:-0.0.0.0:8080}
     ports:
       # Recommended default: host loopback only. Change this if the
       # operator deliberately wants a broader bind.

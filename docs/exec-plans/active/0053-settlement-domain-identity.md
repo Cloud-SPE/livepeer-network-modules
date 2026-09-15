@@ -38,3 +38,8 @@ two-ledger payer/receiver isolation and migration tests; component race tests;
 payment/coordinator Docker test stages; broker Docker builder; registry lint,
 document generation, race and per-package coverage gates. No image was published
 or deployment changed.
+
+The [release and migration package](../../design-docs/settlement-domain-release.md)
+records reviewer entry points, consumer contract changes, release-policy questions,
+rollout order, recovery boundaries and deployment acceptance. It does not record
+independent approval or publication; those remain on `lnm-rqz`.

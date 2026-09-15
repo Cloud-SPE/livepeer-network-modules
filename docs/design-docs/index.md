@@ -50,3 +50,4 @@ For the full provenance of the design conversation that motivated this repo, see
 [`../references/2026-05-06-architecture-conversation.md`](../references/2026-05-06-architecture-conversation.md).
 
 - [Settlement-domain identity](settlement-domain-identity.md): immutable payment-ledger namespaces, URI binding, upgrade and cross-broker conformance.
+- [Settlement-domain release](settlement-domain-release.md): review package, LOC/BlueClaw migration, rollout and recovery procedure.

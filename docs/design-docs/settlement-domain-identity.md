@@ -107,3 +107,6 @@ use of both balances, and URL relocation with retained credit. Store tests cover
 bootstrap import, restart, chain/payee mismatch and lost metadata. Registry wire
 tests verify per-route relay through cold, cached and refreshed SelectMany responses.
 Coordinator and console tests cover domain-aware aggregation and required review.
+
+For the proposed coordinated rollout, consumer field mapping and review evidence,
+see [the release and migration package](settlement-domain-release.md).

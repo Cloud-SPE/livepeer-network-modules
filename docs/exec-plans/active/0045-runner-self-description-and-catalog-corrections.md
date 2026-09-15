@@ -315,9 +315,10 @@ run-scoped URLs, one mechanism.
 - AMD vendor images and classes.
 - CPU as a placeable compute unit — AV1 VOD via SVT-AV1 (`lnm-iqn`, decision 7):
   plan 0047, landed 2026-09-02 with the image unresolved.
-- The member's public edge for external session data planes (`lnm-7cj`,
-  decision 13): plan 0046, landed 2026-09-02 except who issues the
-  member's name and certificate (0046 §7).
+The member public edge (`lnm-7cj`, decision 13) is complete. See
+[plan 0046](../completed/0046-public-edge-for-pool-members.md): the supported
+scope uses operator-supplied DNS and certificates; automatic provisioning
+was excluded on 2026-09-15.
 
 ## 11. The 2026-09-02 walkthrough: thirteen decisions
 

@@ -1,6 +1,6 @@
 ---
 title: Public edge for pool members — external session data planes
-status: implementing
+status: completed
 date: 2026-09-02
 beads: lnm-7cj
 supersedes: none
@@ -14,11 +14,11 @@ Decision 13 of the 2026-09-02 walkthrough (plan 0045 §11) made every
 paid-session data plane `external`: the caller connects to the runner
 directly at the address the descriptor publishes, and the broker is never
 in the media path. That is the right shape for live media and it is what
-`sfu-room/v1`, `rtmp-hls/v1` and `pcm-transcript/v1` all assume. It is also
-something nothing in the pool makes true: a member's runner sits behind the
+`sfu-room/v1`, `rtmp-hls/v1` and `pcm-transcript/v1` all assume. Before this plan,
+the pool did not provide that reachability: a member's runner sat behind the
 agent's outbound tunnel, reachable by the broker for HTTP and by nobody
-else. Both session templates in the catalog therefore load and place on
-hosts that cannot serve them.
+else. Session templates could therefore be placed on
+hosts that could not serve their external data planes.
 
 This plan makes "the member is public" a fact the pool can see, gate on,
 and prove — and gives the member one way to become public that does not
@@ -27,7 +27,7 @@ put TLS in every runner author's hands.
 ## 2. Decisions
 
 Routine calls made here, in the shape the operator set with decision 13;
-the one that is the operator's is marked open (§7).
+the operator-supplied DNS/certificate scope is recorded in §7.
 
 1. **`public_url` is a host-level fact in the attach document** (runner-attach
    §3.1, contract minor 1.2). An `https://` origin — no path, no query — at
@@ -78,11 +78,8 @@ the one that is the operator's is marked open (§7).
 ## 3. What this does not do
 
 - **Issue names or certificates.** The certificate and the public name are
-  operator-supplied in this plan (a file pair and an env var). A zero-touch
-  member has neither; giving them one — a pool-issued
-  `<host-id>.members.<pool-domain>` with the controller answering DNS and
-  the agent completing ACME — is the open decision in §7, and the only
-  part of `lnm-7cj` this plan leaves.
+  operator-supplied (a file pair and an env var). Pool-managed DNS and
+  agent-managed ACME are outside this feature's accepted scope (§7).
 - **Relay media through the broker.** Deleted with decision 13; not
   coming back.
 - **Per-runner ports.** The edge routes by path; nothing is published per
@@ -93,16 +90,23 @@ the one that is the operator's is marked open (§7).
 | § | Commit | What |
 |---|---|---|
 | 2.1, 2.4 | `163357e` | `public_url` host fact: runner-attach 1.2, agent env, broker validation and view, controller relay onto units, placement `host_not_public`, Validate agrees. |
-| 2.2, 2.3, 2.5, 2.6 | `679bf8e` |
-| 2.7 | `bcd4148`, `83802ba` | RTMPS edge, `rtmp_port`, `LIVEPEER_PUBLIC_RTMP_URL`, bundle port 1936; `any` image key; sink sub-paths; `{{run.id}}` in transcode probes. | Agent TLS edge routing `/r/<local_id>/`; desired-state sets `LIVEPEER_PUBLIC_URL` on session services; certification `reach` dial; bundle publishes the edge port, mounts `./edge`, carries the env. |
+| 2.2, 2.3, 2.5, 2.6 | `679bf8e` | Agent TLS edge routing `/r/<local_id>/`; desired-state runner URLs; certification `reach` dial; bundle port and certificate mount. |
+| 2.7 | `bcd4148`, `83802ba` | RTMPS edge, `rtmp_port`, `LIVEPEER_PUBLIC_RTMP_URL`, bundle port 1936; `any` image key; sink sub-paths; `{{run.id}}` in transcode probes.
 
-## 7. Open — the operator's
+## 7. Scope decision — 2026-09-15
 
-**Who issues the member's name and certificate.** Options: (a) the member
-brings a domain and a cert (this plan's floor); (b) the pool issues
-`<host-id>.members.<pool-domain>` — the controller serves the zone (or
-delegates it) and the agent runs ACME against it; (c) a pool-run edge in
-front of members, which reintroduces a relay and is rejected on decision
-13's reasoning. (b) is what zero-touch onboarding needs and it commits the
-pool to running DNS. Decision needed before members can be public without
-operator hands.
+The supported deployment uses **operator-supplied public DNS and certificates**.
+After reviewing the operational cost, the user accepted keeping the existing
+public edge and excluding automatic provisioning. The uncommitted controller
+DNS and agent ACME implementation was removed. No DNS service or certificate
+issuer is introduced by this plan.
+
+This completes `lnm-7cj` at the agreed scope. Automatic member names and
+certificates are not a prerequisite for external sessions. They can be proposed
+separately if onboarding experience warrants them. Neither DNS nor ACME solves
+CGNAT, port forwarding, or runner-specific media transports.
+
+Outbound-only hosts can serve broker-dispatched jobs. External sessions require
+a reachable endpoint, operator-managed certificate renewal and agent restart,
+and a certification policy that exercises the public data plane. See the
+[member agent deployment instructions](../../../pool-member-agent/README.md#public-endpoints-for-external-sessions).

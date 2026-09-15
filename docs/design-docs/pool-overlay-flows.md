@@ -39,7 +39,10 @@ lifting a suspension, overriding a duplicate GPU claim, banning a member, and
 
 ## 1. Member signup and activation
 
-Member signup is wallet-first and outbound-only. There is no join request and
+Member signup is wallet-first and uses outbound connections. External session
+data planes additionally require an operator-supplied public endpoint; see
+[member edge setup](../../pool-member-agent/README.md#public-endpoints-for-external-sessions).
+There is no join request and
 no admission review: the pool never dials a member-supplied endpoint, so there
 is nothing to verify before admission. Trust is established afterwards, by the
 broker, from what the member's runners prove under certification.

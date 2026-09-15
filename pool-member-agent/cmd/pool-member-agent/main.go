@@ -9,8 +9,8 @@
 // minted the attach credential — the pool controller, or the broker's
 // own POST /admin/v1/enroll.
 //
-// The agent never opens a listener, never holds a price, and never
-// decides what is sold.
+// The agent optionally serves a public TLS edge for external sessions.
+// It never holds a price or decides what is sold.
 package main
 
 import (

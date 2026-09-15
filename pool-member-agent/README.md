@@ -20,12 +20,65 @@ decision 2): the same binary, the same variables. The only difference is who
 minted the attach credential — the pool controller, or the broker's own
 `POST /admin/v1/enroll`.
 
-The agent never opens a listener, never holds a price, and never decides
-what is sold. It holds no policy at all: every decision — which template,
-which GPU, when to withdraw one — was made upstream, so an agent that
-disagrees with the controller is a bug in the agent. Only outbound
-connectivity is required: no DNS entry, no TLS certificate, no router
-forwarding.
+The agent never holds a price or decides what is sold. Placement policy belongs
+to the pool. Attach and broker-dispatched job work require only outbound
+connectivity. External session data planes additionally need the optional
+public edge described below.
+
+## Public endpoints for external sessions
+
+The caller opens and pays for a session through the broker, then connects to
+the runner's advertised endpoint for the session data. The broker does not
+relay that media. The agent can terminate TLS and forward HTTP/WebSocket
+traffic at `/r/<local_id>/` to the corresponding runner on the Docker network.
+RTMPS ingest uses a separate TLS listener on port 1936 and forwards to the
+runner declaring `rtmp_port`.
+
+**The operator supplies DNS, certificates, and inbound connectivity.** The
+controller does not run DNS and the agent does not issue or renew certificates.
+Automatic provisioning is outside the supported scope. A CGNAT host without
+an externally reachable endpoint should leave `LIVEPEER_PUBLIC_URL` empty;
+it can still serve broker-dispatched jobs. The pool excludes hosts without
+that URL from session placement (`host_not_public`). A declared URL alone is
+not proof of reachability: session certification policies must include the
+appropriate `reach` step to dial the advertised endpoint from the broker.
+
+For the generated member bundle:
+
+1. Point a hostname at the member's reachable public IP. Forward/open the
+   HTTPS port, and port 1936 if serving RTMPS ingest.
+2. Put the certificate chain in `./edge/tls.crt` and its private key in
+   `./edge/tls.key`. The bundle mounts this directory read-only into the agent.
+3. Set `LIVEPEER_PUBLIC_URL=https://member.example.com:8443` in `.env` for
+   the default published port. Alternatively set `LIVEPEER_EDGE_PORT=443`
+   and use `https://member.example.com`. This URL is an origin, with no path.
+4. Recreate the agent with `docker compose up -d --force-recreate pool_member_agent`.
+   Confirm session certification succeeds before sending production traffic.
+
+Desired state supplies each session runner with
+`LIVEPEER_PUBLIC_URL=<origin>/r/<local_id>` and, for an ingest runner,
+`LIVEPEER_PUBLIC_RTMP_URL=rtmps://<host>:1936`. The runner uses these to build
+its runtime descriptor. Keep the external RTMPS port at 1936: changing the
+bundle port mapping alone does not change the advertised URL. These listeners
+cover HTTP/WebSocket and RTMPS; other media transports such as WebRTC UDP
+require their own runner-specific network setup.
+
+Renew certificates using your existing certificate tooling and restart the
+agent after replacing the files: certificates are loaded at startup, with no
+hot reload. Schedule that restart around active sessions. If the URL is set
+but the certificate cannot be loaded, the agent logs `PUBLIC EDGE CANNOT START`
+and continues its outbound attach; a valid public edge is still required for
+session traffic.
+
+| Variable | Meaning |
+|---|---|
+| `LIVEPEER_PUBLIC_URL` | Public HTTPS origin; empty disables the edge. |
+| `LIVEPEER_EDGE_LISTEN` | Agent HTTPS listener, default `:8443`. |
+| `LIVEPEER_EDGE_TLS_CERT` | Certificate chain path, default `/etc/livepeer/edge/tls.crt`. |
+| `LIVEPEER_EDGE_TLS_KEY` | Private key path, default `/etc/livepeer/edge/tls.key`. |
+| `LIVEPEER_EDGE_RTMPS_LISTEN` | Agent RTMPS listener, default `:1936`. |
+| `LIVEPEER_EDGE_PORT` | Bundle Docker host port mapped to agent port 8443; default 8443. |
+| `LIVEPEER_EDGE_RTMPS_PORT` | Bundle Docker host port mapped to agent port 1936; keep 1936 for generated descriptors. |
 
 ## Configuration
 

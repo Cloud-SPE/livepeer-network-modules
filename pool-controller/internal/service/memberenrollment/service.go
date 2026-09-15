@@ -355,9 +355,8 @@ func bundleEnv(input BundleInput) string {
 		// Public edge (plan 0046). Empty means this host is not public
 		// and the pool places no session work on it. To become public:
 		// set the https origin callers reach this host at, put tls.crt
-		// and tls.key in ./edge, and open the port. Issuing the name and
-		// certificate is the member's until the pool issues them
-		// (plan 0046 §7).
+		// and tls.key in ./edge, and open the port. The operator owns
+		// DNS and certificate renewal (plan 0046 §7).
 		"LIVEPEER_PUBLIC_URL=\n" +
 		"LIVEPEER_EDGE_PORT=8443\n" +
 		"LIVEPEER_EDGE_RTMPS_PORT=1936\n"
@@ -367,8 +366,22 @@ func bundleReadme(input BundleInput) string {
 	return "# Livepeer Pool member host\n\n" +
 		"Run `docker compose up -d` from this directory. That is the whole of it.\n\n" +
 		"The agent connects outbound to the Pool broker, reports the GPUs it can\n" +
-		"see, and asks the Pool what it should be running. Nothing needs to be\n" +
-		"opened to the internet on this host.\n\n" +
+		"see, and asks the Pool what it should be running. Broker-dispatched jobs\n" +
+		"need only outbound connectivity. External sessions also need a public endpoint.\n\n" +
+		"## Optional public session endpoint\n\n" +
+		"The operator supplies DNS, a TLS certificate, and inbound connectivity.\n" +
+		"The pool does not run DNS or issue certificates. Leave LIVEPEER_PUBLIC_URL\n" +
+		"empty for an outbound-only host; it remains eligible for job workloads.\n\n" +
+		"For sessions, point a hostname at this host, put the certificate chain in\n" +
+		"./edge/tls.crt and its private key in ./edge/tls.key, and set\n" +
+		"LIVEPEER_PUBLIC_URL=https://your-hostname:8443 in .env. Open/forward TCP\n" +
+		"8443, or set LIVEPEER_EDGE_PORT=443 and omit :8443 from the URL. RTMPS\n" +
+		"ingest additionally needs TCP 1936; keep its external port at 1936.\n" +
+		"Run docker compose up -d --force-recreate pool_member_agent after changing\n" +
+		"the environment. Renew certificates externally and restart the agent after\n" +
+		"replacing them; it loads certificates at startup. Schedule restarts around\n" +
+		"active sessions. The broker's session certification reach step must verify\n" +
+		"the advertised endpoint. This does not solve CGNAT or WebRTC UDP routing.\n\n" +
 		"## What the Pool runs here\n\n" +
 		"The agent writes `runners.compose.yaml` and starts the containers the\n" +
 		"Pool has placed on your GPUs. You can read that file at any time to see\n" +

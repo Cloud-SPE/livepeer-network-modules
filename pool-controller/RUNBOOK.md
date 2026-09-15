@@ -639,3 +639,17 @@ Common operator playbooks:
 
 Back up the entire `--data-dir`. That store contains the canonical Pool-side
 receipt, control-plane, and payout accounting history.
+
+## Public endpoints for member sessions
+
+Broker-dispatched jobs use the member's outbound tunnel. External sessions
+add a direct caller-to-runner data connection, served by the member agent's
+optional TLS edge. Operators supply the public DNS name, inbound port routing,
+and certificate files; the controller does not host DNS or issue certificates.
+See [member edge setup and renewal](../pool-member-agent/README.md#public-endpoints-for-external-sessions).
+
+Leave `LIVEPEER_PUBLIC_URL` empty for hosts without inbound reachability. Session
+placement reports `host_not_public`; job placement remains available. A populated
+URL is a declaration, so enabled session templates must include certification
+`reach` steps for their public endpoints. Certificate renewal requires restarting
+the agent after updating its mounted files; plan this around active sessions.

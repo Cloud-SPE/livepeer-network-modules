@@ -32,6 +32,16 @@ func (s *Server) initSessionEngine() error {
 	}
 	s.sessionWS = newSessionWSHub()
 	engine, err := sessionengine.New(sessionengine.Config{
+		BindWork: func(workID, requestID string, spec *sessionengine.OfferingSpec) error {
+			if s.workAccounting == nil {
+				return nil
+			}
+			capID, offID, pair, pinned := splitSessionBackendRef(spec.BackendRef)
+			if !pinned {
+				return fmt.Errorf("regional session requires enrolled runner")
+			}
+			return s.bindAccountingWork(workID, requestID, capID, offID, pair.HostID+"|"+pair.LocalID)
+		},
 		Store:   store,
 		Payment: s.payment,
 		Runner:  s.runnerClientFor,

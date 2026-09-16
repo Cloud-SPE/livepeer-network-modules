@@ -1,7 +1,9 @@
 package repo
 
 import (
+	"encoding/json"
 	"fmt"
+	bolt "go.etcd.io/bbolt"
 	"strings"
 	"time"
 
@@ -53,12 +55,23 @@ func (r *StateRepo) GetMemberNonce(id string) (types.MemberNonce, error) {
 }
 
 func (r *StateRepo) MarkMemberNonceUsed(id string, usedAt time.Time) error {
-	nonce, err := r.GetMemberNonce(id)
-	if err != nil {
-		return err
-	}
-	nonce.UsedAt = nowIfZero(usedAt)
-	return putJSON(r, memberNoncesBucket, nonce.ID, nonce)
+	return r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(memberNoncesBucket))
+		var nonce types.MemberNonce
+		if err := json.Unmarshal(b.Get([]byte(id)), &nonce); err != nil {
+			return err
+		}
+		at := nowIfZero(usedAt)
+		if !nonce.UsedAt.IsZero() || !at.Before(nonce.ExpiresAt) {
+			return fmt.Errorf("nonce already used or expired")
+		}
+		nonce.UsedAt = at
+		raw, err := json.Marshal(nonce)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), raw)
+	})
 }
 
 func (r *StateRepo) PutHostEnrollment(enrollment types.HostEnrollment) error {
@@ -70,7 +83,7 @@ func (r *StateRepo) PutHostEnrollment(enrollment types.HostEnrollment) error {
 	if enrollment.Status == "" {
 		enrollment.Status = types.HostEnrollmentPending
 	}
-	return putJSON(r, hostEnrollmentsBucket, enrollment.ID, enrollment)
+	return r.putEnrollmentPreservingGrants(enrollment)
 }
 
 func (r *StateRepo) GetHostEnrollment(id string) (types.HostEnrollment, error) {
@@ -443,4 +456,31 @@ func (r *StateRepo) ListPayoutBatches() ([]types.PayoutBatch, error) {
 		}
 		return left.ID < right.ID
 	})
+}
+
+// RecordMemberAuthentication may refresh profile data, never an operator verdict.
+func (r *StateRepo) RecordMemberAuthentication(member types.PoolMember) (types.PoolMember, error) {
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(poolMembersBucket))
+		raw := b.Get([]byte(member.ID))
+		if raw != nil {
+			var prior types.PoolMember
+			if err := json.Unmarshal(raw, &prior); err != nil {
+				return err
+			}
+			if !strings.EqualFold(prior.EthAddress, member.EthAddress) {
+				return fmt.Errorf("member identity mismatch")
+			}
+			member.Status = prior.Status
+			member.PayoutMode = prior.PayoutMode
+			member.CreatedAt = prior.CreatedAt
+			member.PoolID = prior.PoolID
+		}
+		raw, err := json.Marshal(member)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(member.ID), raw)
+	})
+	return member, err
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -170,6 +171,9 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
 		authKey := wholesaleAuthorizationKey(seed.Payer, seed.ID)
+		if fences := tx.Bucket([]byte(unexecutedFencesBucket)); fences != nil && fences.Get(authKey) != nil {
+			return ErrAuthorizationState
+		}
 		if raw := auths.Get(authKey); raw != nil {
 			var existing WholesaleAuthorization
 			if err := json.Unmarshal(raw, &existing); err != nil {
@@ -345,6 +349,27 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 	}
 	result := &WholesaleAdvanceResult{BilledDelta: new(big.Int), Transferred: new(big.Int)}
 	err := s.db.Update(func(tx *bolt.Tx) error {
+		history, err := tx.CreateBucketIfNotExists([]byte("wholesale_advance_history"))
+		if err != nil {
+			return err
+		}
+		historyKey := append(append([]byte{}, wholesaleAuthorizationKey(payer, authorizationID)...), 0)
+		historyKey = binary.BigEndian.AppendUint64(historyKey, advanceSeq)
+		if raw := history.Get(historyKey); raw != nil {
+			var previous WholesaleAuthorization
+			if err := json.Unmarshal(raw, &previous); err != nil {
+				return err
+			}
+			if !bytes.Equal(previous.Payee, payee) || previous.ActualUnits != cumulativeUnits || previous.ReservedWei != targetReserved.String() || previous.SettlementSeq != advanceSeq {
+				return ErrAuthorizationSettlement
+			}
+			account, err := loadWholesaleAccount(tx, payer, payee)
+			if err != nil {
+				return err
+			}
+			result.Account, result.Authorization, result.Replayed = account, &previous, true
+			return nil
+		}
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
 		key := wholesaleAuthorizationKey(payer, authorizationID)
 		raw := auths.Get(key)
@@ -429,6 +454,9 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 			return err
 		}
 		if err := putWholesaleAccount(tx, account); err != nil {
+			return err
+		}
+		if err := history.Put(historyKey, enc); err != nil {
 			return err
 		}
 		result.Account, result.Authorization, result.BilledDelta = account, &auth, delta

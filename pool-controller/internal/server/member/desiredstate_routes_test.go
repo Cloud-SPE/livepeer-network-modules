@@ -17,6 +17,7 @@ import (
 )
 
 type desiredStateFixture struct {
+	catalog *templates.Catalog
 	repo    *repo.StateRepo
 	server  *httptest.Server
 	host    types.HostEnrollment
@@ -86,7 +87,7 @@ func newDesiredStateFixture(t *testing.T) *desiredStateFixture {
 	t.Cleanup(server.Close)
 
 	return &desiredStateFixture{
-		repo: stateRepo, server: server,
+		repo: stateRepo, server: server, catalog: catalog,
 		host: host, token: token, other: other, otherTk: otherToken,
 	}
 }

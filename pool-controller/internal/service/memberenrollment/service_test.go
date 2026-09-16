@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -159,8 +160,8 @@ func TestServiceCreateEnrollmentAndRenderBundle(t *testing.T) {
 		t.Fatalf(".env still declares a static runner set: %s", string(envBody))
 	}
 	composeBody := zipFileBody(t, zr, "docker-compose.yaml")
-	if !bytes.Contains(composeBody, []byte("gpus: all")) {
-		t.Fatalf("compose missing gpu access: %s", string(composeBody))
+	if bytes.Contains(composeBody, []byte("gpus: all")) {
+		t.Fatalf("base compose requires NVIDIA on every host: %s", string(composeBody))
 	}
 	// First boot must not depend on an absent generated file, or share the
 	// runner project (whose remove-orphans could kill the agent).
@@ -288,5 +289,140 @@ func TestBundleComposeFirstBoot(t *testing.T) {
 	}
 	if model.Name != "livepeer-agent-"+bundleNetworkID(BundleInput{Enrollment: types.HostEnrollment{ID: "host-test"}}) {
 		t.Fatal(model.Name)
+	}
+}
+
+func TestRegionalEnrollmentRequiresAcceptanceAndRefreshesExistingHostTerms(t *testing.T) {
+	st, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	wallet := "0x0000000000000000000000000000000000000001"
+	if err := st.PutPoolMember(types.PoolMember{ID: wallet, EthAddress: wallet}); err != nil {
+		t.Fatal(err)
+	}
+	term := types.RegionalTerms{PoolID: st.PoolID(), Version: "v1", EffectiveRound: 100, WindowRounds: 14, CommissionBPS: 1000, ParticipationRules: "regional terms", ZeroWorkToOperator: true, RoundingToOperator: true}
+	if err := st.PutRegionalTerms(term); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	req := CreateEnrollmentRequest{MemberEthAddress: wallet, HostLabel: "member host"}
+	if _, err := svc.CreateEnrollment(req); err == nil {
+		t.Fatal("unaccepted regional enrollment admitted")
+	}
+	accepted, err := st.AcceptRegionalTerms(st.PoolID(), wallet, "v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	enrolled, err := svc.CreateEnrollment(req)
+	if err != nil || enrolled.Enrollment.TermsVersion != "v1" {
+		t.Fatalf("enrollment %+v %v", enrolled, err)
+	}
+	term.Version = "v2"
+	term.EffectiveRound = 114
+	term.CommissionBPS = 2000
+	if err := st.PutRegionalTerms(term); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateEnrollment(req); err == nil {
+		t.Fatal("new terms did not require acceptance")
+	}
+	old, err := st.GetHostEnrollment(enrolled.Enrollment.ID)
+	if err != nil || old.TermsVersion != "v1" {
+		t.Fatal("publication silently accepted new terms")
+	}
+	if _, err := st.AcceptRegionalTerms(st.PoolID(), wallet, "v2"); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := st.GetHostEnrollment(enrolled.Enrollment.ID)
+	if err != nil || refreshed.TermsVersion != "v2" {
+		t.Fatalf("host terms not refreshed %+v %v", refreshed, err)
+	}
+	replay, err := st.AcceptRegionalTerms(st.PoolID(), wallet, "v1")
+	if err != nil || !replay.AcceptedAt.Equal(accepted.AcceptedAt) {
+		t.Fatal("historical acceptance changed")
+	}
+	refreshed, _ = st.GetHostEnrollment(enrolled.Enrollment.ID)
+	if refreshed.TermsVersion != "v2" {
+		t.Fatal("old acceptance rolled back host grant")
+	}
+	old.LastSeenAt = time.Now().UTC()
+	if err := st.PutHostEnrollment(old); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, _ = st.GetHostEnrollment(enrolled.Enrollment.ID)
+	if refreshed.TermsVersion != "v2" {
+		t.Fatal("stale host status rolled back accepted terms")
+	}
+	member, err := st.GetPoolMember(wallet)
+	if err != nil {
+		t.Fatal(err)
+	}
+	member.Status = types.MemberStatusSuspended
+	if err := st.PutPoolMember(member); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.CreateEnrollment(req); err == nil {
+		t.Fatal("suspended member enrolled with old acceptance")
+	}
+
+}
+
+func TestWalletSignInDoesNotLiftRegionalSuspension(t *testing.T) {
+	st, err := repo.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wallet := crypto.PubkeyToAddress(key.PublicKey).Hex()
+	if err := st.PutPoolMember(types.PoolMember{EthAddress: wallet, Status: types.MemberStatusSuspended}); err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st)
+	nonce, err := svc.IssueNonce(NonceIssueRequest{EthAddress: wallet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signature, err := crypto.Sign(accounts.TextHash([]byte(nonce.Message)), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.VerifyNonce(VerifyRequest{NonceID: nonce.NonceID, SignatureHex: fmt.Sprintf("0x%x", signature)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Member.Status != types.MemberStatusSuspended {
+		t.Fatal("wallet proof lifted operator suspension")
+	}
+	if _, err := svc.CreateEnrollment(CreateEnrollmentRequest{MemberEthAddress: wallet}); err == nil {
+		t.Fatal("suspended member enrolled")
+	}
+}
+
+func TestRegionalFleetBundle(t *testing.T) {
+	image := "registry.example/agent@sha256:" + strings.Repeat("a", 64)
+	for _, urls := range [][]string{{"https://eu-transcode.example"}, {"https://us-transcode.example", "https://audio.example", "https://llm.example"}} {
+		raw, err := RenderBundleZip(BundleInput{ControllerURL: "https://members.example", BrokerURLs: urls, MemberAgentImage: image, Token: "synthetic", Enrollment: types.HostEnrollment{ID: "host-regional", PoolID: "pool-regional", BrokerSessionCredential: "synthetic-attach"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		zr, err := zip.NewReader(bytes.NewReader(raw), int64(len(raw)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		env := string(zipFileBody(t, zr, ".env"))
+		compose := string(zipFileBody(t, zr, "docker-compose.yaml"))
+		if !strings.Contains(env, "LIVEPEER_BROKER_URLS="+strings.Join(urls, ",")) || !strings.Contains(compose, "image: "+image) || strings.Count(compose, "    image:") != 1 {
+			t.Fatalf("fleet/pinned agent missing: %s %s", env, compose)
+		}
+		pair := string(zipFileBody(t, zr, "agent-credentials.json"))
+		if !strings.Contains(pair, "synthetic-attach") {
+			t.Fatal("missing durable credential pair")
+		}
 	}
 }

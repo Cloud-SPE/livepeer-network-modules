@@ -296,7 +296,7 @@ func TestBuildSharesAdmissionDomainByPhysicalGPUAndIsolatesDifferentGPUs(t *test
 	}
 	for _, service := range []Service{byAssignment["unit-a|chat-a"], byAssignment["unit-a|chat-b"]} {
 		fragment := service.ComposeFragment
-		if !strings.Contains(fragment, "GPU_ADMISSION_LOCK: "+first.BasePath) ||
+		if !strings.Contains(fragment, "GPU_ADMISSION_LOCK: \""+first.BasePath) ||
 			!strings.Contains(fragment, "source: "+first.BasePath+".mutex") ||
 			!strings.Contains(fragment, "read_only: true") {
 			t.Fatalf("fragment does not carry protected shared admission mounts:\n%s", fragment)
@@ -342,6 +342,11 @@ func TestTranscodeSharedGPUComposeGolden(t *testing.T) {
 	got.WriteString("services:\n")
 	for _, service := range doc.Services {
 		got.WriteString(service.ComposeFragment)
+	}
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if err := os.WriteFile("../../testdata/shared-gpu-compose.yaml", []byte(got.String()), 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	want, err := os.ReadFile("../../testdata/shared-gpu-compose.yaml")
 	if err != nil {
@@ -401,7 +406,7 @@ func TestRenderedComposeEnvironmentIsSorted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Build() error = %v", err)
 	}
-	want := "    environment:\n      ALPHA: 1\n      MODEL: small\n      QUANT: fp8\n"
+	want := "    environment:\n      ALPHA: \"1\"\n      MODEL: \"small\"\n      QUANT: \"fp8\"\n"
 	if !strings.Contains(doc.Services[0].ComposeFragment, want) {
 		t.Fatalf("environment not sorted:\n%s", doc.Services[0].ComposeFragment)
 	}

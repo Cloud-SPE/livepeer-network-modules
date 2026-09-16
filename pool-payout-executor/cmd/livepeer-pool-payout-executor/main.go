@@ -83,6 +83,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runMarkStatus(args[1:], stdout, "paid")
 	case "mark-failed":
 		return runMarkStatus(args[1:], stdout, "failed")
+	case "validate-config":
+		return runValidateConfig(args[1:], stdout)
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)
 		return err
@@ -1407,6 +1409,6 @@ func writeJSON(w io.Writer, v any) error {
 }
 
 func usageError(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-payout-executor <list-intents|prepare-batch|send-native-batch|confirm-submitted|list-alerts|requeue-failed|requeue-alerted-failed|reconcile-once|reconcile-loop|state-summary|mark-submitted|mark-paid|mark-failed|version> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-payout-executor <list-intents|prepare-batch|send-native-batch|confirm-submitted|list-alerts|requeue-failed|requeue-alerted-failed|reconcile-once|reconcile-loop|state-summary|mark-submitted|mark-paid|mark-failed|validate-config|version> [flags]")
 	return errors.New("invalid command")
 }

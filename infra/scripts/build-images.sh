@@ -78,6 +78,7 @@ is_pushable_image() {
     livepeer-service-registry-daemon|\
     livepeer-orch-coordinator|\
     livepeer-pool-controller|\
+    livepeer-member-portal|\
     livepeer-pool-member-agent|\
     livepeer-pool-reconciler|\
     livepeer-pool-payout-executor|\
@@ -101,6 +102,7 @@ declare -a IMAGES=(
   "livepeer-service-registry-daemon|.|service-registry-daemon/Dockerfile||"
   "livepeer-orch-coordinator|.|orch-coordinator/Dockerfile||"
   "livepeer-pool-controller|.|pool-controller/Dockerfile||"
+  "livepeer-member-portal|.|member-portal/Dockerfile||"
   "livepeer-pool-member-agent|pool-member-agent|pool-member-agent/Dockerfile||"
   "livepeer-pool-reconciler|.|pool-reconciler/Dockerfile||"
   "livepeer-pool-payout-executor|.|pool-payout-executor/Dockerfile||"

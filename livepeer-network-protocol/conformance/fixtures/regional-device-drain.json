@@ -1,0 +1,14 @@
+{
+  "contract": "regional-device-drain/v1",
+  "pool_id": "pool",
+  "source_id": "source",
+  "broker_id": "broker",
+  "enrollment_id": "host",
+  "drain": {"device_id": "gpu-a", "generation": 1},
+  "new_work": [
+    {"id": "stale-device", "device_id": "gpu-a", "generation": 1, "allowed": false},
+    {"id": "sibling-device", "device_id": "gpu-b", "generation": 1, "allowed": true},
+    {"id": "new-assignment", "device_id": "gpu-a", "generation": 2, "allowed": true}
+  ],
+  "release_requires": ["no_active_authorizations", "all_operations_finalized", "all_receipts_delivered", "no_unqualified_work", "broker_revocation_ack", "revision_bound_agent_stop"]
+}

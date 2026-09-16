@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 )
@@ -248,9 +249,11 @@ type Client interface {
 
 // Target is one administrable broker.
 type Target struct {
-	Name    string
-	BaseURL string
-	Token   string // empty means not administrable
+	PoolID    string
+	TokenFile string
+	Name      string
+	BaseURL   string
+	Token     string // empty means not administrable
 }
 
 // HTTPClient is the production client.
@@ -268,18 +271,18 @@ func New(timeout time.Duration, targets []Target) *HTTPClient {
 	for _, t := range targets {
 		byName[t.Name] = t
 	}
-	return &HTTPClient{HTTP: &http.Client{Timeout: timeout}, targets: byName}
+	return &HTTPClient{HTTP: &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, targets: byName}
 }
 
 // Administrable reports whether a broker has a token configured.
 func (c *HTTPClient) Administrable(broker string) bool {
 	t, ok := c.targets[broker]
-	return ok && t.Token != ""
+	return ok && (t.Token != "" || (t.PoolID != "" && t.TokenFile != ""))
 }
 
 func (c *HTTPClient) do(ctx context.Context, broker, method, path string, body, out any) error {
 	target, ok := c.targets[broker]
-	if !ok || target.Token == "" {
+	if !ok || (target.Token == "" && (target.PoolID == "" || target.TokenFile == "")) {
 		return ErrNoToken
 	}
 	var rdr io.Reader
@@ -294,7 +297,22 @@ func (c *HTTPClient) do(ctx context.Context, broker, method, path string, body, 
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrUnavailable, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+target.Token)
+	token := target.Token
+	if target.PoolID != "" {
+		if req.URL.Scheme != "https" || req.URL.User != nil || target.TokenFile == "" {
+			return fmt.Errorf("%w: regional admin requires HTTPS and token file", ErrUnavailable)
+		}
+		raw, err := os.ReadFile(target.TokenFile)
+		if err != nil {
+			return fmt.Errorf("%w: service credential unavailable", ErrNoToken)
+		}
+		token = strings.TrimSpace(string(raw))
+		if len(token) != 64 {
+			return ErrNoToken
+		}
+		req.Header.Set("X-Livepeer-Pool-ID", target.PoolID)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/json")
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -313,7 +331,7 @@ func (c *HTTPClient) do(ctx context.Context, broker, method, path string, body, 
 		return ErrUnauthorized
 	case resp.StatusCode >= 500:
 		return fmt.Errorf("%w: HTTP %d", ErrUnavailable, resp.StatusCode)
-	case resp.StatusCode >= 400:
+	case resp.StatusCode >= 300:
 		apiErr := &APIError{Status: resp.StatusCode}
 		if err := json.Unmarshal(raw, apiErr); err != nil || apiErr.Code == "" {
 			apiErr.Code = fmt.Sprintf("http_%d", resp.StatusCode)

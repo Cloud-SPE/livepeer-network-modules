@@ -144,7 +144,7 @@ func (c *Config) validateOffers() error {
 		c.OffersSource = OffersSourceFile
 	case OffersSourceFile:
 	case OffersSourceAdmin:
-		if c.AdminAuth.Method != "bearer" {
+		if c.AdminAuth.Method != "bearer" && c.ServiceAuthFile == "" {
 			return fmt.Errorf("offers_source: admin requires admin_auth.method=bearer (the controller pushes over /admin/v1/offers)")
 		}
 		if len(c.Offers) > 0 {

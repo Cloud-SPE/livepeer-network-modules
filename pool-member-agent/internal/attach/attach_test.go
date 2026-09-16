@@ -346,3 +346,13 @@ func TestContractArrayAttachesEachEntry(t *testing.T) {
 		t.Fatalf("an empty array must be refused: %v", errs)
 	}
 }
+
+func TestLocalRunnerBearerNeverSerializes(t *testing.T) {
+	raw, err := json.Marshal(Runner{LocalBearer: "assignment-private-bearer"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "assignment-private-bearer") || strings.Contains(string(raw), "LocalBearer") {
+		t.Fatal("local credential leaked")
+	}
+}

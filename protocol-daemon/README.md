@@ -14,12 +14,13 @@ and reorg-aware confirmation tracking are all reused from the shared library.
 
 ## What it does
 
-One binary, three modes:
+One binary, four modes:
 
 | Mode | Role | What runs |
 |---|---|---|
 | `--mode=round-init` | Round initializer (any orchestrator can run this — first one to fire wins) | Subscribes to round transitions, calls `RoundsManager.initializeRound()` once per round if not yet initialized |
 | `--mode=reward` | Reward caller (orchestrator-specific) | Subscribes to round transitions, checks transcoder eligibility, computes positional pool hints, calls `BondingManager.rewardWithHint(prev, next)` once per round |
+| `--mode=read-only` | Keyless regional round observer | Round status/events over a local Unix socket; no signing, transaction recovery or configuration writes |
 | `--mode=both` | Both of the above in one process | The common case for an orchestrator running the protocol daemon as a sidecar |
 
 Every on-chain write goes through `chain-commons.services.txintent` — durable,
@@ -102,7 +103,7 @@ The layering is enforced by the per-module `lint/layer-check/`. `internal/servic
 ## Highlights
 
 - **Built on `chain-commons`.** Round-init is ~30 lines of business logic; reward is ~50 lines including positional hints. Idempotency, replacement, reorg-recovery, restart-resume all come from `chain-commons.services.txintent`.
-- **Three modes via single binary.** `--mode=round-init|reward|both`. Mode-specific RPCs return `Unimplemented` if called on the wrong mode (matches `payment-daemon` and `service-registry-daemon` pattern).
+- **Four modes via single binary.** `--mode=round-init|reward|both|read-only`. Mode-specific RPCs return `Unimplemented` if called on the wrong mode (matches `payment-daemon` and `service-registry-daemon` pattern).
 - **Chain registry writes included.** Operator RPCs can set and read on-chain
   `ServiceRegistry` / `AIServiceRegistry` pointers; in this rewrite those pointers should
   reference the coordinator-hosted manifest URL.
@@ -175,3 +176,6 @@ make docker-build   # tztcloud/livepeer-protocol-daemon:dev
 - [`DESIGN.md`](./DESIGN.md) — component overview
 - [`docs/design-docs/architecture.md`](./docs/design-docs/architecture.md) — layer and runtime architecture
 - [`docs/operator-runbook.md`](./docs/operator-runbook.md) — deployment and operations guide
+
+Regional reconcilers use the [keyless observer deployment](examples/observer.compose.yaml).
+See the [operator runbook](docs/operator-runbook.md#keyless-regional-observer) for persistence and recovery.

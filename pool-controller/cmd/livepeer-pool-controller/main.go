@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/memberauth"
 	"io"
 	"log"
 	"math/big"
@@ -19,10 +20,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/revenue"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/serviceauth"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/claims"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ladder"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/observability"
+	ownershipservice "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/ownership"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	adminserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/admin"
 	memberserver "github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/server/member"
@@ -48,6 +52,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 	}
 
 	switch args[0] {
+	case "init-identity":
+		return runInitializeIdentity(args[1:], stdout)
+	case "validate-config":
+		return runValidateConfig(args[1:], stdout)
 	case "serve":
 		return runServe(args[1:], stdout, stderr)
 	case "version":
@@ -104,12 +112,12 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	state := &runtimeState{configPath: *configPath, repo: stateRepo, catalog: catalog, adminToken: adminToken}
-	ladderCtx, cancelLadder := context.WithCancel(context.Background())
-	defer cancelLadder()
-	go runLadderLoop(ladderCtx, state, cfg, stderr)
-	go runHardwareRelayLoop(ladderCtx, state, cfg, stderr)
-	go runWindowCloseLoop(ladderCtx, state, cfg, stderr)
-	go runClaimExpiryLoop(ladderCtx, state, cfg, stderr)
+	if cfg.Ownership.URL != "" {
+		state.ownership, err = ownershipservice.NewGuard(stateRepo, cfg.Ownership)
+		if err != nil {
+			return err
+		}
+	}
 	state.session = adminserver.NewSessionAuth(func() string {
 		state.mu.RLock()
 		defer state.mu.RUnlock()
@@ -118,6 +126,16 @@ func runServe(args []string, stdout, stderr io.Writer) error {
 	if err := state.Replace(cfg, rendered, "startup", runtimeInfo); err != nil {
 		return err
 	}
+
+	// Reconciliation reads runtimeState immediately. Publish configuration before
+	// starting any loop; the transfer loop otherwise observes nil and exits.
+	ladderCtx, cancelLadder := context.WithCancel(context.Background())
+	defer cancelLadder()
+	go runLadderLoop(ladderCtx, state, cfg, stderr)
+	go runHardwareRelayLoop(ladderCtx, state, cfg, stderr)
+	go runWindowCloseLoop(ladderCtx, state, cfg, stderr)
+	go runDeviceTransferLoop(ladderCtx, state, stderr)
+	go runClaimExpiryLoop(ladderCtx, state, cfg, stderr)
 
 	paidAddr := *listenAddr
 	if paidAddr == ":8080" && cfg.Listen.Paid != "" {
@@ -183,6 +201,11 @@ func buildBrokerPushState(stateRepo *repo.StateRepo, catalog *templates.Catalog,
 		return brokerpush.State{}, nil, err
 	}
 	offers := brokerpush.BuildOffersFromCatalog(catalog.All(), overrides)
+	for _, target := range cfg.Bootstrap.BrokerTargets() {
+		if _, err := brokerpush.FilterOffers(catalog.All(), offers, target.TemplateIDs); err != nil {
+			return brokerpush.State{}, nil, err
+		}
+	}
 	poolMembers, err := stateRepo.ListPoolMembers()
 	if err != nil {
 		return brokerpush.State{}, nil, err
@@ -218,6 +241,7 @@ func buildBrokerPushState(stateRepo *repo.StateRepo, catalog *templates.Catalog,
 }
 
 type runtimeState struct {
+	ownership  *ownershipservice.Guard
 	mu         sync.RWMutex
 	configPath string
 	repo       *repo.StateRepo
@@ -314,7 +338,17 @@ func (s *runtimeState) pushToBroker(cfg *config.Config, push brokerpush.State, i
 		}
 		client := brokeradmin.New(target.AdminURL, target.Auth, timeout)
 		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-		res, err := brokerpush.Sync(ctx, client, push)
+		regional := push
+		var selectionErr error
+		if target.TemplateIDs != nil {
+			regional.Offers, selectionErr = brokerpush.FilterOffers(s.catalog.All(), push.Offers, target.TemplateIDs)
+		}
+		if selectionErr != nil {
+			cancel()
+			failures = append(failures, target.Name+": "+selectionErr.Error())
+			continue
+		}
+		res, err := brokerpush.Sync(ctx, client, regional)
 		cancel()
 		for _, id := range res.OffersChanged {
 			changedOffers[id] = struct{}{}
@@ -491,6 +525,11 @@ func (s *runtimeState) syncAccountingMetrics() error {
 		return err
 	}
 	observability.UpdateAccountingSnapshot(workReceipts, roundReceipts, payoutIntents)
+	summary, err := s.repo.RegionalAccountingSummary()
+	if err != nil {
+		return err
+	}
+	observability.UpdateRegionalAccounting(summary)
 	return nil
 }
 
@@ -548,17 +587,40 @@ func newMemberServeMux(state *runtimeState) *http.ServeMux {
 
 func registerMemberSurface(mux *http.ServeMux, state *runtimeState) {
 	cfg, _, _ := state.Snapshot()
-	var publicControllerURL, publicBrokerURL, publicBrokerQUICAddr string
+	var publicControllerURL, publicBrokerURL, publicBrokerQUICAddr, memberAgentImage string
+	var publicBrokerURLs []string
 	if cfg != nil {
 		publicControllerURL = cfg.Bootstrap.PublicControllerURL
+		publicBrokerURLs = cfg.Bootstrap.PublicBrokerURLs()
+		memberAgentImage = cfg.Bootstrap.MemberAgentImage
 		publicBrokerURL = cfg.Bootstrap.PublicBrokerURL
 		publicBrokerQUICAddr = cfg.Bootstrap.PublicBrokerQUICAddr
 	}
+	var verifyOwnership func([]types.HardwareUnit) error
+	if state.ownership != nil {
+		verifyOwnership = state.ownership.VerifyExisting
+	}
+	sessions := memberserver.NewSessionAuth()
+	if cfg != nil && cfg.MemberIssuerTrustFile != "" {
+		sessions.Federation = &memberauth.Verifier{Path: cfg.MemberIssuerTrustFile, PoolID: state.repo.PoolID()}
+	}
 	memberserver.Register(mux, memberserver.Deps{
+		Sessions: sessions,
+		BeginTransfer: func(ctx context.Context, unit, wallet, destination, reason string) (repo.DeviceTransfer, error) {
+			svc, err := regionalDeviceTransferService(state)
+			if err != nil {
+				return repo.DeviceTransfer{}, err
+			}
+			return svc.Begin(ctx, unit, wallet, destination, reason)
+		},
+		RefreshTerms:         func() error { return state.RefreshRenderedFromState("regional terms acceptance") },
+		VerifyOwnership:      verifyOwnership,
 		Repo:                 state.repo,
 		Catalog:              state.catalog,
 		PublicControllerURL:  publicControllerURL,
 		PublicBrokerURL:      publicBrokerURL,
+		PublicBrokerURLs:     publicBrokerURLs,
+		MemberAgentImage:     memberAgentImage,
 		PublicBrokerQUICAddr: publicBrokerQUICAddr,
 	})
 }
@@ -566,6 +628,7 @@ func registerMemberSurface(mux *http.ServeMux, state *runtimeState) {
 func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 	cfg, _, _ := state.Snapshot()
 	adminserver.Register(mux, adminserver.Deps{
+		PublishTerms:     regionalTermsService(state).Publish,
 		Repo:             state.repo,
 		Catalog:          state.catalog,
 		Stances:          placementStances(cfg),
@@ -610,6 +673,7 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 			})
 		},
 	})
+	registerRevenueSources(mux, state)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok\n")
@@ -891,6 +955,22 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 		}{Snapshots: summarizeSnapshots(items)})
 	}))
 	mux.HandleFunc("GET /admin/v1/work-receipts", withAdminAuth(state, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("pagination") == "true" {
+			limit, err := parsePositiveIntQuery(r, "limit", 500)
+			if err != nil {
+				http.Error(w, err.Error(), 400)
+				return
+			}
+			page, err := state.repo.PageWorkReceipts(r.URL.Query().Get("round_id"), r.URL.Query().Get("status"), r.URL.Query().Get("cursor"), r.URL.Query().Get("snapshot"), limit)
+			if err != nil {
+				http.Error(w, err.Error(), 409)
+				return
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(page)
+			return
+		}
+
 		limit, err := parsePositiveIntQuery(r, "limit", 50)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -931,6 +1011,14 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 		if err := json.NewDecoder(r.Body).Decode(&receipt); err != nil {
 			http.Error(w, "invalid JSON body: "+err.Error(), http.StatusBadRequest)
 			return
+		}
+		cfg, _, _ := state.Snapshot()
+		if cfg.ServiceAuthFile != "" {
+			principal := servicePrincipal(r)
+			if principal.SourceID == "" || receipt.PoolID != state.repo.PoolID() || receipt.SourceID != principal.SourceID || !strings.HasPrefix(receipt.ID, receipt.SourceID+"/") {
+				http.Error(w, "receipt source does not match service credential", 403)
+				return
+			}
 		}
 		if err := validateWorkReceipt(receipt); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1564,10 +1652,25 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if err := state.repo.SaveRoundReceipt(roundReceipt); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+		cfg, _, _ := state.Snapshot()
+		if cfg.ServiceAuthFile != "" {
+			if req.PoolID != state.repo.PoolID() || len(req.RevenueReports) == 0 || len(req.WorkReports) == 0 || req.ReceiptSnapshot == "" {
+				http.Error(w, "regional source revenue and work completeness proofs required", 409)
+				return
+			}
+			roundReceipt.PoolID = req.PoolID
+			roundReceipt.RevenueReports = req.RevenueReports
+			roundReceipt.WorkReports = req.WorkReports
+			roundReceipt.ReceiptSnapshot = req.ReceiptSnapshot
+			if err := state.repo.SaveRegionalRound(roundReceipt); err != nil {
+				http.Error(w, err.Error(), 409)
+				return
+			}
+		} else if err := state.repo.SaveRoundReceipt(roundReceipt); err != nil {
+			http.Error(w, err.Error(), 500)
 			return
 		}
+
 		observability.RecordReceiptWrite("round", "closed", 1)
 		if err := state.syncAccountingMetrics(); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -1615,6 +1718,16 @@ func registerAdminSurface(mux *http.ServeMux, state *runtimeState) {
 
 func withAdminAuth(state *runtimeState, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		cfg, _, _ := state.Snapshot()
+		if cfg != nil && cfg.ServiceAuthFile != "" {
+			principal, err := (serviceauth.Verifier{Path: cfg.ServiceAuthFile}).Authorize(r, state.repo.PoolID(), "controller", controllerServiceRoles(r)...)
+			if err != nil {
+				http.Error(w, "unauthorized service", http.StatusUnauthorized)
+				return
+			}
+			next(w, r.WithContext(context.WithValue(r.Context(), servicePrincipalKey{}, principal)))
+			return
+		}
 		state.mu.RLock()
 		token := state.adminToken
 		session := state.session
@@ -2013,11 +2126,15 @@ type publicRoundView struct {
 }
 
 type roundCloseRequest struct {
-	ID                     string   `json:"id"`
-	RoundID                string   `json:"round_id"`
-	PoolRevenueWei         string   `json:"pool_revenue_wei"`
-	PoolCutWei             string   `json:"pool_cut_wei"`
-	IncludedWorkReceiptIDs []string `json:"included_work_receipt_ids"`
+	PoolID                 string               `json:"pool_id,omitempty"`
+	RevenueReports         []revenue.Report     `json:"revenue_reports,omitempty"`
+	WorkReports            []revenue.WorkReport `json:"work_reports,omitempty"`
+	ReceiptSnapshot        string               `json:"receipt_snapshot,omitempty"`
+	ID                     string               `json:"id"`
+	RoundID                string               `json:"round_id"`
+	PoolRevenueWei         string               `json:"pool_revenue_wei"`
+	PoolCutWei             string               `json:"pool_cut_wei"`
+	IncludedWorkReceiptIDs []string             `json:"included_work_receipt_ids"`
 }
 
 type payoutIntentDeriveRequest struct {
@@ -2901,7 +3018,7 @@ func validateRoundCloseRequest(req roundCloseRequest) error {
 	if req.PoolCutWei == "" {
 		return errors.New("round close pool_cut_wei is required")
 	}
-	if len(req.IncludedWorkReceiptIDs) == 0 {
+	if len(req.IncludedWorkReceiptIDs) == 0 && req.PoolID == "" {
 		return errors.New("round close included_work_receipt_ids must not be empty")
 	}
 	return nil
@@ -3182,6 +3299,14 @@ func buildRoundReceiptFromCloseRequest(req roundCloseRequest, workReceipts []typ
 	if poolCut.Cmp(poolRevenue) > 0 {
 		return types.RoundReceipt{}, errors.New("round close pool_cut_wei must be <= pool_revenue_wei")
 	}
+	// Regional rounds are immutable accounting inputs. Commission and member
+	// allocations are calculated once across the accepted accounting window.
+	if req.PoolID != "" {
+		if poolCut.Sign() != 0 {
+			return types.RoundReceipt{}, errors.New("regional commission is applied at window close")
+		}
+		return types.RoundReceipt{ID: req.ID, RoundID: req.RoundID, CreatedAt: time.Now().UTC(), PoolRevenueWei: poolRevenue.String(), PoolCutWei: "0", DistributableWei: poolRevenue.String(), IncludedWorkReceiptIDs: append([]string(nil), req.IncludedWorkReceiptIDs...)}, nil
+	}
 	distributable := new(big.Int).Sub(poolRevenue, poolCut)
 
 	memberContribs := make(map[string]*big.Int)
@@ -3236,7 +3361,7 @@ func buildRoundReceiptFromCloseRequest(req roundCloseRequest, workReceipts []typ
 }
 
 func usageError(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <serve|version> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-controller <serve|init-identity|validate-config|version> [flags]")
 	_, _ = fmt.Fprintln(w, "")
 	_, _ = fmt.Fprintln(w, "commands:")
 	_, _ = fmt.Fprintln(w, "  serve")
@@ -3368,7 +3493,11 @@ func runHardwareRelayLoop(ctx context.Context, state *runtimeState, cfg *config.
 			}
 			client := brokeradmin.New(target.AdminURL, target.Auth, timeout)
 			relayCtx, cancel := context.WithTimeout(ctx, timeout)
-			result, err := brokerpush.RelayHardware(relayCtx, client, state.repo, time.Now().UTC())
+			var hardwareStore brokerpush.HardwareStore = state.repo
+			if state.ownership != nil {
+				hardwareStore = state.ownership
+			}
+			result, err := brokerpush.RelayHardware(relayCtx, client, hardwareStore, time.Now().UTC())
 			cancel()
 			if err != nil {
 				_, _ = fmt.Fprintf(stderr, "hardware relay from %s failed: %v\n", target.Name, err)
@@ -3389,6 +3518,11 @@ func runHardwareRelayLoop(ctx context.Context, state *runtimeState, cfg *config.
 					_, _ = fmt.Fprintf(stderr, "record gpu conflict %s: %v\n", conflict.GPUUUID, err)
 				}
 			}
+			if result.Upserted > 0 && state.ownership != nil {
+				if err := state.RefreshRenderedFromState("regional hardware grants"); err != nil {
+					_, _ = fmt.Fprintf(stderr, "ownership credential push failed: %v\n", err)
+				}
+			}
 			if result.Upserted > 0 || len(result.Conflicts) > 0 {
 				_, _ = fmt.Fprintf(stderr, "hardware relay from %s: upserted=%d conflicts=%d\n",
 					target.Name, result.Upserted, len(result.Conflicts))
@@ -3403,6 +3537,27 @@ func runHardwareRelayLoop(ctx context.Context, state *runtimeState, cfg *config.
 // and a pool should say out loud that it wants that to happen without a
 // person. A window that is short or anomalous is held either way.
 func runWindowCloseLoop(ctx context.Context, state *runtimeState, cfg *config.Config, stderr io.Writer) {
+	if cfg != nil && cfg.ServiceAuthFile != "" && state != nil && state.repo != nil {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			if err := regionalTermsService(state).Resume(ctx); err != nil {
+				fmt.Fprintf(stderr, "regional terms publication held: %v\n", err)
+			}
+			if err := state.repo.CloseReadyRegionalWindows(); err != nil {
+				fmt.Fprintf(stderr, "regional window close: %v\n", err)
+			}
+			if err := state.syncAccountingMetrics(); err != nil {
+				fmt.Fprintf(stderr, "regional accounting metrics: %v\n", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}
+
 	if cfg == nil || !cfg.Payouts.AutoCloseWindows || state == nil || state.repo == nil {
 		return
 	}

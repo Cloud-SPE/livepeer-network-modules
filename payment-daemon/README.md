@@ -131,3 +131,6 @@ The unix socket is the trust boundary: only processes with filesystem
 access to the socket can call the daemon. The shared volume between the
 broker container and the daemon container is the docker-level realization
 of that boundary.
+
+Regional collectors use [source-qualified revenue reporting](docs/regional-revenue-reporting.md),
+including inclusion-block rounds and explicit completeness evidence.

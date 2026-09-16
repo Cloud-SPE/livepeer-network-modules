@@ -53,6 +53,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return runGetRoundStatus(args[1:], stdout)
 	case "stream-round-events":
 		return runStreamRoundEvents(args[1:], stdout)
+	case "validate-config":
+		return runValidateConfig(args[1:], stdout)
 	case "version":
 		_, err := fmt.Fprintln(stdout, version)
 		return err
@@ -343,7 +345,7 @@ func validateRoundCloseRequest(req types.RoundCloseRequest) error {
 	if req.PoolCutWei == "" {
 		return errors.New("round close pool_cut_wei is required")
 	}
-	if len(req.IncludedWorkReceiptIDs) == 0 {
+	if len(req.IncludedWorkReceiptIDs) == 0 && req.PoolID == "" {
 		return errors.New("round close included_work_receipt_ids must not be empty")
 	}
 	return nil
@@ -446,6 +448,9 @@ func prepareRoundCloseRequest(ctx context.Context, cfg *config.Config, explicitR
 	controllerClient, err := poolcontroller.NewClient(cfg.PoolController)
 	if err != nil {
 		return types.RoundCloseRequest{}, err
+	}
+	if cfg.PoolController.PoolID != "" {
+		return prepareRegionalClose(ctx, cfg, controllerClient, req)
 	}
 	workReceipts, err := controllerClient.ListWorkReceipts(ctx, poolcontroller.ListWorkReceiptsOptions{
 		RoundID: req.RoundID,
@@ -598,16 +603,48 @@ func attemptRoundClose(
 	defer func() {
 		observability.RecordRoundClose(outcome, time.Since(start).Seconds())
 	}()
+	if explicitRoundID != 0 {
+		if err := stateRepo.MarkAttempt(explicitRoundID); err != nil {
+			return nil, err
+		}
+	}
+
+	// An acknowledgement can be lost after the controller froze this round.
+	// Replay the persisted request before contacting a now-retired source.
+	if explicitRoundID != 0 && cfg.PoolController.PoolID != "" {
+		record, found, err := stateRepo.GetRound(explicitRoundID)
+		if err != nil {
+			return nil, err
+		}
+		if found && record.Prepared != nil {
+			prepared := *record.Prepared
+			if prepared.PoolID != cfg.PoolController.PoolID || prepared.RoundID != strconv.FormatUint(explicitRoundID, 10) {
+				return nil, fmt.Errorf("persisted round evidence belongs to another pool or round")
+			}
+			if err := controllerClient.SubmitRoundClose(ctx, prepared); err == nil {
+				if err := stateRepo.MarkClosed(explicitRoundID); err != nil {
+					return nil, err
+				}
+				outcome = observability.OutcomeClosed
+				return map[string]any{"closed_round": explicitRoundID, "status": "closed", "work_receipt_count": len(prepared.IncludedWorkReceiptIDs), "pool_revenue_wei": prepared.PoolRevenueWei}, nil
+			}
+		}
+	}
 	req, err := prepareRoundCloseRequest(ctx, cfg, explicitRoundID)
 	if err != nil {
+		if explicitRoundID != 0 {
+			_ = stateRepo.MarkFailed(explicitRoundID, err.Error())
+		}
 		return nil, err
 	}
 	roundID, err := strconv.ParseUint(req.RoundID, 10, 64)
 	if err != nil {
 		return nil, fmt.Errorf("prepared round_id %q must be numeric: %w", req.RoundID, err)
 	}
-	if err := stateRepo.MarkAttempt(roundID); err != nil {
-		return nil, err
+	if explicitRoundID == 0 {
+		if err := stateRepo.MarkAttempt(roundID); err != nil {
+			return nil, err
+		}
 	}
 	if err := validateRoundCloseRequest(req); err != nil {
 		_ = stateRepo.MarkFailed(roundID, err.Error())
@@ -615,6 +652,9 @@ func attemptRoundClose(
 	}
 	if err := validateRoundCloseAgainstRoundSource(ctx, cfg, req); err != nil {
 		_ = stateRepo.MarkFailed(roundID, err.Error())
+		return nil, err
+	}
+	if err := stateRepo.SavePrepared(roundID, req); err != nil {
 		return nil, err
 	}
 	if err := controllerClient.SubmitRoundClose(ctx, req); err != nil {
@@ -662,6 +702,6 @@ func commissionCutWei(revenueWei string, commissionBPS uint32) string {
 }
 
 func usageError(w io.Writer) error {
-	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-reconciler <close-round|watch-rounds|prepare-round-close|get-round-revenue|submit-round-close|get-round-status|stream-round-events|version> [flags]")
+	_, _ = fmt.Fprintln(w, "usage: livepeer-pool-reconciler <close-round|watch-rounds|prepare-round-close|get-round-revenue|submit-round-close|get-round-status|stream-round-events|validate-config|version> [flags]")
 	return errors.New("invalid command")
 }

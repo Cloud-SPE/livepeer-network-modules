@@ -108,3 +108,12 @@ func logField(k, v string) (f struct {
 		Value any
 	}{Key: k, Value: v}
 }
+
+func TestRunReadOnlyBootShutdown(t *testing.T) {
+	var buf bytes.Buffer
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if code := run(ctx, []string{"--mode=read-only", "--dev", "--keystore-password-file=/missing/password"}, &buf); code != 0 {
+		t.Fatalf("code %d: %s", code, buf.String())
+	}
+}

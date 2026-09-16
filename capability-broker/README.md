@@ -372,3 +372,10 @@ capability-broker/
 ```
 
 `internal/` packages reflect what's shipped.
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.
+
+Regional brokers use [durable work accounting](docs/regional-work-accounting.md) for source-qualified contribution proofs and retryable receipt delivery.

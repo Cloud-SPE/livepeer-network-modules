@@ -50,9 +50,10 @@ runners.
 - **The compose file is written whole and renamed.** A half-written file caught
   by a concurrent `docker compose up` is a host that stops serving for reasons
   nobody can reconstruct.
-- **Rotation must not lose the token.** The controller returns the replacement
-  exactly once. Write the new one to a temp file, rename, and leave the old one
-  readable until the new one is safely down.
+- **Rotation must not lose authority.** Persist the secret request proof before
+  rotation, then atomically persist the enrollment/attach credential pair before
+  acknowledging it. Restart replays the exact pending request; see
+  [`docs/regional-credentials.md`](docs/regional-credentials.md).
 - `desiredstate.Runner` is an interface so reconcile logic is testable without
   a docker daemon. Keep it that way; a dry run should be a real mode, not a
   code path nobody exercises.

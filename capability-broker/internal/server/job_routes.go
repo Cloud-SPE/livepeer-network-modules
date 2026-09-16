@@ -539,6 +539,17 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	if s.workAccounting != nil {
+		meta, ok := middleware.SessionStateFromContext(r.Context()).ReceiptMeta()
+		if !ok {
+			livepeerheader.WriteError(w, 503, livepeerheader.ErrBackendUnavailable, "work authorization unavailable")
+			return
+		}
+		if err := s.bindAccountingWork(meta.WorkID, meta.RequestID, capID, offID, c.Backend.ID); err != nil {
+			livepeerheader.WriteError(w, 503, livepeerheader.ErrBackendUnavailable, "work attribution unavailable")
+			return
+		}
+	}
 	// From here the exchange is the runner's. Everything above was the
 	// broker refusing on its own account, and none of it is reported.
 	hostID, localID := splitBackendID(c.Backend.ID)

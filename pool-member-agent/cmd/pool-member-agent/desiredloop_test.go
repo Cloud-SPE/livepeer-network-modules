@@ -140,8 +140,8 @@ func TestReconcileOnceTellsTheBrokerBeforeItTouchesCompose(t *testing.T) {
 	if status["runner-unit-a-chat-a"] != desiredstate.StatusRunning {
 		t.Fatalf("report = %+v, want the live service reported running", reports[0].Services)
 	}
-	if status["runner-unit-b-chat-b"] != desiredstate.StatusStopped {
-		t.Fatalf("report = %+v, want the draining service reported stopped", reports[0].Services)
+	if status["runner-unit-b-chat-b"] != desiredstate.StatusDraining {
+		t.Fatalf("report = %+v, want the draining service reported draining", reports[0].Services)
 	}
 }
 
@@ -149,6 +149,7 @@ func TestReconcileOnceTellsTheBrokerBeforeItTouchesCompose(t *testing.T) {
 // no report. This loop runs on every enrolled host forever.
 func TestReconcileOnceDoesNothingWhenTheDesiredStateIsUnchanged(t *testing.T) {
 	doc := desiredDoc()
+	doc.Services[1].Draining = false
 	var reports []desiredstate.StatusReport
 	server := controllerStub(t, doc, &reports)
 
@@ -299,5 +300,23 @@ func TestEnrollmentTokenPrefersTheFileOverTheEnvironment(t *testing.T) {
 	t.Setenv("POOL_ENROLLMENT_TOKEN_FILE", filepath.Join(t.TempDir(), "missing"))
 	if got := enrollmentToken(); got != "from-env" {
 		t.Fatalf("enrollmentToken() = %q", got)
+	}
+}
+
+func TestManagedRestartRequiresCurrentDesiredStateBeforeAdvertising(t *testing.T) {
+	cfg := config{ControllerURL: "https://controller.example", EnrollmentID: "source-host", EnrollmentToken: "token", Runners: []attach.Runner{{LocalID: "obsolete", URL: "http://old:8080", Devices: []string{"gpu-a"}}}}
+	state := initialRunnerState(cfg)
+	runners, _ := state.get()
+	if len(runners) != 0 {
+		t.Fatal("managed reboot trusted old local runner list")
+	}
+	if len(state.routes()) != 0 {
+		t.Fatal("obsolete assignment routable before validation")
+	}
+	cfg.ControllerURL = ""
+	standalone := initialRunnerState(cfg)
+	runners, _ = standalone.get()
+	if len(runners) != 1 {
+		t.Fatal("standalone runner configuration lost")
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +25,9 @@ import (
 // desired-state loop replaces it as placements change, and the tunnel
 // loop reads it on every re-register.
 type runnerState struct {
-	mu      sync.RWMutex
-	runners []attach.Runner
+	attachCredential string
+	mu               sync.RWMutex
+	runners          []attach.Runner
 	// revision is the desired state these runners came from, logged so
 	// an operator can tie a running container to a pool decision.
 	revision string
@@ -38,7 +40,7 @@ type runnerState struct {
 }
 
 func newRunnerState() *runnerState {
-	return &runnerState{changed: make(chan struct{}, 1)}
+	return &runnerState{changed: make(chan struct{})}
 }
 
 // routes is the local-id route table for the runner set as it is NOW.
@@ -46,28 +48,27 @@ func newRunnerState() *runnerState {
 // host the set comes from desired state and changes while the tunnel
 // is up, and a table built at connect would leave a service placed
 // afterwards attached but unroutable.
-func (s *runnerState) routes() map[string]string {
+func (s *runnerState) routes() runnerRoutes {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return attach.RouteTable(s.runners)
+	routes := runnerRoutes{}
+	for _, r := range s.runners {
+		if r.LocalID != "" {
+			routes[r.LocalID] = runnerRoute{URL: strings.TrimRight(r.URL, "/"), Bearer: r.LocalBearer}
+		}
+	}
+	return routes
 }
 
 func (s *runnerState) set(runners []attach.Runner, revision string) {
 	s.mu.Lock()
 	s.runners = runners
 	s.revision = revision
-	ch := s.changed
+	if s.changed != nil {
+		close(s.changed)
+	}
+	s.changed = make(chan struct{})
 	s.mu.Unlock()
-	if ch == nil {
-		return
-	}
-	// Non-blocking: the channel carries "something changed", not a
-	// queue of changes, so a session that has not woken yet will pick
-	// up the latest state when it does.
-	select {
-	case ch <- struct{}{}:
-	default:
-	}
 }
 
 // wake is the signal a live session waits on.
@@ -102,6 +103,9 @@ func desiredLoop(ctx context.Context, cfg config, state *runnerState, reattach f
 	rotate := time.NewTicker(cfg.RotateEvery)
 	defer rotate.Stop()
 	for {
+		if err := recoverAgentCredentials(ctx, client, cfg, state); err != nil {
+			log.Printf("agent credential recovery pending: %v", err)
+		}
 		if err := reconcileOnce(ctx, client, runner, cfg, state, reattach); err != nil {
 			if errors.Is(err, context.Canceled) {
 				return
@@ -112,11 +116,16 @@ func desiredLoop(ctx context.Context, cfg config, state *runnerState, reattach f
 		case <-ctx.Done():
 			return
 		case <-rotate.C:
-			if _, err := client.Rotate(ctx, cfg.EnrollmentTokenFile); err != nil {
-				log.Printf("credential rotation failed: %v", err)
-			} else {
-				log.Printf("enrollment credential rotated")
+			if cfg.AgentCredentialsFile != "" {
+				secrets, err := client.RotateAgentCredentials(ctx, cfg.AgentCredentialsFile)
+				if secrets.AttachCredential != "" {
+					state.setCredential(secrets.AttachCredential)
+				}
+				if err != nil {
+					log.Printf("credential rotation pending: %v", err)
+				}
 			}
+
 		case <-ticker.C:
 		}
 	}
@@ -139,6 +148,14 @@ func reconcileOnce(ctx context.Context, client *desiredstate.Client, runner desi
 			log.Printf("desired-state: enrollment token rejected; this host needs re-enrolling from the member portal")
 		}
 		return err
+	}
+	doc, err = desiredstate.ResolveRuntime(cfg.ComposeFile, doc)
+	if err != nil {
+		report := desiredstate.StatusReport{Revision: doc.Revision}
+		for _, service := range doc.Services {
+			report.Services = append(report.Services, desiredstate.ServiceStatus{Name: service.Name, Status: desiredstate.StatusFailed, Detail: "runner secrets require recovery"})
+		}
+		return errors.Join(err, client.Report(ctx, report))
 	}
 	log.Printf("desired state %s: %d service(s)", doc.Revision, len(doc.Services))
 
@@ -172,13 +189,66 @@ func reconcileOnce(ctx context.Context, client *desiredstate.Client, runner desi
 func runnersFor(doc desiredstate.Document) []attach.Runner {
 	out := make([]attach.Runner, 0, len(doc.Services))
 	for _, service := range doc.Services {
+		if service.Stop {
+			continue
+		}
 		out = append(out, attach.Runner{
-			LocalID:  service.Name,
-			URL:      "http://" + service.Name + ":8080",
-			Devices:  service.DeviceIDs,
-			Draining: service.Draining,
-			RTMPPort: service.RTMPPort,
+			LocalID:     service.Name,
+			LocalBearer: service.RuntimeBearer,
+			URL:         "http://" + service.Name + ":8080",
+			Devices:     service.DeviceIDs,
+			Draining:    service.Draining,
+			RTMPPort:    service.RTMPPort,
 		})
 	}
 	return out
+}
+
+// A managed agent reboot advertises hardware only until its controller validates
+// current ownership and returns desired state. Existing containers are untouched
+// during an outage; a stale local runner file cannot reactivate an old assignment.
+func initialRunnerState(cfg config) *runnerState {
+	state := newRunnerState()
+	state.setCredential(cfg.Credential)
+	if !cfg.PoolManaged() {
+		state.set(cfg.Runners, "")
+	}
+	return state
+}
+
+func (s *runnerState) setCredential(value string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.attachCredential == value {
+		return
+	}
+	s.attachCredential = value
+	if s.changed != nil {
+		close(s.changed)
+	}
+	s.changed = make(chan struct{})
+}
+func (s *runnerState) credential() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.attachCredential
+}
+func recoverAgentCredentials(ctx context.Context, client *desiredstate.Client, cfg config, state *runnerState) error {
+	if cfg.AgentCredentialsFile == "" {
+		return nil
+	}
+	if _, err := os.Stat(cfg.AgentCredentialsFile); os.IsNotExist(err) {
+		secrets, err := client.CurrentAgentCredentials(ctx)
+		if err != nil {
+			return err
+		}
+		if err := desiredstate.SaveAgentCredentials(cfg.AgentCredentialsFile, secrets); err != nil {
+			return err
+		}
+	}
+	secrets, err := client.RecoverAgentRotation(ctx, cfg.AgentCredentialsFile)
+	if secrets.AttachCredential != "" {
+		state.setCredential(secrets.AttachCredential)
+	}
+	return err
 }

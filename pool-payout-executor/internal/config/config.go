@@ -11,6 +11,9 @@ type Config struct {
 }
 
 type PoolController struct {
+	PoolID         string `yaml:"pool_id,omitempty"`
+	TokenFile      string `yaml:"token_file,omitempty"`
+	CAFile         string `yaml:"ca_file,omitempty"`
 	URL            string `yaml:"url"`
 	BearerToken    string `yaml:"bearer_token,omitempty"`
 	BearerTokenRef string `yaml:"bearer_token_ref,omitempty"`
@@ -18,9 +21,11 @@ type PoolController struct {
 }
 
 type Executor struct {
-	BatchSize       int    `yaml:"batch_size,omitempty"`
-	ExecutorID      string `yaml:"executor_id,omitempty"`
-	LeaseTTLSeconds int    `yaml:"lease_ttl_seconds,omitempty"`
+	PoolID                string `yaml:"-"`
+	ExpectedWalletAddress string `yaml:"expected_wallet_address,omitempty"`
+	BatchSize             int    `yaml:"batch_size,omitempty"`
+	ExecutorID            string `yaml:"executor_id,omitempty"`
+	LeaseTTLSeconds       int    `yaml:"lease_ttl_seconds,omitempty"`
 	// RPCURLs lists JSON-RPC endpoints, primary first; every chain call
 	// fails over between them. Precedence: the CHAIN_RPC_URLS environment
 	// variable (comma-separated, same shape every other daemon takes),

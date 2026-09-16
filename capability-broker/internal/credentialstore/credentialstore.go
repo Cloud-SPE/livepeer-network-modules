@@ -83,17 +83,21 @@ var (
 
 // Record is one enrollment. Never carries a plaintext secret.
 type Record struct {
-	CredentialID     string    `json:"credential_id"`
-	HostID           string    `json:"host_id"`
-	Kind             string    `json:"kind"`
-	TokenSHA256      string    `json:"token_sha256"` // hex; bearer only
-	Label            string    `json:"label,omitempty"`
-	MemberEthAddress string    `json:"member_eth_address,omitempty"`
-	Source           string    `json:"source"`
-	State            string    `json:"state"`
-	IssuedAt         time.Time `json:"issued_at"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	LastUsedAt       time.Time `json:"last_used_at,omitempty"`
+	CredentialGeneration uint64            `json:"credential_generation,omitempty"`
+	TermsVersion         string            `json:"terms_version,omitempty"`
+	PoolID               string            `json:"pool_id,omitempty"`
+	DeviceOwnership      map[string]uint64 `json:"device_ownership,omitempty"`
+	CredentialID         string            `json:"credential_id"`
+	HostID               string            `json:"host_id"`
+	Kind                 string            `json:"kind"`
+	TokenSHA256          string            `json:"token_sha256"` // hex; bearer only
+	Label                string            `json:"label,omitempty"`
+	MemberEthAddress     string            `json:"member_eth_address,omitempty"`
+	Source               string            `json:"source"`
+	State                string            `json:"state"`
+	IssuedAt             time.Time         `json:"issued_at"`
+	ExpiresAt            time.Time         `json:"expires_at"`
+	LastUsedAt           time.Time         `json:"last_used_at,omitempty"`
 	// Rotation is set while State is rotating: the previous token's hash
 	// stays valid until PreviousExpiresAt.
 	Rotation      *Rotation `json:"rotation,omitempty"`
@@ -130,14 +134,18 @@ type EnrollResult struct {
 // SyncEntry is one credential pushed by a pool controller
 // (broker-admin §5.4). Only the hash travels.
 type SyncEntry struct {
-	CredentialID     string    `json:"credential_id"`
-	HostID           string    `json:"host_id"`
-	Kind             string    `json:"kind"`
-	TokenSHA256      string    `json:"token_sha256"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	Label            string    `json:"label,omitempty"`
-	MemberEthAddress string    `json:"member_eth_address,omitempty"`
-	State            string    `json:"state,omitempty"`
+	CredentialGeneration uint64            `json:"credential_generation,omitempty"`
+	TermsVersion         string            `json:"terms_version,omitempty"`
+	PoolID               string            `json:"pool_id,omitempty"`
+	DeviceOwnership      map[string]uint64 `json:"device_ownership,omitempty"`
+	CredentialID         string            `json:"credential_id"`
+	HostID               string            `json:"host_id"`
+	Kind                 string            `json:"kind"`
+	TokenSHA256          string            `json:"token_sha256"`
+	ExpiresAt            time.Time         `json:"expires_at"`
+	Label                string            `json:"label,omitempty"`
+	MemberEthAddress     string            `json:"member_eth_address,omitempty"`
+	State                string            `json:"state,omitempty"`
 }
 
 // Options bound enrollment lifetimes.
@@ -572,6 +580,18 @@ func (s *Store) SyncReplace(revision string, entries []SyncEntry) (revokedHosts 
 			} else if rec.Source != SourceSync {
 				return fmt.Errorf("credentialstore: %s is locally enrolled; sync cannot replace it", e.CredentialID)
 			}
+			if rec.CredentialGeneration != 0 {
+				if rec.State == StateRevoked {
+					continue
+				}
+				if e.CredentialGeneration < rec.CredentialGeneration {
+					continue
+				}
+				if e.CredentialGeneration == rec.CredentialGeneration && rec.TokenSHA256 != e.TokenSHA256 {
+					return fmt.Errorf("credentialstore: same credential generation changed its secret")
+				}
+			}
+			rec.CredentialGeneration = e.CredentialGeneration
 			if rec.TokenSHA256 != "" && rec.TokenSHA256 != e.TokenSHA256 {
 				_ = tx.Bucket([]byte(byHashBucket)).Delete([]byte(rec.TokenSHA256))
 			}
@@ -579,6 +599,12 @@ func (s *Store) SyncReplace(revision string, entries []SyncEntry) (revokedHosts 
 			rec.Kind = e.Kind
 			rec.TokenSHA256 = e.TokenSHA256
 			rec.Label = e.Label
+			if rec.PoolID != "" && rec.PoolID != e.PoolID {
+				return fmt.Errorf("credentialstore: pool identity is immutable")
+			}
+			rec.PoolID = e.PoolID
+			rec.TermsVersion = e.TermsVersion
+			rec.DeviceOwnership = e.DeviceOwnership
 			rec.MemberEthAddress = e.MemberEthAddress
 			rec.ExpiresAt = s.syncExpiry(rec, e, now)
 			rec.State = StateActive
@@ -671,6 +697,9 @@ func (s *Store) put(tx *bolt.Tx, rec *Record) error {
 }
 
 func (s *Store) putRaw(tx *bolt.Tx, rec *Record) error {
+	if err := filterRevokedDevices(tx, rec); err != nil {
+		return err
+	}
 	sealed, err := s.seal(rec)
 	if err != nil {
 		return err

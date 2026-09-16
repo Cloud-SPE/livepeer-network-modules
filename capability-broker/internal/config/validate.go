@@ -39,6 +39,12 @@ var vtuberTaskByCapabilityID = map[string]string{
 // Validate runs cross-field validation against a parsed Config. Defaults are
 // filled in for omitted-but-optional fields (e.g., Listen addresses).
 func (c *Config) Validate() error {
+	if c.ServiceAuthFile != "" && (c.PoolID == "" || c.ServiceResource == "") {
+		return fmt.Errorf("scoped service auth requires pool_id and service_resource")
+	}
+	if c.PoolID != "" && (c.ServiceAuthFile == "" || c.AccountingStorePath == "" || c.ReceiptSink.URL == "" || c.ReceiptSink.Auth.Method != "scoped" || c.ReceiptSink.Auth.PoolID != c.PoolID) {
+		return fmt.Errorf("regional pool requires scoped service auth, accounting_store_path and same-pool scoped receipt sink")
+	}
 	if c.ExternalBaseURL != "" {
 		u, err := identity.BrokerURI(c.ExternalBaseURL)
 		if err != nil {
@@ -98,6 +104,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("pool_snapshot.url scheme must be http or https (got %q)", u.Scheme)
 		}
 		switch c.PoolSnapshot.Auth.Method {
+		case "scoped":
+			if _, err := c.PoolSnapshot.Auth.ServiceClient(c.PoolSnapshot.URL, 0); err != nil {
+				return err
+			}
 		case "", "none":
 		case "bearer":
 			if c.PoolSnapshot.Auth.SecretRef == "" {
@@ -150,6 +160,10 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("receipt_sink.url scheme must be http or https (got %q)", u.Scheme)
 		}
 		switch c.ReceiptSink.Auth.Method {
+		case "scoped":
+			if _, err := c.ReceiptSink.Auth.ServiceClient(c.ReceiptSink.URL, 0); err != nil {
+				return err
+			}
 		case "", "none":
 		case "bearer":
 			if c.ReceiptSink.Auth.SecretRef == "" {

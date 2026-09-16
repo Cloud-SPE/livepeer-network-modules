@@ -25,11 +25,18 @@ type Document struct {
 }
 
 type Service struct {
+	SecretEnv       []string `json:"secret_env,omitempty"`
+	LocalBearerEnv  string   `json:"local_bearer_env,omitempty"`
+	RuntimeBearer   string   `json:"-"`
+	runtimeResolved bool
+
 	Name            string   `json:"name"`
+	CacheVolumes    []string `json:"cache_volumes,omitempty"`
 	ComposeFragment string   `json:"compose_fragment"`
 	DeviceIDs       []string `json:"device_ids"`
 	RTMPPort        int      `json:"rtmp_port,omitempty"`
 	Models          []Model  `json:"models,omitempty"`
+	Stop            bool     `json:"stop,omitempty"`
 	Draining        bool     `json:"draining,omitempty"`
 	TemplateID      string   `json:"template_id"`
 	AssignmentID    string   `json:"assignment_id"`
@@ -72,9 +79,10 @@ type ServiceStatus struct {
 // Service status values. These are the agent's honest report of what
 // the host achieved, not what it was asked to do.
 const (
-	StatusRunning = "running"
-	StatusStopped = "stopped"
-	StatusFailed  = "failed"
+	StatusRunning  = "running"
+	StatusStopped  = "stopped"
+	StatusDraining = "draining"
+	StatusFailed   = "failed"
 )
 
 // Client talks to the controller's member API.
@@ -84,7 +92,7 @@ type Client struct {
 	Token        string
 	HTTP         *http.Client
 
-	// etag carries the last revision seen, so an unchanged pool costs
+	// etag carries the last successfully applied and acknowledged revision, so an unchanged pool costs
 	// one conditional request and no body.
 	etag string
 }
@@ -97,7 +105,7 @@ func New(baseURL, enrollmentID, token string, timeout time.Duration) *Client {
 		BaseURL:      strings.TrimRight(baseURL, "/"),
 		EnrollmentID: enrollmentID,
 		Token:        token,
-		HTTP:         &http.Client{Timeout: timeout},
+		HTTP:         &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return fmt.Errorf("controller redirects forbidden") }},
 	}
 }
 
@@ -131,7 +139,7 @@ func (c *Client) Fetch(ctx context.Context) (Document, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&doc); err != nil {
 		return Document{}, err
 	}
-	c.etag = doc.Revision
+	c.etag = ""
 	return doc, nil
 }
 
@@ -157,5 +165,13 @@ func (c *Client) Report(ctx context.Context, report StatusReport) error {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("status report: %d %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
+	// Failed application and ongoing drain must be retried. A successful
+	// HTTP report only confirms delivery, not successful host execution.
+	for _, service := range report.Services {
+		if service.Status != StatusRunning && service.Status != StatusStopped {
+			return nil
+		}
+	}
+	c.etag = report.Revision
 	return nil
 }

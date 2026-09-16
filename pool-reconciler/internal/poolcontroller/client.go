@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/serviceauth"
 	"io"
 	"net/http"
 	"net/url"
@@ -23,17 +24,22 @@ type Client struct {
 }
 
 type WorkReceipt struct {
-	ID                string `json:"id"`
-	CreatedAt         string `json:"created_at"`
-	RequestID         string `json:"request_id"`
-	CapabilityID      string `json:"capability_id"`
-	OfferingID        string `json:"offering_id"`
-	MemberEthAddress  string `json:"member_eth_address"`
-	BackendID         string `json:"backend_id"`
-	ExpectedMaxUnits  uint64 `json:"expected_max_units,omitempty"`
-	ActualUnits       uint64 `json:"actual_units,omitempty"`
-	GatewayRevenueWei string `json:"gateway_revenue_wei,omitempty"`
-	Status            string `json:"status"`
+	TermsVersion         string `json:"terms_version,omitempty"`
+	RoundID              string `json:"round_id,omitempty"`
+	AttributedRevenueWei string `json:"attributed_revenue_wei,omitempty"`
+	PoolID               string `json:"pool_id,omitempty"`
+	SourceID             string `json:"source_id,omitempty"`
+	ID                   string `json:"id"`
+	CreatedAt            string `json:"created_at"`
+	RequestID            string `json:"request_id"`
+	CapabilityID         string `json:"capability_id"`
+	OfferingID           string `json:"offering_id"`
+	MemberEthAddress     string `json:"member_eth_address"`
+	BackendID            string `json:"backend_id"`
+	ExpectedMaxUnits     uint64 `json:"expected_max_units,omitempty"`
+	ActualUnits          uint64 `json:"actual_units,omitempty"`
+	GatewayRevenueWei    string `json:"gateway_revenue_wei,omitempty"`
+	Status               string `json:"status"`
 }
 
 type ListWorkReceiptsOptions struct {
@@ -56,10 +62,18 @@ func NewClient(cfg config.PoolController) (*Client, error) {
 	if timeout <= 0 {
 		timeout = 1500 * time.Millisecond
 	}
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if cfg.TokenFile != "" {
+		client, err = serviceauth.HTTPSClientWithCAFile(base, cfg.PoolID, cfg.TokenFile, cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		client.Timeout = timeout
+	}
 	return &Client{
 		baseURL: u.String(),
 		token:   token,
-		client:  &http.Client{Timeout: timeout},
+		client:  client,
 	}, nil
 }
 

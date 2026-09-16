@@ -15,6 +15,14 @@ import (
 // registerSessionRoutes (/v1/session/*, session_routes.go).
 func (s *Server) registerRoutes() {
 	// Unpaid registry endpoints — no Livepeer-* validation, no payment.
+	s.mux.HandleFunc("GET /reporting/v1/revenue/{round}", s.handleRegionalRevenue)
+	s.mux.HandleFunc("GET /reporting/v1/work/{round}", s.handleRegionalWork)
+	s.mux.HandleFunc("GET /reporting/v1/source", s.handleSourceReport)
+	s.mux.HandleFunc("GET /admin/v1/terms-policy", s.handleTermsPolicy)
+	s.mux.HandleFunc("POST /admin/v1/terms-policy", s.handleTermsPolicy)
+	s.mux.HandleFunc("POST /admin/v1/devices/drain", s.handleDeviceDrain)
+	s.mux.HandleFunc("POST /admin/v1/source/drain", s.handleSourceDrain)
+	s.mux.HandleFunc("POST /admin/v1/source/freeze", s.handleSourceFreeze)
 	s.mux.HandleFunc("GET /registry/offerings", instrumentRegistryScrape("offerings", s.handleOfferings))
 	s.mux.HandleFunc("GET /registry/health", instrumentRegistryScrape("health", s.handleRegistryHealth))
 	s.mux.HandleFunc("GET /registry/settlement-keys", instrumentRegistryScrape("settlement-keys", s.handleSettlementKeys))

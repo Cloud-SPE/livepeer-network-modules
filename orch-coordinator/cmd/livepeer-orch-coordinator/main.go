@@ -556,7 +556,11 @@ func buildHotzoneDeps(brokers []config.Broker, timeout time.Duration) (*adminapi
 		if err != nil {
 			return nil, fmt.Errorf("brokers[%s].admin_token_ref: %w", b.Name, err)
 		}
-		targets = append(targets, brokeradmin.Target{Name: b.Name, BaseURL: b.BaseURL, Token: token})
+		target := brokeradmin.Target{Name: b.Name, BaseURL: b.BaseURL, Token: token, PoolID: b.PoolID}
+		if strings.HasPrefix(b.AdminTokenRef, "file://") {
+			target.TokenFile = strings.TrimPrefix(b.AdminTokenRef, "file://")
+		}
+		targets = append(targets, target)
 		listed = append(listed, adminapi.HotzoneBroker{Name: b.Name, BaseURL: b.BaseURL, Administrable: token != ""})
 	}
 	if timeout <= 0 {

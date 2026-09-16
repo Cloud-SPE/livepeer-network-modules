@@ -66,6 +66,9 @@ func (s *Server) evaluateAttach(raw []byte) (*runnerattach.Document, *runneratta
 			enr = runners.Enrollment{CredentialID: rec.CredentialID, Label: rec.Label, MemberEthAddress: rec.MemberEthAddress}
 		}
 	}
+	if doc != nil {
+		s.checkAttachOwnership(doc, res)
+	}
 	return doc, res, enr
 }
 

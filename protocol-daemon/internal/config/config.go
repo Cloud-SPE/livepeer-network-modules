@@ -98,7 +98,11 @@ func (c *Config) Validate() error {
 		// provided. Defer that validation to the wire-up code.
 		return nil
 	}
-	if err := c.Chain.Validate(); err != nil {
+	if c.Mode == types.ModeReadOnly {
+		if err := c.Chain.ValidateReadOnly(); err != nil {
+			return err
+		}
+	} else if err := c.Chain.Validate(); err != nil {
 		return err
 	}
 	if c.Mode.HasReward() && c.OrchAddress == (chain.Address{}) {

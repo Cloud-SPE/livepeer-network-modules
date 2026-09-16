@@ -2,6 +2,7 @@ package repo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -34,6 +35,7 @@ const (
 func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	for _, bucket := range []string{
 		auditEventsBucket,
+		"member_agent_apply",
 		poolMembersBucket,
 		memberNoncesBucket,
 		hostEnrollmentsBucket,
@@ -54,6 +56,8 @@ func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	return nil
 }
 
+var ErrNotFound = errors.New("not found")
+
 func putJSON[T any](r *StateRepo, bucket, key string, value T) error {
 	if r == nil || r.db == nil {
 		return fmt.Errorf("repo is not open")
@@ -66,6 +70,12 @@ func putJSON[T any](r *StateRepo, bucket, key string, value T) error {
 		return err
 	}
 	return r.db.Update(func(tx *bolt.Tx) error {
+		if err := guardDeviceTransferWrite(tx, bucket, raw); err != nil {
+			return err
+		}
+		if err := guardRegionalAccounting(bucket, tx.Bucket([]byte(bucket)).Get([]byte(key)), raw); err != nil {
+			return err
+		}
 		return tx.Bucket([]byte(bucket)).Put([]byte(key), raw)
 	})
 }
@@ -78,9 +88,13 @@ func getJSON[T any](r *StateRepo, bucket, key string, out *T) error {
 		return fmt.Errorf("key is required")
 	}
 	return r.db.View(func(tx *bolt.Tx) error {
-		raw := tx.Bucket([]byte(bucket)).Get([]byte(key))
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("%s %q: %w", bucket, key, ErrNotFound)
+		}
+		raw := b.Get([]byte(key))
 		if raw == nil {
-			return fmt.Errorf("%s %q: not found", bucket, key)
+			return fmt.Errorf("%s %q: %w", bucket, key, ErrNotFound)
 		}
 		return json.Unmarshal(raw, out)
 	})

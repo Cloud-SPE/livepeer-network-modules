@@ -17,6 +17,10 @@ func TestFetchSendsIfNoneMatchAfterTheFirstSuccessAndReportsUnchanged(t *testing
 	var gotAuth []string
 	var gotIfNoneMatch []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
 		if r.URL.Path != "/member/v1/enrollments/host-1/desired-state" {
 			t.Errorf("desired-state path = %q", r.URL.Path)
 		}
@@ -45,6 +49,9 @@ func TestFetchSendsIfNoneMatchAfterTheFirstSuccessAndReportsUnchanged(t *testing
 		t.Fatalf("first Fetch() = %+v", doc)
 	}
 
+	if err := client.Report(context.Background(), StatusReport{Revision: doc.Revision, Services: []ServiceStatus{{Name: "runner-a", Status: StatusRunning}}}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := client.Fetch(context.Background()); !errors.Is(err, ErrUnchanged) {
 		t.Fatalf("second Fetch() error = %v, want ErrUnchanged", err)
 	}
@@ -127,5 +134,55 @@ func TestReportSurfacesARejection(t *testing.T) {
 	client := New(server.URL, "host-1", "token", time.Second)
 	if err := client.Report(context.Background(), StatusReport{Revision: "rev-1"}); err == nil {
 		t.Fatal("Report() swallowed a 400")
+	}
+}
+
+func TestUnappliedFailedAndUnacknowledgedRevisionsAreRetried(t *testing.T) {
+	failReport := true
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			if failReport {
+				w.WriteHeader(503)
+			}
+			return
+		}
+		if r.Header.Get("If-None-Match") != "" {
+			w.WriteHeader(304)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(Document{Revision: "pending"})
+	}))
+	defer server.Close()
+	client := New(server.URL, "host", "token", time.Second)
+	fetch := func() {
+		t.Helper()
+		if _, err := client.Fetch(context.Background()); err != nil {
+			t.Fatalf("retry suppressed: %v", err)
+		}
+	}
+	fetch()
+	fetch() // fetching alone never acknowledges application
+	report := StatusReport{Revision: "pending", Services: []ServiceStatus{{Name: "runner", Status: StatusRunning}}}
+	if err := client.Report(context.Background(), report); err == nil {
+		t.Fatal("lost report accepted")
+	}
+	fetch()
+	failReport = false
+	report.Services[0].Status = StatusFailed
+	if err := client.Report(context.Background(), report); err != nil {
+		t.Fatal(err)
+	}
+	fetch()
+	report.Services[0].Status = StatusDraining
+	if err := client.Report(context.Background(), report); err != nil {
+		t.Fatal(err)
+	}
+	fetch()
+	report.Services[0].Status = StatusStopped
+	if err := client.Report(context.Background(), report); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Fetch(context.Background()); !errors.Is(err, ErrUnchanged) {
+		t.Fatalf("acknowledged stop not cached: %v", err)
 	}
 }

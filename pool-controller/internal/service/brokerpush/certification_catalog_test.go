@@ -134,3 +134,26 @@ func TestShippedCatalogAlwaysStatesRequired(t *testing.T) {
 		t.Fatal("no optional step in the shipped catalog; the required pointer's whole point is untested")
 	}
 }
+
+func TestLiveCertificationSuppliesPublishedSessionParameters(t *testing.T) {
+	for _, tmpl := range loadShippedCatalog(t) {
+		if tmpl.ID != "video-transcode-live" {
+			continue
+		}
+		for _, step := range certificationFor(tmpl) {
+			if step.Type != "request" {
+				continue
+			}
+			params, ok := step.Config["session_params"].(map[string]any)
+			if !ok || params["schema"] != "rtmp-hls-session/v1" || params["publisher_mode"] != "gateway-relay" || params["output_profile"] != "live-standard" || params["metering_rendition"] != "720p" {
+				t.Fatalf("invalid published live session fixture: %v", params)
+			}
+			storage, _ := params["storage"].(map[string]any)
+			if storage["kind"] != "runner-local" || len(storage) != 1 {
+				t.Fatal("certification must not require member storage credentials")
+			}
+			return
+		}
+	}
+	t.Fatal("live certification request absent")
+}

@@ -96,6 +96,9 @@ type Registry struct {
 	// OnChange, when set, is called after any attach/detach with the
 	// affected host id — the offer engine re-matches on it.
 	OnChange func(hostID string)
+	// Authorize gates dispatch against current device grants, including when
+	// a caller still holds a selection made before credential revocation.
+	Authorize func(hostID string, capability runnerattach.Capability) bool
 }
 
 // New constructs a registry keeping disconnected hosts for retention
@@ -232,7 +235,18 @@ func (r *Registry) ConnFor(hostID, localID string) (Conn, bool) {
 			continue
 		}
 		for i := range c.doc.Capabilities {
-			if c.doc.Capabilities[i].LocalID == localID {
+			capability := c.doc.Capabilities[i]
+			if capability.LocalID == localID {
+				if c.result != nil {
+					for _, result := range c.result.Capabilities {
+						if result.Index == capability.Index && result.Status != "accepted" {
+							return nil, false
+						}
+					}
+				}
+				if r.Authorize != nil && !r.Authorize(hostID, capability) {
+					return nil, false
+				}
 				return c.conn, true
 			}
 		}

@@ -6,13 +6,19 @@ package config
 
 import (
 	"encoding/json"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/ownership"
 	"strings"
 	"time"
 )
 
 // Config is the top-level host-config.yaml schema.
 type Config struct {
-	Identity Identity `yaml:"identity"`
+	Ownership           ownership.Config `yaml:"ownership,omitempty"`
+	AccountingStorePath string           `yaml:"accounting_store_path,omitempty"`
+	PoolID              string           `yaml:"pool_id,omitempty"`
+	ServiceResource     string           `yaml:"service_resource,omitempty"`
+	ServiceAuthFile     string           `yaml:"service_auth_file,omitempty"`
+	Identity            Identity         `yaml:"identity"`
 	// ExternalBaseURL is the gateway-reachable route identity advertised
 	// by the broker and bound into spend authorizations.
 	ExternalBaseURL string `yaml:"external_base_url,omitempty"`
@@ -176,8 +182,9 @@ type PoolSnapshot struct {
 	ExpireAfterMS  int        `yaml:"expire_after_ms,omitempty"`
 }
 
-// ReceiptSink configures optional best-effort posting of work receipts to a
-// pool-controller admin API. When omitted, the broker emits no receipt events.
+// ReceiptSink configures posting of work receipts to a pool-controller.
+// Regional mode requires it and uses a durable retry outbox; standalone posting
+// remains optional and best-effort.
 type ReceiptSink struct {
 	URL       string     `yaml:"url,omitempty"`
 	Auth      AuthConfig `yaml:"auth,omitempty"`

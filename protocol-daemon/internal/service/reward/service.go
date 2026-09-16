@@ -54,13 +54,13 @@ type TxSubmitter interface {
 	Resubmit(ctx context.Context, id txintent.IntentID, calldata []byte) error
 }
 
-// RewardCaller issues the read-only chain calls the force path uses to decide
+// Caller issues the read-only chain calls the force path uses to decide
 // whether a forced reward is worth broadcasting: an eth_call dry-run of
 // reward() (catching reverts without spending gas) and a balance/gas-price
 // read (catching a wallet that can't afford the tx). The multi-RPC client
 // satisfies it; it is optional — when nil, the force path skips these
 // pre-send checks and submits directly.
-type RewardCaller interface {
+type Caller interface {
 	CallContract(ctx context.Context, call ethereum.CallMsg, blockNumber *big.Int) ([]byte, error)
 	BalanceAt(ctx context.Context, addr chain.Address, blockNumber *big.Int) (*big.Int, error)
 	SuggestGasPrice(ctx context.Context) (*big.Int, error)
@@ -84,7 +84,7 @@ type Config struct {
 	// Caller backs the force path's pre-send checks (eth_call dry-run +
 	// balance). Optional: when nil those checks are skipped. The automatic
 	// per-round path never uses it.
-	Caller RewardCaller
+	Caller Caller
 
 	OrchAddress chain.Address
 	GasLimit    uint64

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/serviceauth"
 	"io"
 	"net/http"
 	"net/url"
@@ -17,12 +18,16 @@ import (
 )
 
 type Client struct {
+	poolID  string
 	baseURL string
 	token   string
 	client  *http.Client
 }
 
 type PayoutIntent struct {
+	PoolID             string `json:"pool_id,omitempty"`
+	PayoutBatchID      string `json:"payout_batch_id,omitempty"`
+	Revision           uint64 `json:"revision,omitempty"`
 	ID                 string `json:"id"`
 	CreatedAt          string `json:"created_at"`
 	RoundReceiptID     string `json:"round_receipt_id"`
@@ -149,6 +154,9 @@ func (c *Client) ClaimPayoutIntents(ctx context.Context, reqBody ClaimPayoutInte
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", nil, fmt.Errorf("decode claim response: %w", err)
 	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return "", nil, err
+	}
 	return payload.LeaseID, payload.Intents, nil
 }
 
@@ -180,6 +188,9 @@ func (c *Client) RenewPayoutIntents(ctx context.Context, reqBody RenewPayoutInte
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", nil, fmt.Errorf("decode renew response: %w", err)
+	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return "", nil, err
 	}
 	return payload.LeaseID, payload.Intents, nil
 }
@@ -213,6 +224,9 @@ func (c *Client) ReleasePayoutIntents(ctx context.Context, reqBody ReleasePayout
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return "", nil, fmt.Errorf("decode release response: %w", err)
 	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return "", nil, err
+	}
 	return payload.LeaseID, payload.Intents, nil
 }
 
@@ -244,6 +258,9 @@ func (c *Client) RequeuePayoutIntents(ctx context.Context, reqBody RequeuePayout
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode requeue response: %w", err)
 	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return nil, err
+	}
 	return payload.Intents, nil
 }
 
@@ -261,10 +278,19 @@ func NewClient(cfg config.PoolController) (*Client, error) {
 	if timeout <= 0 {
 		timeout = 1500 * time.Millisecond
 	}
+	client := &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if cfg.TokenFile != "" {
+		client, err = serviceauth.HTTPSClientWithCAFile(base, cfg.PoolID, cfg.TokenFile, cfg.CAFile)
+		if err != nil {
+			return nil, err
+		}
+		client.Timeout = timeout
+	}
 	return &Client{
 		baseURL: u.String(),
+		poolID:  cfg.PoolID,
 		token:   token,
-		client:  &http.Client{Timeout: timeout},
+		client:  client,
 	}, nil
 }
 
@@ -303,6 +329,9 @@ func (c *Client) ListPayoutIntents(ctx context.Context, opts ListPayoutIntentsOp
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode payout intents: %w", err)
+	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return nil, err
 	}
 	return payload.Intents, nil
 }
@@ -359,6 +388,11 @@ func (c *Client) ListPayoutAlerts(ctx context.Context, opts ListPayoutAlertsOpti
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return PayoutAlertSummary{}, nil, fmt.Errorf("decode payout alerts: %w", err)
 	}
+	for _, alert := range payload.Alerts {
+		if err := c.validateRegionalIntents([]PayoutIntent{alert.Intent}); err != nil {
+			return PayoutAlertSummary{}, nil, err
+		}
+	}
 	return payload.Summary, payload.Alerts, nil
 }
 
@@ -389,6 +423,9 @@ func (c *Client) UpdatePayoutIntentStatus(ctx context.Context, reqBody UpdatePay
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, fmt.Errorf("decode status update response: %w", err)
+	}
+	if err := c.validateRegionalIntents(payload.Intents); err != nil {
+		return nil, err
 	}
 	return payload.Intents, nil
 }
@@ -422,4 +459,16 @@ func resolveBearerToken(cfg config.PoolController) (string, error) {
 		return "", fmt.Errorf("env var %q is empty", key)
 	}
 	return value, nil
+}
+
+func (c *Client) validateRegionalIntents(intents []PayoutIntent) error {
+	for _, intent := range intents {
+		if c.poolID != "" && (intent.PoolID != c.poolID || intent.PayoutBatchID == "" || intent.Revision == 0) {
+			return fmt.Errorf("payout intent %s lacks matching regional identity", intent.ID)
+		}
+		if c.poolID == "" && intent.PoolID != "" {
+			return fmt.Errorf("regional payout requires scoped pool configuration")
+		}
+	}
+	return nil
 }

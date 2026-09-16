@@ -31,3 +31,7 @@ require (
 	golang.org/x/sys v0.40.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
 )
+
+require github.com/Cloud-SPE/livepeer-network-modules/pool-commons v0.0.0
+
+replace github.com/Cloud-SPE/livepeer-network-modules/pool-commons => ../pool-commons

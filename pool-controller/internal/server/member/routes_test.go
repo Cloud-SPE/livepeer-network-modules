@@ -107,6 +107,7 @@ func postJSON(t *testing.T, url string, body any, cookie *http.Cookie) *http.Res
 		t.Fatalf("NewRequest() error = %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", req.URL.Scheme+"://"+req.URL.Host)
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}

@@ -120,6 +120,10 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	if new(big.Int).SetBytes(settled.GetBilledValueWei().GetValue()).Int64() != 40 || new(big.Int).SetBytes(settled.GetReleasedValueWei().GetValue()).Int64() != 60 {
 		t.Fatalf("settled=%+v", settled)
 	}
+	recovered, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2, TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1, PaymentBytes: []byte("must-not-be-processed")})
+	if err != nil || !recovered.GetReplayed() || new(big.Int).SetBytes(recovered.GetCumulativeBilledValueWei().GetValue()).Int64() != 20 || recovered.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED {
+		t.Fatalf("historical advance after settlement %+v %v", recovered, err)
+	}
 	replay, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
 	if err != nil || !replay.GetReplayed() {
 		t.Fatalf("replay=%+v err=%v", replay, err)

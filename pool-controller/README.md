@@ -610,3 +610,8 @@ Current receipt-write contract:
   persisted payout state, including stale `submitted` intents, long-lived
   `failed` intents, `leased` intents nearing lease expiry, retry-limit
   breaches, and failures that happened soon after a recent requeue
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.

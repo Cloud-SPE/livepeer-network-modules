@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/serviceauth"
 	"log"
 	"net/http"
 	"strings"
@@ -62,6 +63,16 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 				t.SettlementDomainID = domainID
 				payload.Capabilities = append(payload.Capabilities, *t)
 			}
+		}
+	}
+	if s.workAccounting != nil {
+		draining, err := s.workAccounting.Store.Draining()
+		if err != nil {
+			http.Error(w, "source fence unavailable", 503)
+			return
+		}
+		if draining || (s.workAccounting.RequireTerms && s.workAccounting.Store.TermsPermitAdmission() != nil) {
+			payload.Capabilities = payload.Capabilities[:0]
 		}
 	}
 	observability.SetPublishedOfferings(len(payload.Capabilities))
@@ -132,6 +143,15 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 }
 
 func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	cfg := s.currentConfig()
+	if cfg != nil && cfg.ServiceAuthFile != "" {
+		if _, err := (serviceauth.Verifier{Path: cfg.ServiceAuthFile}).Authorize(r, cfg.PoolID, cfg.ServiceResource, brokerServiceRoles(r)...); err != nil {
+			http.Error(w, "unauthorized service", http.StatusUnauthorized)
+			return false
+		}
+		return true
+	}
+
 	s.mu.RLock()
 	token := s.adminToken
 	s.mu.RUnlock()
@@ -178,6 +198,12 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 
 	cfg, err := config.Load(s.configPath)
 	if err != nil {
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
+		return s.runtimeStatus(), err
+	}
+	current := s.currentConfig()
+	if current != nil && (current.PoolID != cfg.PoolID || current.ServiceResource != cfg.ServiceResource || current.AccountingStorePath != cfg.AccountingStorePath || current.ReceiptSink != cfg.ReceiptSink) {
+		err := fmt.Errorf("regional identity, accounting store and receipt client cannot change through runtime reload; restart with the same durable identity")
 		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
 		return s.runtimeStatus(), err
 	}

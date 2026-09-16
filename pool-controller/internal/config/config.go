@@ -1,8 +1,17 @@
 package config
 
-import "strings"
+import (
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/ownership"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/revenue"
+	"strings"
+)
 
 type Config struct {
+	MemberIssuerTrustFile string           `yaml:"member_issuer_trust_file,omitempty"`
+	RevenueSources        []revenue.Source `yaml:"revenue_sources,omitempty"`
+	Ownership             ownership.Config `yaml:"ownership,omitempty"`
+	// ServiceAuthFile enables explicit regional machine permissions.
+	ServiceAuthFile string `yaml:"service_auth_file,omitempty"`
 	// Claims is the unproven-GPU-claim policy.
 	Claims Claims `yaml:"claims,omitempty" json:"claims,omitempty"`
 	// Payouts configures automatic payout approval (plan 0044 §3.7).
@@ -86,10 +95,11 @@ type Bootstrap struct {
 	BrokerAdminURL       string     `yaml:"broker_admin_url,omitempty"`
 	BrokerAdminAuth      AuthConfig `yaml:"broker_admin_auth,omitempty"`
 	BrokerAdminTimeoutMS int        `yaml:"broker_admin_timeout_ms,omitempty"`
-	// Brokers is the pool's broker fleet. Every enabled template is
-	// pushed to each of them (plan 0044 §3.2).
+	// Brokers is the regional fleet. TemplateIDs partitions active offers;
+	// disabled historical offers remain on each broker.
 	Brokers              []Broker `yaml:"brokers,omitempty"`
 	PublicControllerURL  string   `yaml:"public_controller_url,omitempty"`
+	MemberAgentImage     string   `yaml:"member_agent_image,omitempty"`
 	PublicBrokerURL      string   `yaml:"public_broker_url,omitempty"`
 	PublicBrokerQUICAddr string   `yaml:"public_broker_quic_addr,omitempty"`
 }
@@ -97,10 +107,12 @@ type Bootstrap struct {
 // Broker is one push target. Name is for logs and status only; the URL
 // is the identity.
 type Broker struct {
-	Name      string     `yaml:"name,omitempty" json:"name,omitempty"`
-	AdminURL  string     `yaml:"admin_url" json:"admin_url"`
-	Auth      AuthConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
-	TimeoutMS int        `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	PublicURL   string     `yaml:"public_url,omitempty" json:"public_url,omitempty"`
+	TemplateIDs []string   `yaml:"template_ids,omitempty" json:"template_ids,omitempty"`
+	Name        string     `yaml:"name,omitempty" json:"name,omitempty"`
+	AdminURL    string     `yaml:"admin_url" json:"admin_url"`
+	Auth        AuthConfig `yaml:"auth,omitempty" json:"auth,omitempty"`
+	TimeoutMS   int        `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
 }
 
 // BrokerTargets is the fleet to push to, however it was configured. A
@@ -214,6 +226,9 @@ type HealthProbe struct {
 }
 
 type AuthConfig struct {
+	PoolID    string `yaml:"pool_id,omitempty"`
+	TokenFile string `yaml:"token_file,omitempty"`
+	CAFile    string `yaml:"ca_file,omitempty"`
 	Method    string `yaml:"method,omitempty"`
 	SecretRef string `yaml:"secret_ref,omitempty"`
 }

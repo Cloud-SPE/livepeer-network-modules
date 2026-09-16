@@ -85,6 +85,20 @@ func applyDefaults(cfg *Config) {
 }
 
 func validate(cfg *Config) error {
+	if err := validateRegionalFleet(cfg.Bootstrap); err != nil {
+		return err
+	}
+	seen := map[string]bool{}
+	for _, source := range cfg.RevenueSources {
+		if err := source.Validate(); err != nil {
+			return err
+		}
+		if source.TokenFile == "" || seen[source.SourceID] {
+			return fmt.Errorf("source reader requires credentials and unique source identity")
+		}
+		seen[source.SourceID] = true
+	}
+
 	if cfg.Identity.OrchEthAddress == "" {
 		return fmt.Errorf("identity.orch_eth_address is required")
 	}
@@ -103,6 +117,10 @@ func validate(cfg *Config) error {
 			return fmt.Errorf("bootstrap.broker_admin_url scheme must be http or https (got %q)", u.Scheme)
 		}
 		switch cfg.Bootstrap.BrokerAdminAuth.Method {
+		case "scoped":
+			if _, err := cfg.Bootstrap.BrokerAdminAuth.ServiceClient(cfg.Bootstrap.BrokerAdminURL, 0); err != nil {
+				return err
+			}
 		case "", "none":
 		case "bearer":
 			if cfg.Bootstrap.BrokerAdminAuth.SecretRef == "" {
@@ -133,6 +151,10 @@ func validate(cfg *Config) error {
 				return fmt.Errorf("bootstrap.brokers[%d].admin_url scheme must be http or https (got %q)", i, u.Scheme)
 			}
 			switch broker.Auth.Method {
+			case "scoped":
+				if _, err := broker.Auth.ServiceClient(broker.AdminURL, 0); err != nil {
+					return err
+				}
 			case "", "none":
 			case "bearer":
 				if broker.Auth.SecretRef == "" {

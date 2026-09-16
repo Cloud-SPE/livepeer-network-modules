@@ -152,3 +152,32 @@ Current scoring implementation notes:
 - Warm-up now auto-graduates after enough recent routed samples.
 - Manual warm-up override is now separate from automatic warm-up recovery so
   operator policy can be cleared independently of runtime recovery state.
+
+## Regional identity and terms storage
+
+Every initialized controller database owns a generated `pool_<128-bit-random-hex>`
+identity. Opening an older database creates it atomically alongside the regional
+buckets; opening the same database again preserves it. An existing identity
+bucket with a missing/malformed ID is an error, never a request to generate a
+replacement. Display labels, addresses and domains are not identity inputs.
+A restored copy remains the same pool and requires fencing the old writer.
+
+`regional_terms` stores immutable policy snapshots keyed by version. Each
+snapshot names its pool, effective round, window length (default 14), uniform
+commission in basis points, participation rules and the mandatory Model B
+zero-work/rounding disclosures. Versions append in effective-round order,
+only at the previous schedule's window boundary. Historical lookups retain the
+original policy. Runtime scheduling must additionally reject changes to elapsed
+or already admitted work; storage alone does not authorize an effective date.
+
+`regional_terms_acceptance` preserves the first explicit acceptance by wallet
+and version, with pool ID and server timestamp. Concurrent retries return that
+same record. Wallet verification alone is not terms acceptance. An active
+verified wallet may accept through `POST /member/v1/terms/accept`, passing
+`pool_id` and `terms_version`, with its member session and same-origin request.
+`GET /member/v1/pool` publishes identity and terms without member data.
+
+This repository foundation is tracked in `lnm-l17.2.1`. Work-admission enforcement,
+shared ownership and federation remain tracked by `lnm-l17.2`/`lnm-l17.4` until
+their integration is validated. Never infer that a stored acceptance alone
+proves a GPU assignment or authorizes work under a later terms version.

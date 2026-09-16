@@ -2,6 +2,7 @@ ARG GO_VERSION=1.25.7
 
 FROM golang:${GO_VERSION} AS base
 WORKDIR /src
+COPY pool-commons/ ./pool-commons/
 
 # chain-commons is consumed via a relative replace (../chain-commons), so the
 # sibling module must be visible to the builder. Build context is the

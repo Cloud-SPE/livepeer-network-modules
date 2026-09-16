@@ -60,9 +60,13 @@ func NewHTTPClient(baseURL string, timeout time.Duration, cfg config.AuthConfig,
 		return nil, err
 	}
 	endpoint := u.ResolveReference(&url.URL{Path: outcomesPath}).String()
+	client, err := cfg.ServiceClient(baseURL, timeout)
+	if err != nil {
+		return nil, err
+	}
 	return &HTTPClient{
 		endpoint: endpoint,
-		client:   &http.Client{Timeout: timeout},
+		client:   client,
 		auth:     auth,
 		cfg:      cfg,
 	}, nil
@@ -78,7 +82,7 @@ func (c *HTTPClient) ReportBackendOutcome(ctx context.Context, outcome BackendOu
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.auth != nil {
+	if c.auth != nil && c.cfg.Method != "scoped" {
 		if err := c.auth.Apply(req.Header, c.cfg); err != nil {
 			return fmt.Errorf("apply auth: %w", err)
 		}

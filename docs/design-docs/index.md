@@ -51,4 +51,5 @@ For the full provenance of the design conversation that motivated this repo, see
 
 - [Settlement-domain identity](settlement-domain-identity.md): immutable payment-ledger namespaces, URI binding, upgrade and cross-broker conformance.
 - [Settlement-domain release](settlement-domain-release.md): review package, LOC/BlueClaw migration, rollout and recovery procedure.
+- [Regional service access](regional-service-access.md): implemented machine credential format, HTTPS client configuration and exact endpoint role permissions.
 - [Regional pools](regional-pools.md): accepted design scope for independent Pool Orchestrator US/EU membership, accounting and payouts behind a shared member portal (`lnm-l17`); implementation pending.

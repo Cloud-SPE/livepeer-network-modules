@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/protocol-daemon/internal/service/bondingadmin"
@@ -97,8 +98,9 @@ func (f fakeLockReader) RoundLockAmount(_ context.Context) (chain.BlockNumber, e
 }
 
 func TestRunLockedActionsFiresAtLockBlock(t *testing.T) {
+	// Unbuffered round delivery orders round initialization before block events.
 	rc := &chanRoundClock{
-		rounds: make(chan chain.Round, 1),
+		rounds: make(chan chain.Round),
 		blocks: make(chan chain.BlockNumber, 4),
 	}
 	acts := &fakeLockedActions{
@@ -121,11 +123,21 @@ func TestRunLockedActionsFiresAtLockBlock(t *testing.T) {
 	// A block in the lock window: both actions fire once.
 	rc.blocks <- 6660
 
-	if got := <-acts.transfer; got != 7 {
-		t.Errorf("transfer fired for round %d, want 7", got)
+	select {
+	case got := <-acts.transfer:
+		if got != 7 {
+			t.Errorf("transfer fired for round %d, want 7", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("transfer did not fire")
 	}
-	if got := <-acts.withdraw; got != 7 {
-		t.Errorf("withdraw fired for round %d, want 7", got)
+	select {
+	case got := <-acts.withdraw:
+		if got != 7 {
+			t.Errorf("withdraw fired for round %d, want 7", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("withdraw did not fire")
 	}
 
 	cancel()

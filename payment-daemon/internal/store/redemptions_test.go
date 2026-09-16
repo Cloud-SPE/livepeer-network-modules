@@ -1,9 +1,11 @@
 package store
 
 import (
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"math/big"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func TestRoundRevenue(t *testing.T) {
@@ -71,4 +73,31 @@ func hash32(b byte) []byte {
 		out[i] = b
 	}
 	return out
+}
+
+func TestAtomicRedemptionHistoryRetainsInclusionAndDrainReason(t *testing.T) {
+	st := openTestStore(t)
+	ticket := &SignedTicket{Sender: bytes20(1), FaceValue: big.NewInt(42), CreationRound: 100}
+	for _, n := range []byte{1, 2, 3} {
+		if _, err := st.EnqueueRedemption(hash32(n), ticket); err != nil {
+			t.Fatal(err)
+		}
+	}
+	evidence := &types.RedemptionInclusion{TxHash: hash32(11), BlockNumber: 1000, BlockHash: hash32(12), Round: 101, ObservedHead: 1010, CheckedAt: time.Now()}
+	if err := st.MarkRedeemedWithInclusion(hash32(1), ticket, evidence); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkDrained(hash32(2), ticket, 102, "expired"); err != nil {
+		t.Fatal(err)
+	}
+	pending, redeemed, legacy, err := st.RedemptionHistory()
+	if err != nil || legacy || len(pending) != 1 || len(redeemed) != 2 {
+		t.Fatalf("snapshot %d %d %v %v", len(pending), len(redeemed), legacy, err)
+	}
+	if redeemed[0].Inclusion == nil || redeemed[0].RedeemedRound != 101 || redeemed[1].DrainReason != "expired" {
+		t.Fatal("lost inclusion or drain evidence")
+	}
+	if err := st.MarkRedeemedWithInclusion(hash32(3), ticket, nil); err == nil {
+		t.Fatal("missing evidence accepted")
+	}
 }

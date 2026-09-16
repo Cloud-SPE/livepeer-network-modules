@@ -173,10 +173,61 @@ priority: 30
 # their own secondary_on.
 stacking: { primary: true, secondary_on: [] }
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# Immutable published runtimes; see infra/scenarios/regional-pools/runner-readiness.md.
+# One assignment owns the proxy and its local engine. Only the engine sees the GPU.
+runner_compose:
+  image:
+    nvidia: tztcloud/openai-chat-runner@sha256:769ae95e93cfd9df37d3c8173a52d9ea428ef6dd2b63c0d9300b7277ca190ed7
+  gpu: false
+  env:
+    RUNNER_ADDR: ":8080"
+    UPSTREAM_URL: "http://{{service.engine}}:8000/v1/chat/completions"
+    UPSTREAM_KIND: vllm
+    MODEL_ALLOWLIST: Qwen3.6-27B
+    SERVED_MODEL_NAME: Qwen3.6-27B
+    BACKEND_MODEL: sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+    USAGE_FIELD: total_tokens
+    QUANTIZATION: nvfp4
+    REASONING_PARSER: qwen3
+    TOOL_CALL_PARSER: qwen3_coder
+    CONTEXT_LENGTH: "8192"
+    MODEL_DISCOVERY_RETRIES: "3600"
+  companions:
+    - name: engine
+      image:
+        nvidia: vllm/vllm-openai@sha256:07ea4e292adf3a26b05ac97114b28849cf4551a26beb1fbe7decd3842d752ed7
+      gpu: true
+      shm_size_bytes: 1073741824
+      caches: {models: /models, compile: /compile-cache}
+      env:
+        HF_HOME: /models/huggingface
+        VLLM_CACHE_ROOT: /compile-cache
+      command:
+        - sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP
+        - --revision
+        - 6f194695406a3bc88a00573187d5b2eecf984a99
+        - --served-model-name
+        - Qwen3.6-27B
+        - --host
+        - 0.0.0.0
+        - --port
+        - "8000"
+        - --quantization
+        - modelopt
+        - --language-model-only
+        - --max-model-len
+        - "8192"
+        - --max-num-seqs
+        - "4"
+        - --gpu-memory-utilization
+        - "0.75"
+        - --reasoning-parser
+        - qwen3
+        - --enable-auto-tool-choice
+        - --tool-call-parser
+        - qwen3_coder
+        - --speculative-config
+        - '{"method":"mtp","num_speculative_tokens":3}'
 
 probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
 

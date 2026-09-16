@@ -146,7 +146,7 @@ func (p *pool) run(env []string, dir string, args ...string) {
 
 func (p *pool) stop() {
 	for _, cmd := range p.procs {
-		if cmd.Process != nil {
+		if cmd.Process != nil && cmd.ProcessState == nil {
 			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 			_, _ = cmd.Process.Wait()
 		}

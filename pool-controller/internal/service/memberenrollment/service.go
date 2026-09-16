@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -49,6 +50,7 @@ type VerifyResult struct {
 }
 
 type CreateEnrollmentRequest struct {
+	GPUUUIDs         []string
 	MemberEthAddress string
 	HostLabel        string
 }
@@ -59,13 +61,15 @@ type CreateEnrollmentResult struct {
 }
 
 type BundleInput struct {
-	ControllerURL  string
-	BrokerURL      string
-	BrokerQUICAddr string
-	Enrollment     types.HostEnrollment
-	Token          string
-	Assignments    []types.TemplateAssignment
-	Templates      []templates.Template
+	ControllerURL    string
+	BrokerURLs       []string
+	MemberAgentImage string
+	BrokerURL        string
+	BrokerQUICAddr   string
+	Enrollment       types.HostEnrollment
+	Token            string
+	Assignments      []types.TemplateAssignment
+	Templates        []templates.Template
 }
 
 func New(stateRepo *repo.StateRepo) *Service {
@@ -90,7 +94,7 @@ func (s *Service) IssueNonce(req NonceIssueRequest) (NonceIssueResult, error) {
 	}
 	now := s.now()
 	nonceID := "nonce-" + nonce
-	message := buildSignupMessage(addr, nonce, now.Add(DefaultNonceTTL))
+	message := buildSignupMessage(addr, nonce, now.Add(DefaultNonceTTL)) + "\nPool ID: " + s.repo.PoolID()
 	item := types.MemberNonce{
 		ID:         nonceID,
 		EthAddress: addr,
@@ -133,6 +137,7 @@ func (s *Service) VerifyNonce(req VerifyRequest) (VerifyResult, error) {
 		return VerifyResult{}, err
 	}
 	member := types.PoolMember{
+		PoolID:      s.repo.PoolID(),
 		ID:          strings.ToLower(nonce.EthAddress),
 		EthAddress:  nonce.EthAddress,
 		DisplayName: strings.TrimSpace(req.DisplayName),
@@ -151,19 +156,48 @@ func (s *Service) VerifyNonce(req VerifyRequest) (VerifyResult, error) {
 			member.Contact = existing.Contact
 		}
 	}
-	if err := s.repo.PutPoolMember(member); err != nil {
+	member, err = s.repo.RecordMemberAuthentication(member)
+	if err != nil {
 		return VerifyResult{}, err
 	}
 	return VerifyResult{Member: member}, nil
 }
 
 func (s *Service) CreateEnrollment(req CreateEnrollmentRequest) (CreateEnrollmentResult, error) {
+	selected, err := normalizeSelectedGPUs(req.GPUUUIDs)
+	if err != nil {
+		return CreateEnrollmentResult{}, err
+	}
 	addr, err := normalizeAddress(req.MemberEthAddress)
 	if err != nil {
 		return CreateEnrollmentResult{}, err
 	}
-	if _, err := s.repo.GetPoolMember(strings.ToLower(addr)); err != nil {
+	member, err := s.repo.GetPoolMember(strings.ToLower(addr))
+	if err != nil {
 		return CreateEnrollmentResult{}, fmt.Errorf("member must verify eth address before enrollment: %w", err)
+	}
+	if member.Status != types.MemberStatusActive {
+		return CreateEnrollmentResult{}, fmt.Errorf("member is not active")
+	}
+
+	terms, err := s.repo.ListRegionalTerms()
+	if err != nil {
+		return CreateEnrollmentResult{}, err
+	}
+	termsVersion := ""
+	if len(terms) > 0 {
+		termsVersion = terms[len(terms)-1].Version
+		if _, err := s.repo.RequireTermsAcceptance(addr, termsVersion); err != nil {
+			return CreateEnrollmentResult{}, err
+		}
+	} else {
+		sources, err := s.repo.RevenueSources(nil)
+		if err != nil {
+			return CreateEnrollmentResult{}, err
+		}
+		if len(sources) > 0 {
+			return CreateEnrollmentResult{}, fmt.Errorf("regional terms must be published before enrollment")
+		}
 	}
 	token, err := randomHex(32)
 	if err != nil {
@@ -176,6 +210,10 @@ func (s *Service) CreateEnrollment(req CreateEnrollmentRequest) (CreateEnrollmen
 		return CreateEnrollmentResult{}, err
 	}
 	enrollment := types.HostEnrollment{
+		GPUUUIDs:                selected,
+		CredentialGeneration:    1,
+		TermsVersion:            termsVersion,
+		PoolID:                  s.repo.PoolID(),
 		ID:                      enrollmentID,
 		MemberEthAddress:        addr,
 		HostLabel:               strings.TrimSpace(req.HostLabel),
@@ -220,10 +258,8 @@ func (s *Service) Rotate(enrollmentID string) (types.HostEnrollment, string, err
 		return types.HostEnrollment{}, "", err
 	}
 	now := s.now()
-	enrollment.EnrollmentTokenHash = HashToken(token)
-	enrollment.BrokerSessionCredential = sessionCred
-	enrollment.UpdatedAt = now
-	if err := s.repo.PutHostEnrollment(enrollment); err != nil {
+	enrollment, err = s.repo.RotateEnrollmentCredentials(enrollment.ID, enrollment.EnrollmentTokenHash, HashToken(token), sessionCred, now)
+	if err != nil {
 		return types.HostEnrollment{}, "", err
 	}
 	return enrollment, token, nil
@@ -262,11 +298,24 @@ func RenderBundleZip(input BundleInput) ([]byte, error) {
 		".env":                   bundleEnv(input),
 		"docker-compose.yaml":    bundleCompose(input),
 		"update.sh":              bundleUpdateScript(),
+		"start.sh":               bundleStartScript(),
 		"enrollment-token":       input.Token + "\n",
 		"pool-member-agent.yaml": bundleAgentConfig(input),
 	}
+	if input.Enrollment.PoolID != "" {
+		raw, err := json.Marshal(map[string]any{"pool_id": input.Enrollment.PoolID, "enrollment_id": input.Enrollment.ID, "enrollment_token": input.Token, "attach_credential": input.Enrollment.BrokerSessionCredential, "credential_generation": input.Enrollment.CredentialGeneration})
+		if err != nil {
+			return nil, err
+		}
+		files["agent-credentials.json"] = string(raw) + "\n"
+	}
 	for name, body := range files {
-		w, err := zw.Create(name)
+		header := &zip.FileHeader{Name: name, Method: zip.Deflate}
+		header.SetMode(0644)
+		if name == ".env" || name == "enrollment-token" || name == "agent-credentials.json" {
+			header.SetMode(0600)
+		}
+		w, err := zw.CreateHeader(header)
 		if err != nil {
 			_ = zw.Close()
 			return nil, err
@@ -330,6 +379,10 @@ func randomHex(n int) (string, error) {
 }
 
 func bundleEnv(input BundleInput) string {
+	edgePort, rtmpsPort := "8443", "1936"
+	if len(input.Enrollment.GPUUUIDs) > 0 {
+		edgePort, rtmpsPort = "0", "0"
+	}
 	// Two families of name, and they are not interchangeable.
 	//
 	// LIVEPEER_* is what the agent reads to ATTACH to the broker; POOL_*
@@ -346,10 +399,13 @@ func bundleEnv(input BundleInput) string {
 	// to place on.
 	return "POOL_CONTROLLER_URL=" + input.ControllerURL + "\n" +
 		"POOL_ENROLLMENT_ID=" + input.Enrollment.ID + "\n" +
+		"POOL_GPU_UUIDS=" + strings.Join(input.Enrollment.GPUUUIDs, ",") + "\n" +
 		"POOL_MEMBER_ETH_ADDRESS=" + input.Enrollment.MemberEthAddress + "\n" +
 		"POOL_ENROLLMENT_TOKEN_FILE=/workspace/enrollment-token\n" +
+		"POOL_AGENT_CREDENTIALS_FILE=/workspace/agent-credentials.json\n" +
 		"LIVEPEER_HOST_ID=" + input.Enrollment.ID + "\n" +
 		"LIVEPEER_BROKER_URL=" + input.BrokerURL + "\n" +
+		"LIVEPEER_BROKER_URLS=" + strings.Join(input.BrokerURLs, ",") + "\n" +
 		"LIVEPEER_BROKER_QUIC_ADDR=" + input.BrokerQUICAddr + "\n" +
 		"LIVEPEER_ATTACH_CREDENTIAL=" + input.Enrollment.BrokerSessionCredential + "\n" +
 		// Public edge (plan 0046). Empty means this host is not public
@@ -358,13 +414,17 @@ func bundleEnv(input BundleInput) string {
 		// and tls.key in ./edge, and open the port. The operator owns
 		// DNS and certificate renewal (plan 0046 §7).
 		"LIVEPEER_PUBLIC_URL=\n" +
-		"LIVEPEER_EDGE_PORT=8443\n" +
-		"LIVEPEER_EDGE_RTMPS_PORT=1936\n"
+		"LIVEPEER_EDGE_PORT=" + edgePort + "\n" +
+		"LIVEPEER_EDGE_RTMPS_PORT=" + rtmpsPort + "\n"
 }
 
 func bundleReadme(input BundleInput) string {
 	return "# Livepeer Pool member host\n\n" +
-		"Run `docker compose up -d` from this directory. That is the whole of it.\n\n" +
+		"Run `sh start.sh` from this directory. It selects the host inventory runtime and starts the agent.\n\n" +
+		"Keep each enrollment in its own directory. Selected-GPU bundles use dynamic\n" +
+		"edge ports by default so another regional agent can stay running. Before\n" +
+		"enabling a public URL, set unique fixed LIVEPEER_EDGE_PORT and\n" +
+		"LIVEPEER_EDGE_RTMPS_PORT values for this enrollment.\n\n" +
 		"The agent connects outbound to the Pool broker, reports the GPUs it can\n" +
 		"see, and asks the Pool what it should be running. Broker-dispatched jobs\n" +
 		"need only outbound connectivity. External sessions also need a public endpoint.\n\n" +
@@ -414,11 +474,14 @@ func bundleReadme(input BundleInput) string {
 // Runners use a separate Compose project on the agent-owned network. The
 // agent applies runners.compose.yaml; the bootstrap does not include it.
 func bundleCompose(input BundleInput) string {
+	image := input.MemberAgentImage
+	if image == "" {
+		image = "${REGISTRY:-tztcloud}/livepeer-pool-member-agent:${TAG:-v2.0.0}"
+	}
 	return "name: livepeer-agent-" + bundleNetworkID(input) + "\nservices:\n" +
 		"  pool_member_agent:\n" +
-		"    image: ${REGISTRY:-tztcloud}/livepeer-pool-member-agent:${TAG:-v2.0.0}\n" +
+		"    image: " + image + "\n" +
 		"    restart: unless-stopped\n" +
-		"    gpus: all\n" +
 		"    env_file: .env\n" +
 		// The agent's edge (plan 0046 §2): the one TLS listener on the
 		// host that callers of a session runner reach. Published even
@@ -437,6 +500,8 @@ func bundleCompose(input BundleInput) string {
 		// whole of what the pool asks of the host, and the member
 		// README says so plainly rather than burying it.
 		"      - /var/run/docker.sock:/var/run/docker.sock\n" +
+		// Metadata-only host device view for inventory ownership/group facts.
+		"      - /dev:/host-dev:ro\n" +
 		// The agent initializes protected inode namespaces here and runner
 		// compose fragments bind the same host path into every colocated
 		// service. The identical source and target keep Docker-daemon path
@@ -455,8 +520,7 @@ func bundleUpdateScript() string {
 		"token=$(cat ./enrollment-token)\n" +
 		"curl -fsS -H \"Authorization: Bearer ${token}\" \"${POOL_CONTROLLER_URL}/member/v1/enrollments/${POOL_ENROLLMENT_ID}/bundle\" -o bundle.zip\n" +
 		"unzip -o bundle.zip\n" +
-		"docker compose pull\n" +
-		"docker compose up -d\n"
+		"sh start.sh --pull always --force-recreate\n"
 }
 
 func bundleAgentConfig(input BundleInput) string {
@@ -472,4 +536,32 @@ func bundleAgentConfig(input BundleInput) string {
 func bundleNetworkID(input BundleInput) string {
 	sum := sha256.Sum256([]byte(input.Enrollment.ID))
 	return hex.EncodeToString(sum[:8])
+}
+
+// Runtime selection is performed on the member host, before Docker starts the
+// inventory agent. Intel/CPU hosts must not request an NVIDIA runtime.
+func bundleStartScript() string {
+	return `#!/bin/sh
+set -eu
+umask 077
+nvidia=0
+for device in /sys/bus/pci/devices/*; do
+    [ -r "$device/vendor" ] && [ -r "$device/class" ] || continue
+    [ "$(cat "$device/vendor")" = 0x10de ] || continue
+    case "$(cat "$device/class")" in 0x03*) nvidia=1 ;; esac
+done
+if [ "$nvidia" = 1 ]; then
+    command -v nvidia-smi >/dev/null || { echo 'NVIDIA GPU found; install its driver and Container Toolkit before starting.' >&2; exit 1; }
+    nvidia-smi -L >/dev/null
+fi
+runtime_file=$(mktemp ./docker-compose.override.yaml.XXXXXX)
+trap 'rm -f "$runtime_file"' EXIT HUP INT TERM
+if [ "$nvidia" = 1 ]; then
+    printf 'services:\n  pool_member_agent:\n    gpus: all\n' > "$runtime_file"
+else
+    printf 'services: {}\n' > "$runtime_file"
+fi
+mv "$runtime_file" docker-compose.override.yaml
+docker compose up -d "$@" pool_member_agent
+`
 }

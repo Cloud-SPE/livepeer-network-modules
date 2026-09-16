@@ -42,6 +42,7 @@ type Identity struct {
 
 // Broker names a single capability-broker on the LAN.
 type Broker struct {
+	PoolID  string `yaml:"pool_id,omitempty"`
 	Name    string `yaml:"name"`
 	BaseURL string `yaml:"base_url"`
 	// AdminTokenRef points at the broker's admin bearer, which the
@@ -155,6 +156,9 @@ func (c *Config) Validate() error {
 			return fmt.Errorf("brokers[%d].base_url: %w", i, err)
 		}
 		ref := strings.TrimSpace(b.AdminTokenRef)
+		if b.PoolID != "" && (!strings.HasPrefix(b.BaseURL, "https://") || !strings.HasPrefix(ref, "file://")) {
+			return fmt.Errorf("brokers[%d]: regional admin requires HTTPS and file:// scoped token", i)
+		}
 		if ref != "" && !strings.HasPrefix(ref, "env://") && !strings.HasPrefix(ref, "file://") {
 			return fmt.Errorf("brokers[%d].admin_token_ref %q: want env:// or file://", i, ref)
 		}

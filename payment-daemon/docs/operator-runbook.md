@@ -880,3 +880,6 @@ with `/v1/payment/account` and the ticket-parameter response, include it in fund
 intents and spend authorizations, and compare it again on settlement. Account
 versions are independent across domains. URL changes do not transfer balances.
 The chain probe requires `--settlement-domain-id` from the signed route.
+
+For regional revenue collection and held-history diagnosis, see
+[regional receiver revenue evidence](regional-revenue-reporting.md).

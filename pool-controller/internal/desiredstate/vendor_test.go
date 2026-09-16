@@ -20,7 +20,7 @@ func vendorTmpl() templates.Template {
 
 // One template, two builds: the card decides which image is rendered
 // and how the card reaches the container. NVIDIA pins the one card by
-// UUID; Intel exposes the DRI nodes and has no per-card selector.
+// UUID; Intel exposes only its assigned DRI render node.
 func TestRenderComposePicksTheVendorsImageAndDeviceBlock(t *testing.T) {
 	nvidia := renderCompose("svc", vendorTmpl(), types.HardwareUnit{
 		GPUModel: "NVIDIA GeForce RTX 4090", GPUUUID: "GPU-abc",
@@ -36,12 +36,12 @@ func TestRenderComposePicksTheVendorsImageAndDeviceBlock(t *testing.T) {
 	}
 
 	intel := renderCompose("svc", vendorTmpl(), types.HardwareUnit{
-		GPUModel: "Intel(R) Arc(TM) A770 Graphics", GPUUUID: "GPU-def",
+		GPUModel: "Intel(R) Arc(TM) A770 Graphics", GPUUUID: "GPU-def", RuntimeFacts: map[string]string{"render_node": "/dev/dri/renderD130", "render_node_gid": "109"},
 	}, nil)
 	if !strings.Contains(intel, "image: x/vod-intel:1") {
 		t.Fatalf("Intel card did not get the intel image:\n%s", intel)
 	}
-	if !strings.Contains(intel, "- /dev/dri:/dev/dri") {
+	if !strings.Contains(intel, `- "/dev/dri/renderD130:/dev/dri/renderD128"`) {
 		t.Fatalf("Intel card was not given the DRI nodes:\n%s", intel)
 	}
 	if strings.Contains(intel, "device_ids") || strings.Contains(intel, "driver: nvidia") {
@@ -70,7 +70,32 @@ func TestRenderComposeCarriesNoMemberPassthrough(t *testing.T) {
 	if strings.Contains(out, "${") {
 		t.Fatalf("fragment still asks the member's host for a value:\n%s", out)
 	}
-	if !strings.Contains(out, "MODEL: m") || !strings.Contains(out, "PORT: 8080") {
+	if !strings.Contains(out, `MODEL: "m"`) || !strings.Contains(out, `PORT: "8080"`) {
 		t.Fatalf("pool-set env was dropped with the passthrough:\n%s", out)
+	}
+}
+
+func TestIntelBuildRequiresSpecificDeviceInventory(t *testing.T) {
+	cat := catalogOf(t, map[string]string{"t.yaml": templateYAML("intel", "intel", "runner:1")})
+	for _, facts := range []map[string]string{nil, {"render_node": "/dev/dri"}, {"render_node": "/dev/dri/renderD128"}, {"render_node": "/dev/dri/renderD128", "render_node_gid": "bad"}} {
+		hw := unit("a", "intel-host-a")
+		hw.GPUModel = "Intel Arc A770"
+		hw.RuntimeFacts = facts
+		_, err := Build(Input{EnrollmentID: "host", Catalog: cat, Hardware: []types.HardwareUnit{hw}, Assignments: []types.TemplateAssignment{assignment("a", "intel", types.TemplateAssignmentActive)}})
+		if err == nil {
+			t.Fatalf("unsafe Intel inventory accepted: %v", facts)
+		}
+	}
+	hw := unit("a", "intel-host-a")
+	hw.GPUModel = "Intel Arc A770"
+	hw.RuntimeFacts = map[string]string{"render_node": "/dev/dri/renderD130", "render_node_gid": "109"}
+	doc, err := Build(Input{EnrollmentID: "host", Catalog: cat, Hardware: []types.HardwareUnit{hw}, Assignments: []types.TemplateAssignment{assignment("a", "intel", types.TemplateAssignmentActive)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fragment := doc.Services[0].ComposeFragment
+	if strings.Contains(fragment, "/dev/dri:/dev/dri") || !strings.Contains(fragment, `group_add:
+      - "109"`) {
+		t.Fatal(fragment)
 	}
 }

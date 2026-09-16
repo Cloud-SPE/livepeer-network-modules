@@ -35,25 +35,28 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PayeeDaemon_GetQuote_FullMethodName               = "/livepeer.payments.v1.PayeeDaemon/GetQuote"
-	PayeeDaemon_GetTicketParams_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetTicketParams"
-	PayeeDaemon_ListCapabilities_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/ListCapabilities"
-	PayeeDaemon_OpenSession_FullMethodName            = "/livepeer.payments.v1.PayeeDaemon/OpenSession"
-	PayeeDaemon_ProcessPayment_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
-	PayeeDaemon_FundWholesaleAccount_FullMethodName   = "/livepeer.payments.v1.PayeeDaemon/FundWholesaleAccount"
-	PayeeDaemon_AdmitAuthorization_FullMethodName     = "/livepeer.payments.v1.PayeeDaemon/AdmitAuthorization"
-	PayeeDaemon_AdvanceAuthorization_FullMethodName   = "/livepeer.payments.v1.PayeeDaemon/AdvanceAuthorization"
-	PayeeDaemon_SettleAuthorization_FullMethodName    = "/livepeer.payments.v1.PayeeDaemon/SettleAuthorization"
-	PayeeDaemon_GetWholesaleAccount_FullMethodName    = "/livepeer.payments.v1.PayeeDaemon/GetWholesaleAccount"
-	PayeeDaemon_GetSpendAuthorization_FullMethodName  = "/livepeer.payments.v1.PayeeDaemon/GetSpendAuthorization"
-	PayeeDaemon_DebitBalance_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/DebitBalance"
-	PayeeDaemon_SufficientBalance_FullMethodName      = "/livepeer.payments.v1.PayeeDaemon/SufficientBalance"
-	PayeeDaemon_GetBalance_FullMethodName             = "/livepeer.payments.v1.PayeeDaemon/GetBalance"
-	PayeeDaemon_CloseSession_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/CloseSession"
-	PayeeDaemon_ListPendingRedemptions_FullMethodName = "/livepeer.payments.v1.PayeeDaemon/ListPendingRedemptions"
-	PayeeDaemon_GetRedemptionStatus_FullMethodName    = "/livepeer.payments.v1.PayeeDaemon/GetRedemptionStatus"
-	PayeeDaemon_GetRoundRevenue_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetRoundRevenue"
-	PayeeDaemon_Health_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/Health"
+	PayeeDaemon_GetQuote_FullMethodName                     = "/livepeer.payments.v1.PayeeDaemon/GetQuote"
+	PayeeDaemon_GetTicketParams_FullMethodName              = "/livepeer.payments.v1.PayeeDaemon/GetTicketParams"
+	PayeeDaemon_ListCapabilities_FullMethodName             = "/livepeer.payments.v1.PayeeDaemon/ListCapabilities"
+	PayeeDaemon_OpenSession_FullMethodName                  = "/livepeer.payments.v1.PayeeDaemon/OpenSession"
+	PayeeDaemon_ProcessPayment_FullMethodName               = "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
+	PayeeDaemon_FundWholesaleAccount_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/FundWholesaleAccount"
+	PayeeDaemon_AdmitAuthorization_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/AdmitAuthorization"
+	PayeeDaemon_AdvanceAuthorization_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/AdvanceAuthorization"
+	PayeeDaemon_SettleAuthorization_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/SettleAuthorization"
+	PayeeDaemon_GetWholesaleAccount_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/GetWholesaleAccount"
+	PayeeDaemon_GetSpendAuthorization_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetSpendAuthorization"
+	PayeeDaemon_DebitBalance_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/DebitBalance"
+	PayeeDaemon_SufficientBalance_FullMethodName            = "/livepeer.payments.v1.PayeeDaemon/SufficientBalance"
+	PayeeDaemon_GetBalance_FullMethodName                   = "/livepeer.payments.v1.PayeeDaemon/GetBalance"
+	PayeeDaemon_CloseSession_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/CloseSession"
+	PayeeDaemon_ListPendingRedemptions_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/ListPendingRedemptions"
+	PayeeDaemon_GetRedemptionStatus_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/GetRedemptionStatus"
+	PayeeDaemon_GetRoundRevenue_FullMethodName              = "/livepeer.payments.v1.PayeeDaemon/GetRoundRevenue"
+	PayeeDaemon_FreezeRevenueSource_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/FreezeRevenueSource"
+	PayeeDaemon_GetRevenueSourceStatus_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/GetRevenueSourceStatus"
+	PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName = "/livepeer.payments.v1.PayeeDaemon/CloseUnexecutedAuthorization"
+	PayeeDaemon_Health_FullMethodName                       = "/livepeer.payments.v1.PayeeDaemon/Health"
 )
 
 // PayeeDaemonClient is the client API for PayeeDaemon service.
@@ -129,6 +132,11 @@ type PayeeDaemonClient interface {
 	// for a single Livepeer round. Revenue is recognized only for
 	// confirmed on-chain redemptions, not merely queued winners.
 	GetRoundRevenue(ctx context.Context, in *GetRoundRevenueRequest, opts ...grpc.CallOption) (*GetRoundRevenueResponse, error)
+	// Local administrative fence; never exposed directly to external callers.
+	FreezeRevenueSource(ctx context.Context, in *FreezeRevenueSourceRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error)
+	GetRevenueSourceStatus(ctx context.Context, in *GetRevenueSourceStatusRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error)
+	// Broker restart recovery, only for durable evidence of no runner binding.
+	CloseUnexecutedAuthorization(ctx context.Context, in *CloseUnexecutedAuthorizationRequest, opts ...grpc.CallOption) (*CloseUnexecutedAuthorizationResponse, error)
 	// Health returns "ok" if the daemon is ready to accept sessions.
 	// The broker calls this once at startup before binding its paid
 	// listener.
@@ -323,6 +331,36 @@ func (c *payeeDaemonClient) GetRoundRevenue(ctx context.Context, in *GetRoundRev
 	return out, nil
 }
 
+func (c *payeeDaemonClient) FreezeRevenueSource(ctx context.Context, in *FreezeRevenueSourceRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevenueSourceStatus)
+	err := c.cc.Invoke(ctx, PayeeDaemon_FreezeRevenueSource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) GetRevenueSourceStatus(ctx context.Context, in *GetRevenueSourceStatusRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevenueSourceStatus)
+	err := c.cc.Invoke(ctx, PayeeDaemon_GetRevenueSourceStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) CloseUnexecutedAuthorization(ctx context.Context, in *CloseUnexecutedAuthorizationRequest, opts ...grpc.CallOption) (*CloseUnexecutedAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CloseUnexecutedAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *payeeDaemonClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -406,6 +444,11 @@ type PayeeDaemonServer interface {
 	// for a single Livepeer round. Revenue is recognized only for
 	// confirmed on-chain redemptions, not merely queued winners.
 	GetRoundRevenue(context.Context, *GetRoundRevenueRequest) (*GetRoundRevenueResponse, error)
+	// Local administrative fence; never exposed directly to external callers.
+	FreezeRevenueSource(context.Context, *FreezeRevenueSourceRequest) (*RevenueSourceStatus, error)
+	GetRevenueSourceStatus(context.Context, *GetRevenueSourceStatusRequest) (*RevenueSourceStatus, error)
+	// Broker restart recovery, only for durable evidence of no runner binding.
+	CloseUnexecutedAuthorization(context.Context, *CloseUnexecutedAuthorizationRequest) (*CloseUnexecutedAuthorizationResponse, error)
 	// Health returns "ok" if the daemon is ready to accept sessions.
 	// The broker calls this once at startup before binding its paid
 	// listener.
@@ -473,6 +516,15 @@ func (UnimplementedPayeeDaemonServer) GetRedemptionStatus(context.Context, *GetR
 }
 func (UnimplementedPayeeDaemonServer) GetRoundRevenue(context.Context, *GetRoundRevenueRequest) (*GetRoundRevenueResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRoundRevenue not implemented")
+}
+func (UnimplementedPayeeDaemonServer) FreezeRevenueSource(context.Context, *FreezeRevenueSourceRequest) (*RevenueSourceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method FreezeRevenueSource not implemented")
+}
+func (UnimplementedPayeeDaemonServer) GetRevenueSourceStatus(context.Context, *GetRevenueSourceStatusRequest) (*RevenueSourceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRevenueSourceStatus not implemented")
+}
+func (UnimplementedPayeeDaemonServer) CloseUnexecutedAuthorization(context.Context, *CloseUnexecutedAuthorizationRequest) (*CloseUnexecutedAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CloseUnexecutedAuthorization not implemented")
 }
 func (UnimplementedPayeeDaemonServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -822,6 +874,60 @@ func _PayeeDaemon_GetRoundRevenue_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PayeeDaemon_FreezeRevenueSource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FreezeRevenueSourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).FreezeRevenueSource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_FreezeRevenueSource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).FreezeRevenueSource(ctx, req.(*FreezeRevenueSourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_GetRevenueSourceStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRevenueSourceStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).GetRevenueSourceStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_GetRevenueSourceStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).GetRevenueSourceStatus(ctx, req.(*GetRevenueSourceStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_CloseUnexecutedAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseUnexecutedAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).CloseUnexecutedAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).CloseUnexecutedAuthorization(ctx, req.(*CloseUnexecutedAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PayeeDaemon_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
@@ -918,6 +1024,18 @@ var PayeeDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRoundRevenue",
 			Handler:    _PayeeDaemon_GetRoundRevenue_Handler,
+		},
+		{
+			MethodName: "FreezeRevenueSource",
+			Handler:    _PayeeDaemon_FreezeRevenueSource_Handler,
+		},
+		{
+			MethodName: "GetRevenueSourceStatus",
+			Handler:    _PayeeDaemon_GetRevenueSourceStatus_Handler,
+		},
+		{
+			MethodName: "CloseUnexecutedAuthorization",
+			Handler:    _PayeeDaemon_CloseUnexecutedAuthorization_Handler,
 		},
 		{
 			MethodName: "Health",

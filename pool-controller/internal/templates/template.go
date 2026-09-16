@@ -132,6 +132,14 @@ type Stacking struct {
 // their own runner supplies a URL instead of an image, in which case
 // the bundle ships no service at all.
 type RunnerCompose struct {
+	SecretEnv      []string `yaml:"secret_env,omitempty" json:"secret_env,omitempty"`
+	LocalBearerEnv string   `yaml:"local_bearer_env,omitempty" json:"local_bearer_env,omitempty"`
+	ShmSizeBytes   uint64   `yaml:"shm_size_bytes,omitempty" json:"shm_size_bytes,omitempty"`
+	// GPU defaults to true for the primary runner. A protocol proxy can opt out
+	// while its template-owned model companion uses the assigned device.
+	GPU        *bool             `yaml:"gpu,omitempty" json:"gpu,omitempty"`
+	Caches     map[string]string `yaml:"caches,omitempty" json:"caches,omitempty"`
+	Companions []RunnerCompanion `yaml:"companions,omitempty" json:"companions,omitempty"`
 	// Image is the runner image PER VENDOR: the same product is served by
 	// a different build on an NVIDIA card than on an Intel one, and the
 	// controller picks at desired-state render, where it knows the card.
@@ -157,6 +165,17 @@ type RunnerCompose struct {
 	// mechanism. The pool supplies a stable namespace for the assigned
 	// hardware unit; only the runner interprets the opaque file suffixes.
 	HostAdmission *HostAdmission `yaml:"host_admission,omitempty" json:"host_admission,omitempty"`
+}
+
+// RunnerCompanion belongs to one assignment and never attaches independently.
+type RunnerCompanion struct {
+	ShmSizeBytes uint64            `yaml:"shm_size_bytes,omitempty" json:"shm_size_bytes,omitempty"`
+	Name         string            `yaml:"name" json:"name"`
+	Image        map[string]string `yaml:"image" json:"image"`
+	Command      []string          `yaml:"command,omitempty" json:"command,omitempty"`
+	Env          map[string]string `yaml:"env,omitempty" json:"env,omitempty"`
+	GPU          bool              `yaml:"gpu,omitempty" json:"gpu,omitempty"`
+	Caches       map[string]string `yaml:"caches,omitempty" json:"caches,omitempty"`
 }
 
 // HostAdmission is the template half of host-shared resource admission.

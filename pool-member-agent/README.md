@@ -275,3 +275,27 @@ documents this agent builds — against the protocol module's JSON Schema.
 The broker's own test suite additionally feeds those same goldens
 through its validator, so the two independent implementations are
 checked against each other.
+
+Desired-state revisions are acknowledged only after successful compose application
+and status delivery. Failed applications, failed reports, and draining services
+remain eligible for retry. A draining report means the container is still running;
+a `stop` instruction removes only that service from compose and reports `stopped`
+after compose succeeds. Regional controllers require transfer evidence before
+issuing that instruction.
+
+### Bootstrap runtime selection
+
+Start a downloaded regional bundle with `sh start.sh`. The portal installer
+runs this automatically. It writes a private Compose override after checking
+host PCI inventory: NVIDIA GPU hosts request the NVIDIA container runtime;
+Intel-only and CPU hosts do not. An installed NVIDIA GPU with an unavailable
+driver fails before the agent starts. Install its driver and Container Toolkit,
+then retry. Normal Docker restarts retain the selected runtime; rerun `start.sh`
+when changing host hardware or updating the bundle.
+
+The agent's read-only `/host-dev` mount supplies device metadata, including the
+numeric group of an Intel render node. Managed Intel runners receive only the
+assigned node, mapped to `/dev/dri/renderD128`, and that supplemental group.
+This prevents a runner assigned one card from opening another card's node.
+NVIDIA runner assignments remain UUID-pinned. The inventory agent is trusted
+with the Docker socket and host-wide discovery; it is not an inference runner.

@@ -170,6 +170,16 @@ cumulative billing curve and replaces the prior runway reservation; optional
 funding on that call credits only aggregate account shortfall. Extensible
 sessions increase their cap using a new authorization revision bound to the
 same session and predecessor; bounded sessions cannot increase it.
+Contribution receipt producers must preserve the inherited billed-value and
+usage baseline: the successor contributes only new billing above that baseline,
+never the cumulative value already attributed to its predecessor.
+
+Accepted advances retain immutable per-sequence billing evidence. An exact
+replay returns the historical accepted cumulative billed value with no new
+funding or debit, including after expiry, supersession or final settlement.
+Changed units, reservation or identities are rejected. This historical result
+does not authorize new execution; current balances remain current. A legacy
+sequence without retained evidence must not be reconstructed by guessing.
 
 Account replenishment is aggregate across authorized engagements. A broker
 MUST stop or wind down when funded, authorized runway is exhausted; it MUST NOT
@@ -237,3 +247,11 @@ route-exit residue rather than allowing it to grow with every request maximum.
 | 2.0.0-draft | 2026-09-14 | Requires immutable payment-ledger settlement domains, v2 signed authorizations, domain-bound funding/account observations, independent account versions and explicit migration semantics. |
 | 1.1.0-draft | 2026-09-11 | Makes stable wholesale accounts and single-purpose spend authorization mandatory for every paid workload. Removes offer feature negotiation and payment-only fallback, defines the coordinated drain, and confines tickets to account funding and authorized shortfall funding. |
 | 1.0.0-draft | 2026-09-09 | Introduces stable payer-payee accounts, single-purpose spend authorization, aggregate shortfall funding, and migration-fenced compatibility with ticket-session accounting. |
+
+The private `CloseUnexecutedAuthorization` recovery operation requires durable
+broker evidence that no runner binding was created. The receiver atomically
+fences a missing authorization against late admission, or closes an admitted
+authorization only when both accepted usage and billed value are zero. It must
+reject recorded usage or billing. Expiry, timeouts and a transient NotFound
+response do not establish this evidence. Bound work follows normal execution
+and settlement recovery.

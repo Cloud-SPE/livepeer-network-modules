@@ -137,10 +137,23 @@ stacking:
   primary: true
   secondary_on: [rtx-4090, rtx-5090]
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# Published v2.0.0 runtime, pinned by digest; see regional runner-readiness.md.
+runner_compose:
+  image:
+    nvidia: tztcloud/openai-tts-runner@sha256:b3f4417d966c1ccfcf930cb89b77d456517daedb4f4e2e88c5ac0e5bb5f30369
+  caches: {models: /models}
+  env:
+    CAPABILITY_NAME: "openai:audio-speech"
+    MODEL_ID: "hexgrad/Kokoro-82M"
+    MODEL_ALIAS: "kokoro"
+    DEFAULT_VOICE: "af_bella"
+    LANG_CODE: "a"
+    MAX_QUEUE_SIZE: "5"
+    HF_HOME: "/models/huggingface"
+    MODEL_DIR: "/models"
+    RUNNER_PORT: "8080"
+    DEVICE: "cuda"
+
 
 # The highest min_jobs in the catalog, because each job is the cheapest: 30
 # synthesis requests cost a probationary card seconds of work, and the failure

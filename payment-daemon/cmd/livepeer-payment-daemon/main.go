@@ -59,6 +59,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/server"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/revenuereport"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/sender"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/settlement"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
@@ -463,15 +464,18 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		defer closeIntents()
 
 		broker, err := ticketbroker.New(ticketbroker.Config{
-			Address:   deps.addrs.TicketBroker,
-			Claimant:  ethcommon.BytesToAddress(recipient),
-			RedeemGas: cfg.redeemGas,
-			Logger:    logger,
+			Address:       deps.addrs.TicketBroker,
+			RoundsManager: deps.addrs.RoundsManager,
+			Confirmations: cfg.redemptionConfirmations,
+			Claimant:      ethcommon.BytesToAddress(recipient),
+			RedeemGas:     cfg.redeemGas,
+			Logger:        logger,
 		}, deps.rpc, intents)
 		if err != nil {
 			return fmt.Errorf("build broker: %w", err)
 		}
 		meteredBroker := providers.NewMeteredBroker(broker, rec)
+		svc.RevenueReporter = (revenuereport.Reporter{Store: st, Chain: broker}).Round
 
 		// Preflight: fail fast if signing wallet has no ETH for gas.
 		bal, err := deps.rpc.BalanceAt(ctx, ethcommon.BytesToAddress(keystore.Address()), nil)
@@ -490,6 +494,7 @@ func runReceiver(ctx context.Context, logger *slog.Logger, cfg bootConfig, rec m
 		}
 
 		set := settlement.New(st, meteredBroker, gp, oc, esc, settlement.Config{
+			Inclusion:      broker.ConfirmedInclusion,
 			RedeemGas:      cfg.redeemGas,
 			ValidityWindow: cfg.validityWindowRounds,
 			Logger:         logger,

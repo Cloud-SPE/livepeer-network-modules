@@ -125,7 +125,11 @@ func BuildCredentials(enrollments []types.HostEnrollment) []brokeradmin.Credenti
 			continue
 		}
 		push := brokeradmin.CredentialPush{
-			CredentialID: e.ID,
+			CredentialGeneration: e.CredentialGeneration,
+			TermsVersion:         e.TermsVersion,
+			PoolID:               e.PoolID,
+			DeviceOwnership:      e.DeviceOwnership,
+			CredentialID:         e.ID,
 			// The bundle sets LIVEPEER_HOST_ID to the enrollment id, so
 			// the host the broker sees is the host the pool enrolled.
 			HostID:           e.ID,

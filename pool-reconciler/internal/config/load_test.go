@@ -73,3 +73,18 @@ reconcile:
 		t.Fatal("Load() error = nil, want invalid retry_interval_ms error")
 	}
 }
+
+func TestRegionalControllerCredentialsFailClosed(t *testing.T) {
+	for _, body := range []string{
+		"pool_controller: {url: 'http://controller.example', pool_id: pool_us, token_file: /token}",
+		"pool_controller: {url: 'https://controller.example', pool_id: pool_us}",
+		"pool_controller: {url: 'https://controller.example', pool_id: pool_us, token_file: /token, bearer_token_ref: 'env://OLD'}",
+	} {
+		if _, err := Load([]byte(body)); err == nil {
+			t.Fatalf("accepted unsafe config: %s", body)
+		}
+	}
+	if _, err := Load([]byte("pool_controller: {url: 'https://controller.example', pool_id: pool_us, token_file: /token}")); err != nil {
+		t.Fatal(err)
+	}
+}

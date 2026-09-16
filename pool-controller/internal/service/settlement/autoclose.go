@@ -47,6 +47,10 @@ func EvaluateClose(window types.SettlementWindow, tolerance float64, now time.Ti
 		decision.Detail = window.Anomaly
 		return decision
 	}
+	if window.RegionalAllocation != nil {
+		decision.Closed = true
+		return decision
+	}
 	// A scale of zero means nothing was reconciled yet, not that
 	// everything was lost — closing on it would be closing on absence
 	// of evidence.

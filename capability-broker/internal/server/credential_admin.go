@@ -347,6 +347,7 @@ func (s *Server) handleCredentialsSync(w http.ResponseWriter, r *http.Request) {
 		adminError(w, http.StatusBadRequest, "invalid_request", err.Error())
 		return
 	}
+	s.pruneOwnershipChecks()
 	closed := 0
 	for _, h := range revokedHosts {
 		closed += s.killHost(h)

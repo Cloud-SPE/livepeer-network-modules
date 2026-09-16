@@ -30,7 +30,7 @@ type optOutRequest struct {
 
 func registerOptOutRoutes(mux *http.ServeMux, deps Deps) {
 	mux.HandleFunc("GET /member/v1/enrollments/{id}/opt-outs", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -46,7 +46,7 @@ func registerOptOutRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("POST /member/v1/enrollments/{id}/opt-outs", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -105,7 +105,7 @@ func registerOptOutRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("DELETE /member/v1/enrollments/{id}/opt-outs/{optOutID}", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return

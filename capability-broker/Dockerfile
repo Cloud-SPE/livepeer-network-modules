@@ -19,9 +19,11 @@ FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /src
 
+COPY pool-commons/ ./pool-commons/
 COPY capability-broker/go.mod capability-broker/go.sum ./capability-broker/
 COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
 COPY livepeer-network-protocol/version/ ./livepeer-network-protocol/version/
+COPY livepeer-network-protocol/conformance/fixtures/ ./livepeer-network-protocol/conformance/fixtures/
 RUN cd capability-broker && go mod download
 
 COPY capability-broker/ ./capability-broker/

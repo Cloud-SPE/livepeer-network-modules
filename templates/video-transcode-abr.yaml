@@ -43,13 +43,11 @@ extra:
     # contract has a place for each and the rig declared none. An invented
     # ladder here would be a promise to callers that nothing checks.
 
-# The rig's `constraints:` block. `region` is the load-bearing one — a gateway
-# choosing where to send a source file is choosing a network path — and these
-# axes reach the manifest tuple, which `requirements` does not.
+# Shared by independent pools. Membership does not verify execution geography
+# (regional-pools.md); a location promise requires separate admission evidence.
+# Both Intel and NVIDIA builds are eligible, so no single vendor is advertised.
 constraints:
   tier: standard
-  gpu_vendor: NVIDIA
-  region: us-central
 
 # No `match:`. There is no model identity to select on and the rig runs one
 # ABR runner, so any runner declaring this capability is the one this offer
@@ -162,15 +160,17 @@ stacking: { primary: true, secondary_on: [] }
 # archived — decision 11 on lnm-of6): abr-runner-* serves
 # `POST /v1/video/transcode/abr`. AMD waits for a later iteration and has no key.
 #
-# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
-# job_id, status polled) and therefore cannot be billed under paid-job; and
-# they do not yet serve the runner self-description contract (§3). Until both
-# land, the agent refuses this image LOUDLY, naming it. That is the design:
-# the failure message is the impacted-runner inventory.
+# Published v2 runtime contract and immutable image provenance are recorded in
+# infra/scenarios/regional-pools/runner-readiness.md. Vendor builds remain
+# separate; device ownership is enforced by the assignment renderer.
 runner_compose:
   image:
-    nvidia: tztcloud/abr-runner-nvidia:v1.4.1
-    intel: tztcloud/abr-runner-intel:v1.4.1
+    nvidia: tztcloud/abr-runner@sha256:fcd01a412a58a360b88746f0fa38b973ce7bbcc108c53c62aa1ac022cb41bce8
+    intel: tztcloud/abr-runner@sha256:e488c90b883559568ddfe7146919bb842561cda95ebeb1da2db5b3041bb254e9
+  env:
+    STATE_DIR: /var/lib/abr-runner
+    NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+  caches: {journal: /var/lib/abr-runner}
   host_admission:
     mechanism: flock-files/v1
     scope: hardware-unit

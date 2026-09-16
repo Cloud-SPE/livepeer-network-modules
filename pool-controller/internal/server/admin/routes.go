@@ -1,6 +1,7 @@
 package admin
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -49,6 +50,7 @@ func redactHostEnrollments(in []types.HostEnrollment) []hostEnrollmentView {
 }
 
 type Deps struct {
+	PublishTerms func(context.Context, types.RegionalTerms, string, string, ...string) error
 	// Catalog is the curated template catalog, loaded from files.
 	Catalog *templates.Catalog
 	// Stances overrides how many templates a GPU class runs at once.
@@ -243,6 +245,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 	registerPlacementRoutes(mux, deps, auth)
 	registerLadderRoutes(mux, deps, auth)
 	registerPayoutPolicyRoutes(mux, deps, auth)
+	registerTermsRoutes(mux, deps, auth)
 	registerExceptionRoutes(mux, deps, auth)
 	mux.HandleFunc("GET /admin/v1/template-catalog", auth(func(w http.ResponseWriter, _ *http.Request) {
 		overrides, err := deps.Repo.ListTemplateOverrides()
@@ -384,6 +387,32 @@ func Register(mux *http.ServeMux, deps Deps) {
 		}
 		writeAdminJSON(w, run, nil)
 	}))
+	mux.HandleFunc("GET /admin/v1/device-transfers/{id}/history", auth(func(w http.ResponseWriter, r *http.Request) {
+		items, err := deps.Repo.DeviceTransferHistory(r.PathValue("id"))
+		writeAdminJSON(w, map[string]any{"events": items}, err)
+	}))
+	mux.HandleFunc("GET /admin/v1/device-transfers", auth(func(w http.ResponseWriter, r *http.Request) {
+		items, err := deps.Repo.DeviceTransfers()
+		writeAdminJSON(w, map[string]any{"pool_id": deps.Repo.PoolID(), "transfers": items}, err)
+	}))
+	mux.HandleFunc("GET /admin/v1/regional-accounting", auth(func(w http.ResponseWriter, r *http.Request) {
+		summary, err := deps.Repo.RegionalAccountingSummary()
+		if err != nil {
+			writeAdminJSON(w, nil, err)
+			return
+		}
+		holds, err := deps.Repo.RegionalWindowHolds()
+		if err != nil {
+			writeAdminJSON(w, nil, err)
+			return
+		}
+		corrections, err := deps.Repo.RegionalCorrectionHolds()
+		writeAdminJSON(w, struct {
+			Summary     types.RegionalAccountingSummary `json:"summary"`
+			Holds       []repo.RegionalWindowHold       `json:"holds"`
+			Corrections []repo.RegionalCorrectionHold   `json:"corrections"`
+		}{summary, holds, corrections}, err)
+	}))
 	mux.HandleFunc("GET /admin/v1/settlement-windows", auth(func(w http.ResponseWriter, _ *http.Request) {
 		items, err := deps.Repo.ListSettlementWindows()
 		writeAdminJSON(w, struct {
@@ -423,7 +452,7 @@ func Register(mux *http.ServeMux, deps Deps) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		if batch.Status != types.PayoutBatchPendingApproval {
+		if batch.Status != types.PayoutBatchPendingApproval && batch.PoolID == "" {
 			http.Error(w, "only pending_approval payout batches can be approved", http.StatusBadRequest)
 			return
 		}
@@ -431,6 +460,29 @@ func Register(mux *http.ServeMux, deps Deps) {
 		actor := strings.TrimSpace(actorFromRequest(r))
 		if actor == "" {
 			actor = "operator"
+		}
+		if batch.PoolID != "" {
+			approved, err := deps.Repo.ApproveRegionalBatch(batch.ID, actor)
+			if err != nil {
+				writeAdminJSON(w, nil, err)
+				return
+			}
+			all, err := deps.Repo.ListPayoutIntents(0)
+			if err != nil {
+				writeAdminJSON(w, nil, err)
+				return
+			}
+			intents := []types.PayoutIntent{}
+			for _, intent := range all {
+				if intent.PayoutBatchID == approved.ID {
+					intents = append(intents, intent)
+				}
+			}
+			writeAdminJSON(w, struct {
+				Batch   types.PayoutBatch    `json:"batch"`
+				Intents []types.PayoutIntent `json:"intents"`
+			}{approved, intents}, nil)
+			return
 		}
 		intents := materializePayoutIntents(batch, now)
 		for _, intent := range intents {

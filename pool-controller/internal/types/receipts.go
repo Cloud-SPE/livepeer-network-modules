@@ -1,8 +1,14 @@
 package types
 
-import "time"
+import (
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/revenue"
+	"time"
+)
 
 type WorkReceipt struct {
+	TermsVersion         string    `json:"terms_version,omitempty"`
+	PoolID               string    `json:"pool_id,omitempty"`
+	SourceID             string    `json:"source_id,omitempty"`
 	ID                   string    `json:"id"`
 	CreatedAt            time.Time `json:"created_at"`
 	RoundID              string    `json:"round_id,omitempty"`
@@ -24,14 +30,18 @@ type WorkReceipt struct {
 }
 
 type RoundReceipt struct {
-	ID                     string              `json:"id"`
-	CreatedAt              time.Time           `json:"created_at"`
-	RoundID                string              `json:"round_id"`
-	PoolRevenueWei         string              `json:"pool_revenue_wei"`
-	PoolCutWei             string              `json:"pool_cut_wei"`
-	DistributableWei       string              `json:"distributable_wei"`
-	IncludedWorkReceiptIDs []string            `json:"included_work_receipt_ids,omitempty"`
-	MemberPayouts          []MemberRoundPayout `json:"member_payouts,omitempty"`
+	PoolID                 string               `json:"pool_id,omitempty"`
+	RevenueReports         []revenue.Report     `json:"revenue_reports,omitempty"`
+	WorkReports            []revenue.WorkReport `json:"work_reports,omitempty"`
+	ReceiptSnapshot        string               `json:"receipt_snapshot,omitempty"`
+	ID                     string               `json:"id"`
+	CreatedAt              time.Time            `json:"created_at"`
+	RoundID                string               `json:"round_id"`
+	PoolRevenueWei         string               `json:"pool_revenue_wei"`
+	PoolCutWei             string               `json:"pool_cut_wei"`
+	DistributableWei       string               `json:"distributable_wei"`
+	IncludedWorkReceiptIDs []string             `json:"included_work_receipt_ids,omitempty"`
+	MemberPayouts          []MemberRoundPayout  `json:"member_payouts,omitempty"`
 }
 
 type MemberRoundPayout struct {
@@ -42,6 +52,9 @@ type MemberRoundPayout struct {
 }
 
 type PayoutIntent struct {
+	Revision           uint64    `json:"revision,omitempty"`
+	PoolID             string    `json:"pool_id,omitempty"`
+	PayoutBatchID      string    `json:"payout_batch_id,omitempty"`
 	ID                 string    `json:"id"`
 	CreatedAt          time.Time `json:"created_at"`
 	RoundReceiptID     string    `json:"round_receipt_id"`

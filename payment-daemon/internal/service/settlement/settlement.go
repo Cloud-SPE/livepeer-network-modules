@@ -23,6 +23,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // Sentinels.
@@ -64,6 +65,8 @@ const defaultValidityWindow = ChainValidityWindowRounds
 
 // Config holds the settlement service's tunable state.
 type Config struct {
+	// Inclusion recovers prior confirmed intents and qualifies their accounting.
+	Inclusion func(context.Context, []byte) (*types.RedemptionInclusion, error)
 	// RedeemGas is the gas limit used for redeemWinningTicket. Same
 	// value as the broker's Config.RedeemGas; passed here so the gas-
 	// cost preflight doesn't need a back-reference.
@@ -207,6 +210,19 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 	)
 	logCtx.Info("attempt redemption", "creation_round", t.CreationRound)
 
+	if s.cfg.Inclusion != nil {
+		evidence, err := s.cfg.Inclusion(ctx, p.Hash)
+		if err != nil {
+			return fmt.Errorf("recover redemption inclusion: %w", err)
+		}
+		if evidence != nil {
+			if err := s.store.MarkRedeemedWithInclusion(p.Hash, t, evidence); err != nil {
+				return fmt.Errorf("mark redeemed with inclusion: %w", err)
+			}
+			s.metrics.IncRedemptionTx(metrics.TxConfirmed)
+			return nil
+		}
+	}
 	if s.expired(t) {
 		logCtx.Info("skip: ticket expired",
 			"creation_round", t.CreationRound,
@@ -305,6 +321,20 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 		// stays queued and the same intent is waited on next tick.
 		return fmt.Errorf("redeem: %w", err)
 	}
+	if s.cfg.Inclusion != nil {
+		evidence, err := s.cfg.Inclusion(ctx, p.Hash)
+		if err != nil {
+			return fmt.Errorf("confirm redemption inclusion: %w", err)
+		}
+		if evidence == nil {
+			return fmt.Errorf("confirmed transaction has no inclusion evidence")
+		}
+		if err := s.store.MarkRedeemedWithInclusion(p.Hash, t, evidence); err != nil {
+			return fmt.Errorf("mark redeemed with inclusion: %w", err)
+		}
+		s.metrics.IncRedemptionTx(metrics.TxConfirmed)
+		return nil
+	}
 	s.metrics.IncRedemptionTx(metrics.TxConfirmed)
 	if err := s.store.MarkRedeemed(p.Hash, txHash, t, s.clock.LastInitializedRound()); err != nil {
 		return fmt.Errorf("mark redeemed: %w", err)
@@ -322,7 +352,6 @@ func (s *Settlement) expired(t *store.SignedTicket) bool {
 }
 
 func (s *Settlement) drain(ticketHash []byte, reason string) error {
-	zero := make([]byte, 32)
 	pend, err := s.store.PendingRedemptions()
 	if err != nil {
 		s.log.Warn("drain lookup failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
@@ -339,7 +368,7 @@ func (s *Settlement) drain(ticketHash []byte, reason string) error {
 		s.log.Warn("drain missing pending ticket", "ticket_hash", hex(ticketHash), "reason", reason)
 		return fmt.Errorf("pending ticket not found")
 	}
-	if err := s.store.MarkRedeemed(ticketHash, zero, ticket, s.clock.LastInitializedRound()); err != nil {
+	if err := s.store.MarkDrained(ticketHash, ticket, s.clock.LastInitializedRound(), reason); err != nil {
 		s.log.Warn("drain failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
 		return err
 	}

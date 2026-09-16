@@ -68,14 +68,11 @@ extra:
   video:
     task: live-gateway-ingest
 
-# The rig's `constraints:` block. `region` matters more here than anywhere else
-# in the catalog: a publisher's RTMP path to the ingest is a live network path,
-# and a gateway that cannot see where an orchestrator is cannot route a
-# broadcast to a near one (template.go, Constraints).
+# Shared by independent pools. Membership does not verify execution geography
+# (regional-pools.md); a location promise requires separate admission evidence.
+# Both Intel and NVIDIA builds are eligible, so no single vendor is advertised.
 constraints:
   tier: standard
-  gpu_vendor: NVIDIA
-  region: us-central
 
 # No `match:`. There is no model identity to select on and the rig runs one
 # live runner; any runner declaring this capability is the one this offer
@@ -141,12 +138,14 @@ certification:
     type: request
     required: true
     config:
-      # No `session_params`: the rig declared no create-time parameters, and
-      # for an rtmp-hls-shaped runtime there is nothing the buyer supplies at
-      # open — the runner mints the ingest and playback coordinates itself.
-      # (Contrast trickle-egress/v1, where the buyer's egress target genuinely
-      # does ride in session_params.) The runner's `session_params_schema` is
-      # the authority if that changes; it is advisory, never a validator.
+      # Published v2 runner input. Certification needs no external storage
+      # credentials and publishes no media; it exercises the local session.
+      session_params:
+        schema: rtmp-hls-session/v1
+        publisher_mode: gateway-relay
+        output_profile: live-standard
+        metering_rendition: 720p
+        storage: {kind: runner-local}
       #
       # No `expect_descriptor_schema` either: the runner declares which schema
       # it emits, so the step accepts whatever it declared rather than pinning
@@ -221,25 +220,20 @@ stacking: { primary: true, secondary_on: [] }
 # archived — decision 11 on lnm-of6): live-runner-* serves
 # `POST /v1/video/live/sessions`. AMD waits for a later iteration and has no key.
 #
-# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
-# job_id, status polled) and therefore cannot be billed under paid-job; and
-# they do not yet serve the runner self-description contract (§3). Until both
-# land, the agent refuses this image LOUDLY, naming it. That is the design:
-# the failure message is the impacted-runner inventory.
-# One image for every card (corrected 2026-09-05): the live runner is ubuntu
-# + ffmpeg + a media router with no vendor build stage, so it takes the
-# image map's `any` key rather than a tag per vendor. The device block is
-# still rendered by the card's vendor, so the encoder can use it.
-#
-# `rtmp_port` (plan 0046 §2.7): the container's RTMP ingest. The member
-# publishes one RTMPS port; the agent's edge terminates TLS on it with the
-# host's certificate and forwards here, and the pool hands the runner
-# `LIVEPEER_PUBLIC_RTMP_URL=rtmps://<public host>:1936` to advertise. The
-# HLS side rides the HTTP edge under `LIVEPEER_PUBLIC_URL`.
+# Published v2 runtime contract and immutable image provenance are recorded in
+# infra/scenarios/regional-pools/runner-readiness.md. Vendor builds remain
+# separate; device ownership is enforced by the assignment renderer.
 runner_compose:
   image:
-    any: tztcloud/live-runner:v1.4.1
+    nvidia: tztcloud/live-runner-nvidia@sha256:27b4a735e22e6e34565d18dacad665e2f495635f4a872c285bd662cc3c4d6137
+    intel: tztcloud/live-runner-intel@sha256:e9d21eb6fba8ded92df7cd10016323c0b936d02dcb706a6ea8177f124c5e1d7f
   rtmp_port: 1935
+  secret_env: [LIVE_RUNNER_MASTER_KEY, LIVE_RUNNER_BROKER_TOKEN, LIVE_RUNNER_INTERNAL_MEDIA_TOKEN]
+  local_bearer_env: LIVE_RUNNER_BROKER_TOKEN
+  env:
+    LIVE_RUNNER_STATE_DIR: /var/lib/live-runner
+    NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+  caches: {journal: /var/lib/live-runner}
   host_admission:
     mechanism: flock-files/v1
     scope: hardware-unit

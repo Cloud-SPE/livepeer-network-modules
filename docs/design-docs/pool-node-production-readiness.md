@@ -15,105 +15,62 @@ The design those sections check is described in
 
 ## Current implementation status
 
-Implemented and validated:
+The [regional-pool design](regional-pools.md) is the current requirements
+contract. Local implementation and validation are tracked by `lnm-l17`;
+regional acceptance and live rollout remain open. The older single-pool
+Arbitrum dust-payout evidence does not validate this two-region topology.
 
-- `pool-controller` persists member config, receipts, round closes, payout
-  intents, retry history, lease state, and operator summaries.
-- `pool-reconciler` closes rounds durably from `protocol-daemon` round timing,
-  `payment-daemon` confirmed revenue, and `pool-controller` final work
-  receipts.
-- `pool-payout-executor` signs native-`ETH` payouts on Arbitrum from a
-  keystore-backed hot wallet and writes `submitted` / `paid` / `failed` state
-  back to `pool-controller`.
-- A real Arbitrum dust payout was executed successfully:
-  - amount: `1000000000000 wei` (`0.000001 ETH`)
-  - destination: `0x0AfC5F4500Ce63aA5f029a78C3633AFe0B77af99`
-  - tx hash:
-    `0x1aaaf3d32b58e5862621960070eb2523ff67c1fac4425c7c3852c19673de149b`
+Implemented locally:
 
-That means the remaining work on the payout path is mostly operations, policy
-hardening, and longer-running validation rather than missing component
-plumbing.
+- Independent immutable pool identities, versioned regional terms, and
+  dedicated payout-wallet bindings with durable payout intents.
+- Complete source-qualified revenue and finalized billed-work collection,
+  Model B window accounting, exact member rounding, separate commission/dust,
+  zero-work operator allocation, immutable approvals and correction holds.
+- Scheduled round/window progression, hardware relay, placement and ladder
+  evaluation; these are no longer uncalled library helpers.
+- Shared durable GPU ownership, generation fencing, broker drain/revocation,
+  actual agent stop acknowledgement and explicit regional transfer.
+- One durable portal wallet session with locally verified regional tokens,
+  explicit joins, private member reports and qualified aggregate telemetry.
+- Fleet-aware agent bundles, durable credential-pair rotation, runner
+  companions and persistent model caches. Initial audio/chat templates now
+  contain startup definitions; image availability is not hardware readiness.
+- Scoped HTTPS APIs, local keyless protocol observers, generated deployment
+  configurations, persistent volume inventory and manual backup/restore tools.
 
-Built under plan 0044, not yet validated in production:
+Validation evidence and limits live in
+[`infra/scenarios/regional-pools`](../../infra/scenarios/regional-pools/README.md),
+including [runner readiness](../../infra/scenarios/regional-pools/runner-readiness.md)
+and [backup/manual restore](../../infra/scenarios/regional-pools/backup-and-restore.md).
+Full regional acceptance remains `lnm-l17.6`; the coordinated major-4 release
+and independent review remain `lnm-rqz`. No regional deployment, funds movement
+or image publication is authorized by the implementation task.
 
-- the file-backed workload catalog (`templates/`) and its `{enabled, price,
-  extra}` overrides; an enabled, priced template is pushed to every broker in
-  `bootstrap.brokers` as a derived offer
-- the placement engine (GPU class → eligible templates → primary/secondary,
-  every decision carrying a reason code)
-- the desired-state contract and the agent loop that acts on it, including
-  drain-before-stop via the `draining` flag in `runner-attach` 1.1.0-draft
-- the trust ladder, running on a 60s timer inside `pool-controller`
-- the member/admin listener split, the member API, the member portal, and the
-  operator console's placement / ladder / exceptions / payout-policy pages
-- `payout-policy.json` with shadow mode and bounded auto-approve
-
-Known gaps to hold against a production date:
-
-- **The shipped catalog cannot start a runner.** None of the five templates
-  carries a `runner_compose` block — the v1 images and model ids are still open
-  (`lnm-v12`) — so the rendered compose service has no `image`. A pool going to
-  production must supply `runner_compose.image` on the templates it enables and
-  validate `compose up` on a real member host.
-- **Automatic window close is not on a loop.** `settlement.EvaluateClose`
-  (hold-on-anomaly, hold-on-short-scale) is implemented and tested, and
-  `payouts.auto_close_windows` / `payouts.scale_tolerance` exist in config, but
-  nothing reads them; closing a window is still
-  `POST /admin/v1/settlement-windows/close`.
-- **Hardware relay is not on a loop.** `brokerpush.RelayHardware` reads the
-  broker's runner view, but no scheduler or route invokes it, and the agent no
-  longer posts hardware itself. Confirm how GPU inventory actually reaches
-  `pool-controller` in your deployment before relying on placement.
-- **The bundle's `.env` does not match the variables the agent reads.** The
-  generated bundle writes `POOL_BROKER_URL`, `POOL_BROKER_QUIC_ADDR` and
-  `POOL_BROKER_SESSION_CREDENTIAL`; `pool-member-agent` reads
-  `LIVEPEER_BROKER_URL`, `LIVEPEER_BROKER_QUIC_ADDR` and
-  `LIVEPEER_ATTACH_CREDENTIAL_FILE`. Verify a freshly downloaded bundle
-  actually attaches before onboarding a real member.
-- The member portal and the rebuilt operator console have now landed, but
-  neither has been exercised against a real member on real hardware.
-
-Recovery/runbook status:
-
-- control-plane, broker-apply, and publish recovery playbooks now live in
-  `docs/design-docs/pool-orchestrator-production-rollout.md`
-- payout/reconciler recovery playbooks now also live there for:
-  - stalled round close
-  - stale submitted payouts
-  - failed payout accumulation
-  - stuck or near-expiry leases
-- the four-phase plan for graduating from human payout approval to automatic
-  approval — with each phase's exit criterion and kill switch — is in
-  `pool-controller/RUNBOOK.md` under "Graduating to automatic payouts"
+Payout approval defaults to human review. The existing graduation procedure in
+[`pool-controller/RUNBOOK.md`](../../pool-controller/RUNBOOK.md) still governs
+any later move to bounded automatic approval. Recovery uses preserved ledgers
+and explicit operator fencing; no automatic failover or recovery UI is added.
 
 ## Release checklist
 
 ### 1. Topology and persistence
 
-- Decide whether v1 runs single-instance for:
-  - `pool-controller`
-  - `pool-reconciler`
-  - `pool-payout-executor`
-- Persist these state paths on durable volumes:
-  - `pool-controller --data-dir`
-  - `pool-reconciler reconcile.state_path`
-  - `pool-payout-executor executor.state_path`
-- Decide how the read-only inputs reach the controller host:
-  - `template_catalog_dir` — the workload catalog, read at boot
-  - `payouts.policy_path` and `payouts.pause_path`, if automation is enabled
-  These are policy, not state: they belong in the deployment artifact and its
-  review process, not in the BoltDB backup.
-- Decide the listener addresses: `listen.paid` (console + `/admin/*` +
-  `/public/v1/*`), `listen.member` (portal + `/member/v1/*`), `listen.metrics`.
-- Define backup and restore procedures for all three BoltDB stores.
-- Document restart order and restart behavior.
-- Validate the component compose files and the combined scenario:
-  - `pool-controller/compose/docker-compose.yml`
-  - `pool-reconciler/compose/docker-compose.yml`
-  - `pool-payout-executor/compose/docker-compose.yml`
-  - `infra/scenarios/pool-node/docker-compose.yml`
-  - `infra/scenarios/pool-orchestrator/docker-compose.yml`
+Use the generated [regional topology](../../infra/scenarios/regional-pools/README.md):
+one controller, reconciler, executor and keyless observer per region; EU
+transcode and US transcode/audio/LLM brokers with independent receiver ledgers;
+shared portal and durable ownership authority. Run one writer for each store.
+
+Validate the generated Compose and component configurations offline before
+activation. Persist every volume in the deployment manifest, plus member-agent
+credential and desired-state directories. Follow the coordinated cold-backup
+and manually fenced restore procedure; backing up only the three pool stores
+loses broker/receiver obligations and ownership state. Preserve immutable pool
+IDs, source identities, payout-wallet bindings and all submitted intents.
+
+Catalogs, terms, source registrations, credentials, TLS material and payout
+policy are part of the protected deployment/backup inventory. Separate member,
+admin and reporting HTTPS origins and verify actual proxy route boundaries.
 
 ### 2. Secrets and wallet operations
 
@@ -124,9 +81,11 @@ Recovery/runbook status:
   - target balance floor
   - refill owner
   - refill process
-- Decide whether gas is pure operator overhead or needs external accounting
-  visibility.
-- Verify `pool-controller` admin bearer auth is enabled in production.
+- Gas and regional-wallet funding are operator costs. They never reduce a
+  member allocation. Use distinct EU/US payout wallets, separate from payee
+  and receiver signing identities; preserve the executor binding on restart.
+- Verify role-, pool- and source-scoped service credentials, pinned TLS trust,
+  expiry and reload/revocation behavior. A VPN does not replace API auth.
 
 ### 3. Retry and failure policy
 
@@ -160,20 +119,23 @@ Recovery/runbook status:
     matches them
 - Scrape and retain the component metrics surfaces where available.
 
-### 5. Privacy and product policy
+### 5. Privacy and reporting
 
-- Decide whether `GET /public/v1/member-payouts` remains public in production.
-  A member can now read their own earnings authenticated, through
-  `GET /member/v1/enrollments/{id}/earnings`, so the unauthenticated route is a
-  convenience rather than the only way in — which makes closing it a smaller
-  decision than it was.
-- If it stays, note that it is registered on the admin/paid listener, not the
-  member one: the member listener deliberately serves no cross-member figure.
-- Decide whether any members require manual payout holds or exclusions.
-- Confirm no member-visible surface reports a share of a pool total. A share
-  plus a public total is another member's income by subtraction.
+The accepted regional design permits aggregate pool telemetry and a member's
+own share, revenue and payout proof. It does not permit listing other members'
+private earnings or enrollment details. Verify wallet ownership on every member
+route and pool scope on every regional authorization token. The shared portal
+must not hold controller-admin credentials.
+
+Regional/aggregate reports must retain pool, chain, asset, interval, source
+coverage and freshness. Combine only compatible reports; an unavailable region
+is stale/missing, never a successful zero. A complete zero-work window is a
+different state and allocates its revenue to the operator under Model B.
 
 ### 6. Runtime validation
+
+These live steps require separate deployment and funds authorization. Local
+synthetic-chain/process tests do not satisfy them.
 
 - Run at least one staging payout round with:
   - real `pool-reconciler`
@@ -205,33 +167,35 @@ same care as any other artifact that changes what the pool sells.
   error by design: a silently skipped one leaves members running nothing with
   no explanation. A *missing* directory is not an error — an accounting-only
   controller legitimately has no catalog.
-- Add `runner_compose.image` to every template you enable, and confirm the
-  image tag is pinned and pullable from a member host. **The repo catalog ships
-  none**, so this is mandatory before a member can run anything.
+- Confirm every enabled primary and companion image is pinned and pullable
+  from a member host. Validate model loading, runner self-description and
+  certification on each actual GPU class, including co-resident workloads.
+  See the regional runner-readiness record; unused catalog entries can still
+  lack startup definitions and must not be silently enabled.
 - Set `price` overrides deliberately. `price_default` in each template is a
   starting point derived from a dated market reference, not a rate card.
 - Review `GET /admin/v1/placement-plan` against real enrolled hardware before
   applying it, and read the reason codes on GPUs that get no placement.
-- Confirm the cross-address GPU UUID block behaves as expected: the same GPU
-  UUID under two ETH addresses must not activate without an operator override,
-  and the override must land in the audit log with its reason.
+- Confirm shared ownership rejects concurrent regional claims. A transfer must
+  drain all source brokers, revoke old credentials, receive actual stop proof
+  and advance the generation before the target starts. Neither an outage nor
+  elapsed time authorizes takeover. Preserve the audited duplicate-claim
+  exception path without bypassing the regional ownership authority.
 
 ### 8. Listener split and member surface
 
-- Decide whether this deployment runs split listeners (`listen.member` set) or
-  single-address. Split is the production shape; single-address is supported
-  and is what dev runs.
-- If split: verify at the proxy, not just in config, that the member address
-  answers no `/admin/*` route and serves no `/public/v1/*` cross-member
-  aggregate. Test it, do not reason about it.
+- Regional production uses split listeners (`listen.member` set) and scoped
+  HTTPS origins. Verify at the proxy that the member address
+  answers no `/admin/*` route and exposes only the intended member/reporting
+  routes. Test it, do not reason about it.
 - Verify member session hardening end to end: single-use nonce with TTL,
   per-address rate limit, cookie expiry and rotation, CSRF on mutating forms,
   login-attempt limits, and that signing out invalidates the session
   server-side rather than only dropping the cookie.
-- Confirm the two authenticators on the member API behave as intended: the
-  agent's enrollment bearer token, and a signed-in member's session cookie for
-  their **own** enrollments only. The ownership check is the whole security of
-  the second path — test that one member's session cannot read another's host.
+- Confirm enrollment bearer tokens are limited to agent routes, while locally
+  verified portal tokens bind wallet, pool, session, scope and expiry. Test
+  cross-wallet access, wrong-region replay, revoked trust and terms acceptance
+  independently in both regions.
 - Confirm member actions land in the audit log — opt-out, credential rotation,
   host retirement.
 - Confirm host retirement drains before it stops: the placement is marked
@@ -264,7 +228,7 @@ same care as any other artifact that changes what the pool sells.
 
 ## Recommended production defaults
 
-- Start with one instance each of:
+- Run one instance per region of:
   - `pool-controller`
   - `pool-reconciler`
   - `pool-payout-executor`
@@ -275,7 +239,7 @@ same care as any other artifact that changes what the pool sells.
   - `auto_requeue_failed: false` initially, or
   - `max_retries: 3`
   - `requeue_cooldown_seconds: 3600`
-- Use a dedicated Arbitrum payout wallet, not the Pool cold identity.
+- Use separate dedicated Arbitrum payout wallets for EU and US.
 - Run split listeners (`listen.member` set), even if both sit behind one
   proxy.
 - Start with `payouts.policy_path` unset. Automatic approval is something a
@@ -287,7 +251,7 @@ same care as any other artifact that changes what the pool sells.
 
 This Pool node stack can be called production ready when:
 
-- the three Pool components run from durable persisted state,
+- all regional, broker, receiver, shared ownership and portal stores persist,
 - secrets and keystore handling are documented and deployed safely,
 - alerting exists for payout and round-close failure modes,
 - at least one real staging payout has succeeded,
@@ -304,5 +268,5 @@ without a touch:
 - a template reassignment has reached a member host with no member action, and
   the withdrawn service drained rather than dropping in-flight work,
 - the member listener has been tested — not reasoned about — to expose no
-  `/admin/*` route and no cross-member figure,
+  `/admin/*` route and no other member's private figures,
 - the operator exception queue is the only place operator gestures appear.

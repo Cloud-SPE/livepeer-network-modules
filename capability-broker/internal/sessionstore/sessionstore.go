@@ -102,6 +102,8 @@ type GrantAudit struct {
 // Record is the on-disk session record — the paid-session/v1 §9.1
 // persistence list, field for field.
 type Record struct {
+	RevisionIntent       *RevisionIntent `json:"-"`
+	RevisionIntentSealed []byte          `json:"revision_intent_sealed,omitempty"`
 	// Identifiers.
 	SessionID        string `json:"session_id"`
 	GatewaySessionID string `json:"gateway_session_id"`
@@ -577,6 +579,19 @@ func (s *Store) seal(rec *Record) ([]byte, error) {
 	} else {
 		clone.ReplayMaterialSealed = nil
 	}
+	if rec.RevisionIntent != nil {
+		plain, err := json.Marshal(rec.RevisionIntent)
+		if err != nil {
+			return nil, err
+		}
+		nonce := make([]byte, s.aead.NonceSize())
+		if _, err = rand.Read(nonce); err != nil {
+			return nil, err
+		}
+		clone.RevisionIntentSealed = append(nonce, s.aead.Seal(nil, nonce, plain, []byte(rec.SessionID+":revision"))...)
+	} else {
+		clone.RevisionIntentSealed = nil
+	}
 	return json.Marshal(&clone)
 }
 
@@ -606,6 +621,21 @@ func (s *Store) unseal(raw []byte) (*Record, error) {
 			return nil, fmt.Errorf("sessionstore: unseal replay material: %w", err)
 		}
 		rec.ReplayMaterial = plain
+	}
+	if len(rec.RevisionIntentSealed) > 0 {
+		ns := s.aead.NonceSize()
+		if len(rec.RevisionIntentSealed) < ns {
+			return nil, fmt.Errorf("sealed revision intent truncated")
+		}
+		plain, err := s.aead.Open(nil, rec.RevisionIntentSealed[:ns], rec.RevisionIntentSealed[ns:], []byte(rec.SessionID+":revision"))
+		if err != nil {
+			return nil, fmt.Errorf("unseal revision: %w", err)
+		}
+		var intent RevisionIntent
+		if err = json.Unmarshal(plain, &intent); err != nil {
+			return nil, err
+		}
+		rec.RevisionIntent = &intent
 	}
 	return &rec, nil
 }

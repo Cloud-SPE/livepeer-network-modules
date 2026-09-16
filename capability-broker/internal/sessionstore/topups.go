@@ -13,12 +13,8 @@ import (
 // caller was told, so a retry after a lost response replays that answer
 // instead of funding the session twice.
 //
-// Unlike the job bucket there is no in-flight phase. The session mutex
-// serialises concurrent top-ups on one session, and a crash between the
-// daemon's credit and this record's write is caught downstream: the
-// retried envelope re-presents nonces the daemon has already seen, and
-// a nonce-replay rejection is read as "already credited" rather than as
-// a payment failure.
+// Authorization revisions persist a sealed in-flight intent on the session,
+// then atomically commit authority and this replay response.
 
 const topupsBucket = "topups"
 

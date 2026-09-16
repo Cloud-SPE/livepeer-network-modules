@@ -103,3 +103,12 @@ round transition.
 While the watcher is running, a retry ticker driven by
 `reconcile.retry_interval_ms` re-attempts pending failed rounds from the local
 state store without waiting for the next round transition.
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.
+
+Regional accounting uses [complete source collection](docs/regional-collection.md),
+including the durable source registry, scoped HTTPS proofs and snapshot-bound
+receipt pagination.

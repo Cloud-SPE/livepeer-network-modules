@@ -5,6 +5,7 @@ distribution.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
+- [Regional wallet identity and restart safety](docs/regional-wallets.md)
 
 Current scope:
 
@@ -253,3 +254,8 @@ For local live-chain testing, keep these files side by side:
 
 `keystore_path` and `keystore_password_path` resolve relative to the config
 file path when you use `--config ...`.
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.

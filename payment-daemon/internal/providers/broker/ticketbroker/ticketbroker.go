@@ -56,6 +56,8 @@ type Intents interface {
 
 // Config holds the parameters for a Broker instance.
 type Config struct {
+	RoundsManager ethcommon.Address
+	Confirmations uint64
 	// Address is the deployed TicketBroker contract address.
 	Address ethcommon.Address
 

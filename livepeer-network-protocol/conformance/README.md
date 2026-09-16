@@ -282,3 +282,12 @@ This validates independent funding, versions, account-scoped authorization IDs,
 rejection of cross-domain authorizations and tickets, and URL relocation preserving
 one ledger's credit. The HTTP conformance harness uses the explicit test-only mock
 domain for broker fixtures; it is not evidence of real ticket validation.
+
+Regional source accounting adds a shared
+[`regional-billed-work.json`](fixtures/regional-billed-work.json) trace, executed
+by the broker's durable work-ledger tests. Its advances and final settlement
+must produce exactly the stated monetary contribution; cumulative values must
+never be summed as independent charges. Broker HTTP tests additionally exercise
+scoped HTTPS work/revenue reports and source-bound paid-job receipts. These local
+fixtures complement the deployment acceptance checks; they do not simulate a
+live chain or authorize a rollout.

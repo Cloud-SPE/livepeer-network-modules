@@ -1,10 +1,15 @@
 services:
   runner-unit-a-video-transcode-abr:
-    image: tztcloud/abr-runner-nvidia:v1.4.1
+    image: tztcloud/abr-runner@sha256:fcd01a412a58a360b88746f0fa38b973ce7bbcc108c53c62aa1ac022cb41bce8
     restart: unless-stopped
     environment:
-      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+      GPU_ADMISSION_LOCK: "/var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
+      STATE_DIR: "/var/lib/abr-runner"
     volumes:
+      - type: volume
+        source: runner-unit-a-video-transcode-abr-cache-journal
+        target: "/var/lib/abr-runner"
       - type: bind
         source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
         target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
@@ -26,11 +31,19 @@ services:
               capabilities: [gpu]
               device_ids: ["GPU-shared"]
   runner-unit-a-video-transcode-live:
-    image: tztcloud/live-runner:v1.4.1
+    image: tztcloud/live-runner-nvidia@sha256:27b4a735e22e6e34565d18dacad665e2f495635f4a872c285bd662cc3c4d6137
     restart: unless-stopped
     environment:
-      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+      GPU_ADMISSION_LOCK: "/var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock"
+      LIVE_RUNNER_BROKER_TOKEN: "{{secret.LIVE_RUNNER_BROKER_TOKEN}}"
+      LIVE_RUNNER_INTERNAL_MEDIA_TOKEN: "{{secret.LIVE_RUNNER_INTERNAL_MEDIA_TOKEN}}"
+      LIVE_RUNNER_MASTER_KEY: "{{secret.LIVE_RUNNER_MASTER_KEY}}"
+      LIVE_RUNNER_STATE_DIR: "/var/lib/live-runner"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
     volumes:
+      - type: volume
+        source: runner-unit-a-video-transcode-live-cache-journal
+        target: "/var/lib/live-runner"
       - type: bind
         source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
         target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
@@ -52,11 +65,16 @@ services:
               capabilities: [gpu]
               device_ids: ["GPU-shared"]
   runner-unit-a-video-transcode-vod:
-    image: tztcloud/transcode-runner-nvidia:v1.4.1
+    image: tztcloud/transcode-runner@sha256:ce0897c10695630efb666c03e71047c04888dc9c4d43148dec8de8505fd1da04
     restart: unless-stopped
     environment:
-      GPU_ADMISSION_LOCK: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock
+      GPU_ADMISSION_LOCK: "/var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c/lock"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,video,utility"
+      STATE_DIR: "/var/lib/transcode-runner"
     volumes:
+      - type: volume
+        source: runner-unit-a-video-transcode-vod-cache-journal
+        target: "/var/lib/transcode-runner"
       - type: bind
         source: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c
         target: /var/lib/livepeer-resource-admission/v1/c0a03daa992a6554643bd62c

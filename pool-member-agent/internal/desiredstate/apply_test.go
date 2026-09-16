@@ -261,7 +261,7 @@ func TestApplyReportsRunningAndMarksTheDrainingService(t *testing.T) {
 	}
 	// Reporting a draining service as running would keep its assignment
 	// alive forever; the pool retires it on this report.
-	if got["runner-c"].Status != StatusStopped || got["runner-c"].Detail != "draining" {
+	if got["runner-c"].Status != StatusDraining || got["runner-c"].Detail == "" {
 		t.Fatalf("draining service = %+v, want %s with a draining detail", got["runner-c"], StatusStopped)
 	}
 }
@@ -433,5 +433,17 @@ func TestEmptyRunnerProjectDownPreservesAgent(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "down\n--remove-orphans\n") || strings.Contains(string(out), "--volumes") {
 		t.Fatalf("unsafe teardown: %s", out)
+	}
+}
+
+func TestStopInstructionRemovesOnlySelectedService(t *testing.T) {
+	doc := Document{Revision: "stop-one", Services: []Service{{Name: "runner-a", ComposeFragment: "  runner-a:\n    image: a\n", Draining: true, Stop: true}, {Name: "runner-b", ComposeFragment: "  runner-b:\n    image: b\n"}}}
+	rendered := RenderCompose(doc)
+	if strings.Contains(rendered, "runner-a:") || !strings.Contains(rendered, "runner-b:") {
+		t.Fatalf("unsafe stop compose: %s", rendered)
+	}
+	doc.Services = doc.Services[:1]
+	if !strings.Contains(RenderCompose(doc), "services: {}") {
+		t.Fatal("last stopped service must cause compose down")
 	}
 }

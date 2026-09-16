@@ -102,6 +102,7 @@ type Options struct {
 // process. Open it once and Close it when the process is done; the
 // processor goroutines it spawns are cancelled on Close.
 type Engine struct {
+	poolID  string
 	rpc     ccrpc.RPC
 	from    ethcommon.Address
 	chainID chain.ChainID
@@ -231,8 +232,13 @@ func OpenWith(ctx context.Context, cfg config.Executor, rpc ccrpc.RPC, ks cckeys
 		return nil, fmt.Errorf("payouts: intent manager: %w", err)
 	}
 
+	if err := bindRegionalIdentity(ctx, st, mgr, cfg, ks.Address(), chainID); err != nil {
+		closeIfOwned(st, ownsStore)
+		return nil, err
+	}
 	ectx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	e := &Engine{
+		poolID:      cfg.PoolID,
 		rpc:         rpc,
 		from:        ks.Address(),
 		chainID:     chainID,
@@ -369,6 +375,9 @@ func (e *Engine) Dispatch(ctx context.Context, controllerIntentID string, to eth
 	}
 	id := intentID(controllerIntentID)
 	if existing, err := e.mgr.Status(ctx, id); err == nil {
+		if existing.To != to || existing.Value == nil || existing.Value.Cmp(amountWei) != 0 {
+			return Dispatched{}, fmt.Errorf("payout intent recipient or amount changed")
+		}
 		return e.awaitBroadcast(ctx, id, existing, true)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return Dispatched{}, fmt.Errorf("payouts: read intent: %w", err)
@@ -439,6 +448,9 @@ func dispatched(t txintent.TxIntent, reused bool) Dispatched {
 func (e *Engine) Track(ctx context.Context, controllerIntentID, txHash, externalRef string, to ethcommon.Address, amountWei *big.Int) (bool, error) {
 	id := intentID(controllerIntentID)
 	if cur, err := e.mgr.Status(ctx, id); err == nil {
+		if amountWei == nil || cur.To != to || cur.Value == nil || cur.Value.Cmp(amountWei) != 0 {
+			return false, fmt.Errorf("tracked payout recipient or amount changed")
+		}
 		if !cur.Status.IsTerminal() {
 			e.spawn(id)
 		}
@@ -463,6 +475,12 @@ func (e *Engine) Track(ctx context.Context, controllerIntentID, txHash, external
 	tx, _, err := e.rpc.TransactionByHash(ctx, hash)
 	switch {
 	case err == nil && tx != nil:
+		if e.poolID != "" {
+			sender, senderErr := ethtypes.Sender(ethtypes.LatestSignerForChainID(e.chainID.BigInt()), tx)
+			if senderErr != nil || sender != e.from || tx.ChainId().Cmp(e.chainID.BigInt()) != 0 || tx.To() == nil || *tx.To() != to || amountWei == nil || tx.Value().Cmp(amountWei) != 0 || len(tx.Data()) != 0 {
+				return false, fmt.Errorf("submitted transaction does not match regional payout authority")
+			}
+		}
 		nonce, haveNonce = tx.Nonce(), true
 		if tx.Gas() > 0 {
 			gasLimit = tx.Gas()
@@ -471,7 +489,7 @@ func (e *Engine) Track(ctx context.Context, controllerIntentID, txHash, external
 	case err != nil && !errors.Is(err, ethereum.NotFound):
 		return false, fmt.Errorf("payouts: look up %s: %w", hash.Hex(), err)
 	}
-	if !haveNonce {
+	if !haveNonce || (e.poolID != "" && tx == nil) {
 		return false, ErrUnknownTx
 	}
 	if amountWei == nil {

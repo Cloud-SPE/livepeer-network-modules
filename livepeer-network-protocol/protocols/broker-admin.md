@@ -592,3 +592,40 @@ frontmatter tracks the document.
 Each `/registry/offerings` capability includes the payment-daemon-owned
 `settlement_domain_id`. The broker obtains it from PayeeDaemon Health. The
 coordinator cold-signs it on each route; it is not a broker name or URL hash.
+
+## Regional read-only revenue reporting
+
+`GET /reporting/v1/revenue/{round}` is a distinct service reporting endpoint.
+It requires verified HTTPS and a `revenue-reader` credential scoped to the owning
+pool and broker resource. It proxies only the local receiver's
+`PayeeDaemon.GetRoundRevenue`; it does not expose financial mutation RPCs.
+The response identifies the receiver settlement domain, chain/payee, regional
+pool and broker and includes revenue, ticket count, canonical coverage,
+observation time, inclusion digest, and explicit completeness. See the
+[regional service contract](../../docs/design-docs/regional-service-access.md).
+
+## Regional credential and device authority extensions
+
+Regional credential pushes carry immutable `pool_id`, `terms_version`,
+`device_ownership` (canonical GPU UUID to assignment generation), and
+`credential_generation`. The controller increments credential generation when
+rotating the enrollment/broker secret pair. A broker ignores older generations,
+rejects a different secret at the same nonzero generation and never revives a
+revoked versioned credential from a delayed active snapshot. Legacy unversioned
+credentials retain their existing wire behavior until upgraded.
+
+`POST /admin/v1/devices/drain` is a scoped HTTPS controller/pool-admin operation.
+Its body is `pool_id`, `enrollment_id`, `device_id`, `generation`, `reason` and
+optional `action` (`drain`, the default, or `revoke`). The response qualifies pool,
+receiver source, broker, enrollment, device and generation, and reports
+`pending_operations`, `active_authorizations`, `undelivered_receipts`,
+`unqualified_work`, `started_at`, `observed_at` and `revoked`.
+
+A device generation drain is durable and permanent. It rejects new work bindings
+and successor admission while allowing already admitted work to finish. Revoke
+requires every pending count to be zero and persists a credential-store generation
+tombstone. Future credential writes cannot restore that generation or an older
+one. A sibling device and a later exclusive generation remain independent.
+The controller still requires a matching actual agent stop report before shared
+ownership release. See the executable `regional-device-drain.json` conformance
+fixture and the controller's regional transfer runbook.

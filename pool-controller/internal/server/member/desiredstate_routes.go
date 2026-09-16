@@ -2,6 +2,7 @@ package member
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -60,7 +61,7 @@ func registerDesiredStateRoutes(mux *http.ServeMux, deps Deps) {
 			return
 		}
 		var report statusReport
-		if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10)).Decode(&report); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
@@ -83,12 +84,38 @@ func (d Deps) desiredStateFor(enrollment types.HostEnrollment) (desiredstate.Doc
 	if err != nil {
 		return desiredstate.Document{}, err
 	}
-	return desiredstate.Build(desiredstate.Input{
+	if d.VerifyOwnership != nil {
+		if err := d.VerifyOwnership(hardware); err != nil {
+			return desiredstate.Document{}, err
+		}
+	}
+	doc, err := desiredstate.Build(desiredstate.Input{
 		EnrollmentID: enrollment.ID,
 		Assignments:  assignments,
 		Hardware:     hardware,
 		Catalog:      d.Catalog,
 	})
+	if err != nil {
+		return doc, err
+	}
+	stops, err := d.Repo.TransferStopAssignments(enrollment.ID)
+	if err != nil {
+		return doc, err
+	}
+	actual := map[string]bool{}
+	for i := range doc.Services {
+		service := &doc.Services[i]
+		if stops[service.AssignmentID] {
+			service.Stop = true
+			service.Draining = true
+			actual[service.AssignmentID] = true
+		}
+	}
+	doc.Revision = desiredstate.Revision(doc.Services)
+	if err := d.Repo.RecordTransferStopRevision(enrollment.ID, doc.Revision, actual); err != nil {
+		return doc, err
+	}
+	return doc, nil
 }
 
 // applyStatusReport records what the host actually managed to run.
@@ -100,12 +127,41 @@ func (d Deps) desiredStateFor(enrollment types.HostEnrollment) (desiredstate.Doc
 // only place a placement is removed, and it happens after the work has
 // actually stopped rather than when the pool changed its mind.
 func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusReport, now time.Time) (int, error) {
+	if d.VerifyOwnership != nil {
+		doc, err := d.desiredStateFor(enrollment)
+		if err != nil {
+			return 0, err
+		}
+		if report.Revision != doc.Revision {
+			return 0, fmt.Errorf("stale desired-state report revision")
+		}
+		byName := map[string]desiredstate.Service{}
+		for _, service := range doc.Services {
+			byName[service.Name] = service
+		}
+		stopped := map[string]bool{}
+		seen := map[string]bool{}
+		for _, status := range report.Services {
+			if seen[status.Name] {
+				return 0, fmt.Errorf("duplicate service status")
+			}
+			seen[status.Name] = true
+			service, ok := byName[status.Name]
+			if ok && service.Stop && strings.EqualFold(strings.TrimSpace(status.Status), "stopped") {
+				stopped[service.AssignmentID] = true
+			}
+		}
+		if err := d.Repo.ConfirmTransferStops(enrollment.ID, report.Revision, stopped); err != nil {
+			return 0, err
+		}
+	}
 	assignments := listEnrollmentAssignments(d.Repo, enrollment.ID)
 	byService := make(map[string]types.TemplateAssignment, len(assignments))
 	for _, assignment := range assignments {
 		byService[desiredstate.ServiceName(assignment.ID)] = assignment
 	}
 	applied := 0
+	serviceResults := []types.AgentServiceResult{}
 	for _, service := range report.Services {
 		assignment, ok := byService[service.Name]
 		if !ok {
@@ -121,6 +177,12 @@ func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusRe
 			if assignment.State == types.TemplateAssignmentPending {
 				next.State = types.TemplateAssignmentTesting
 			}
+		case "draining":
+			// Legacy pools retain their grace-based withdrawal. Regional pools
+			// require an explicit stop instruction and real stopped report.
+			if d.VerifyOwnership == nil && assignment.State == types.TemplateAssignmentDraining && drainElapsed(assignment, now) {
+				next.State = types.TemplateAssignmentRetired
+			}
 		case "stopped", "removed":
 			// A draining service is retired only once its grace has
 			// elapsed. The agent reports "stopped" as soon as it has
@@ -129,7 +191,7 @@ func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusRe
 			// retiring on that first report would withdraw the
 			// placement while requests were in flight, which is the
 			// thing draining exists to avoid.
-			if assignment.State == types.TemplateAssignmentDraining && drainElapsed(assignment, now) {
+			if d.VerifyOwnership == nil && assignment.State == types.TemplateAssignmentDraining && drainElapsed(assignment, now) {
 				next.State = types.TemplateAssignmentRetired
 			}
 		case "failed":
@@ -144,6 +206,10 @@ func (d Deps) applyStatusReport(enrollment types.HostEnrollment, report statusRe
 			return applied, err
 		}
 		applied++
+		serviceResults = append(serviceResults, types.AgentServiceResult{Name: service.Name, Status: service.Status, Detail: service.Detail})
+	}
+	if err := d.Repo.SaveAgentApply(types.AgentApplyReport{PoolID: d.Repo.PoolID(), EnrollmentID: enrollment.ID, Revision: report.Revision, ReportedAt: now, Services: serviceResults}); err != nil {
+		return applied, err
 	}
 	_ = d.Repo.AppendAuditEvent(types.AuditEvent{
 		Kind:         "member_status_report",

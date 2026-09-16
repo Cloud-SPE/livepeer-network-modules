@@ -150,6 +150,8 @@ func (s *OfferingSpec) leaseMax() time.Duration {
 
 // Config wires the engine's dependencies.
 type Config struct {
+	// BindWork persists member attribution before any runner execution.
+	BindWork func(workID, requestID string, spec *OfferingSpec) error
 	Store    *sessionstore.Store
 	Payment  payment.Client
 	Runner   func(backendRef string) RunnerClient // resolver, per backend
@@ -384,6 +386,11 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		return fmt.Errorf("sessionengine: open failed at %s (failed closed): %w", stage, cause)
 	}
 
+	if e.cfg.BindWork != nil {
+		if err := e.cfg.BindWork(workID, req.RequestID, req.Spec); err != nil {
+			return nil, failClosed("work attribution", err, "")
+		}
+	}
 	created, err := e.runnerFor(req.Spec.BackendRef).CreateSession(ctx, RunnerCreateRequest{
 		SessionID:     sessionID,
 		WorkID:        workID,
@@ -708,6 +715,15 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 	if rec.Closing() {
 		return nil, protoErr("session_terminal", "session is %s (%s)", rec.State, rec.CloseReason)
 	}
+	if rec.RevisionIntent != nil {
+		if _, err := e.resumeRevisionLocked(ctx, sessionID); err != nil {
+			return nil, err
+		}
+		rec, err = e.cfg.Store.Get(sessionID)
+		if err != nil {
+			return nil, err
+		}
+	}
 	spec := e.cfg.Specs(sessionID)
 	if spec == nil {
 		return nil, fmt.Errorf("sessionengine: no offering spec for session %s", sessionID)
@@ -925,6 +941,21 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		bal, _ := new(big.Int).SetString(prior.BalanceWei, 10)
 		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal}, nil
 	}
+	if rec.RevisionIntent != nil {
+		if rec.RevisionIntent.RequestID == requestID && !bytesEqual(rec.RevisionIntent.Fingerprint, fp) {
+			return nil, protoErr("request_id_reuse", "request id reused with different revision")
+		}
+		if rec.RevisionIntent.RequestID != requestID {
+			return nil, &RetryableError{Err: errors.New("previous authorization revision remains unresolved")}
+		}
+		return e.resumeRevisionLocked(ctx, sessionID)
+	}
+	if reservation == nil || reservation.Sign() < 0 {
+		return nil, protoErr("payment_invalid", "revision reservation must be nonnegative")
+	}
+	if rec.PendingDebitSeq != 0 {
+		return nil, &RetryableError{Err: errors.New("usage debit must resolve before authorization revision")}
+	}
 	if rec.Closing() || rec.AccountAuthorizationID == "" {
 		return nil, protoErr("refill_refused", "session does not accept an account authorization revision")
 	}
@@ -950,39 +981,23 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 	if p.GetMaxTotalUnits() < rec.AuthorizationMaxUnits || new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()).Cmp(oldMaxDebit) < 0 {
 		return nil, protoErr("refill_refused", "authorization revision cannot reduce the cumulative cap")
 	}
-	ac, ok := e.cfg.Payment.(payment.AccountClient)
-	if !ok {
-		return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
-	}
-	admitted, err := ac.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: authorizationBytes, PaymentBytes: paymentBytes, Reservation: reservation})
-	if err != nil {
-		return nil, protoErr("payment_invalid", "authorization revision rejected: %v", err)
-	}
-	if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil {
-		return nil, &RetryableError{Err: errors.New("payment daemon returned invalid revision admission")}
-	}
+
 	now := e.cfg.Now()
 	lease := now.Add(spec.heartbeat() * time.Duration(spec.missed()))
 	if max := now.Add(spec.leaseMax()); lease.After(max) {
 		lease = max
 	}
+	intent := &sessionstore.RevisionIntent{RequestID: requestID, AuthorizationBytes: append([]byte(nil), authorizationBytes...), PaymentBytes: append([]byte(nil), paymentBytes...), Fingerprint: append([]byte(nil), fp...), ReservationWei: reservation.String(), LeaseExpiresAt: lease}
 	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
-		r.AccountAuthorizationID, r.WorkID = p.GetAuthorizationId(), p.GetAuthorizationId()
-		r.AuthorizationMaxUnits = p.GetMaxTotalUnits()
-		r.AuthorizationMaxDebitWei = new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()).String()
-		r.AuthorizationReservedWei = reservation.String()
-		r.LeaseExpiresAt = lease
-		if admitted.Credited != nil {
-			r.FundedWei = addDecimal(r.FundedWei, admitted.Credited)
+		if r.RevisionIntent != nil {
+			return errors.New("revision already pending")
 		}
+		r.RevisionIntent = intent
 		return nil
 	}); err != nil {
 		return nil, &RetryableError{Err: err}
 	}
-	if err := e.cfg.Store.TopUpRecord(sessionID, requestID, fp, lease, balanceString(admitted.Account.Available)); err != nil {
-		return nil, err
-	}
-	return &TopUpResult{Lease: lease, Balance: admitted.Account.Available}, nil
+	return e.resumeRevisionLocked(ctx, sessionID)
 }
 
 func addDecimal(current string, delta *big.Int) string {
@@ -1065,6 +1080,22 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		} else {
 			e.cfg.Log.Warn("runner terminate failed; winddown pending, will retry on sweep",
 				"session", sessionID, "err", err)
+		}
+	}
+	if rec.RevisionIntent != nil {
+		if _, err := e.resumeRevisionLocked(ctx, sessionID); err != nil {
+			_ = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+				r.State = sessionstore.StateWindingDown
+				r.CloseReason = reason
+				r.RunnerTerminated = runnerDone
+				return nil
+			})
+			e.cfg.Log.Warn("winddown waiting for authorization revision", "session", sessionID, "err", err)
+			return
+		}
+		rec, err = e.cfg.Store.Get(sessionID)
+		if err != nil {
+			return
 		}
 	}
 	paymentClosed := rec.PaymentClosed
@@ -1167,6 +1198,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 // Sweep enforces leases and heartbeats across all active sessions and
 // evicts terminal records past retention. Call on a ticker.
 func (e *Engine) Sweep(ctx context.Context) {
+	e.recoverRevisionIntents(ctx)
 	now := e.cfg.Now()
 	type due struct {
 		id     string
@@ -1226,9 +1258,13 @@ func (e *Engine) Sweep(ctx context.Context) {
 // to the explicit terminal outcome when the runner no longer holds it.
 // Never mints a second work_id, never re-issues grants (§9.2).
 func (e *Engine) Recover(ctx context.Context) {
+	e.recoverRevisionIntents(ctx)
 	e.recoverReservations(ctx)
 	var ids, pending []string
 	_ = e.cfg.Store.ForEach(func(r *sessionstore.Record) error {
+		if r.RevisionIntent != nil {
+			return nil
+		}
 		switch {
 		case r.Terminal():
 		case r.State == sessionstore.StateWindingDown:

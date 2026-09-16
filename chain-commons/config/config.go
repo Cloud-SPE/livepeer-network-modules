@@ -160,18 +160,25 @@ func Default() Config {
 }
 
 // Validate enforces config invariants. Returns nil if the config is usable.
-func (c *Config) Validate() error {
+func (c *Config) Validate() error { return c.validate(true) }
+
+// ValidateReadOnly validates chain observation without requiring signing material.
+func (c *Config) ValidateReadOnly() error { return c.validate(false) }
+
+func (c *Config) validate(signing bool) error {
 	if len(c.EthURLs) == 0 {
 		return fmt.Errorf("config: EthURLs is required (at least one URL)")
 	}
 	if c.ChainID == 0 {
 		return fmt.Errorf("config: ChainID is required (non-zero)")
 	}
-	if c.KeystorePath == "" {
+	if signing && c.KeystorePath == "" {
 		return fmt.Errorf("config: KeystorePath is required")
 	}
-	if _, err := os.Stat(c.KeystorePath); err != nil {
-		return fmt.Errorf("config: KeystorePath %q is not readable: %w", c.KeystorePath, err)
+	if signing {
+		if _, err := os.Stat(c.KeystorePath); err != nil {
+			return fmt.Errorf("config: KeystorePath %q is not readable: %w", c.KeystorePath, err)
+		}
 	}
 	if !c.SkipController && (c.ControllerAddr == (chain.Address{})) {
 		return fmt.Errorf("config: ControllerAddr is required (or set SkipController=true with ContractOverrides for every sub-contract)")

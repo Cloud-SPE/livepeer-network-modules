@@ -1,9 +1,8 @@
 # Independent regional pools under Pool Orchestrator
 
-Status: accepted design scope, 2026-09-16. Decisions below are locked; detailed
-API, storage and deployment choices remain implementation work. Work and dependencies live in
-beads epic `lnm-l17`; design decisions are tracked in `lnm-l17.1`. This document
-does not claim that regional federation is implemented or deployed.
+Status: accepted design scope, 2026-09-16. Decisions below are locked. Local API, accounting, ownership and portal implementation
+is documented below; deployment and end-to-end validation remain in progress. Work and dependencies live in
+beads epic `lnm-l17`; design decisions are tracked in `lnm-l17.1`. This document does not claim a live rollout or completion of the epic.
 
 ## Accepted starting point
 
@@ -31,9 +30,9 @@ activating the destination. An unavailable source requires explicit fenced
 recovery: a timeout alone cannot authorize takeover. Restored controllers and
 agents must not revive obsolete assignments. This coordinates managed device
 assignments, not regional books, and does not authenticate physical hardware
-identity. Placement of the ownership service, record schema, assignment fencing
-and recovery mechanics remain implementation details to specify. The accepted
-mechanism is not yet implemented.
+identity. The durable ownership service and transfer fences are implemented; see
+[regional device transfers](../../pool-controller/docs/regional-device-transfers.md).
+Physical placement and manual restore are deployment concerns.
 
 Capabilities retain their existing identifiers. Regions can enable different
 templates, models, prices and membership terms. Pool affiliation alone does not
@@ -86,8 +85,9 @@ Decision 7: add a keyless, read-only mode to `protocol-daemon`, running locally
 alongside each regional reconciler. It observes public chain data through chain
 RPC and serves the existing round-status and round-event APIs over a local Unix
 socket. The reconciler continues consuming those APIs rather than implementing
-its own chain reader. The exact CLI mode spelling remains an implementation
-detail. This mode is not yet implemented; work is tracked in `lnm-l17.7`.
+its own chain reader. The CLI mode is `--mode=read-only`; implementation and local validation
+are tracked in `lnm-l17.7`. See the protocol-daemon
+[observer runbook](../../protocol-daemon/docs/operator-runbook.md#keyless-regional-observer).
 
 Read-only startup requires no signing keystore, password or funded signer
 wallet. It must not initialize signing dependencies, resume transaction intents,
@@ -100,9 +100,8 @@ keys; keyless observation does not make those services keyless.
 Regional reconciliation needs no inbound connection to `secure-orch` for round
 information. The coordinator still polls brokers and serves the signed public
 manifest. There is no required direct coordinator-to-pool-controller connection.
-Cross-host revenue collection remains necessary within the US pool, with its
-transport and permission details still to be finalized independently of round
-observation. A VPN is not a prerequisite for the observer mode.
+Cross-host revenue collection within the US pool uses source-qualified scoped
+HTTPS APIs; see [regional collection](../../pool-reconciler/docs/regional-collection.md). A VPN is not a prerequisite for the observer mode.
 
 ## Network topology
 
@@ -119,20 +118,19 @@ A VPN is optional, not a deployment requirement. In the diagrams, private
 service access means operator-only access, not a mandated private-address
 network. Deployments may use private networking or protected public HTTPS
 endpoints with appropriate ingress and firewall controls. Network placement
-does not replace application authentication or authorization. Exact credential
-format, issuance/rotation and API placement remain implementation details.
-Current broad bearer-token access must not be mistaken for already implemented
-role-scoped permissions.
+does not replace application authentication or authorization. Credential format, rotation and endpoint permissions are implemented in
+[regional service access](regional-service-access.md). Broad legacy bearer tokens
+do not provide these regional permissions.
 
 Host names below describe roles, not real machines or DNS records. EU and US
 are example regions. Colocating regional management with a broker is a starting
 layout, not a requirement. The US pool includes three separate broker hosts;
 its controller owns their pool policy and its reconciler collects their revenue.
 
-Solid arrows show the intended connectivity using existing component surfaces.
-Dashed arrows are unimplemented portal, GPU ownership, revenue or timing interfaces whose
-contracts still need design. Arrows indicate request direction, not all return
-traffic. This is a deployment proposal, not evidence of a running installation.
+Arrows show component interfaces and request direction, not all return traffic.
+Regional authorization, ownership, complete-source accounting and keyless timing
+are implemented locally. This diagram is not evidence of a running installation;
+deployment and end-to-end acceptance remain separate validation steps.
 
 ```mermaid
 flowchart TB
@@ -151,7 +149,7 @@ flowchart TB
         EC["EU controller"]
         EB["EU broker and receiver ledger"]
         ER["EU reconciler and payout executor"]
-        EP["Keyless protocol observer: not yet implemented"]
+        EP["Keyless protocol observer"]
     end
     subgraph US["US pool: three broker hosts"]
         UC["US controller on us-transcode-broker"]
@@ -159,14 +157,14 @@ flowchart TB
         AB["audio-broker and independent receiver ledger"]
         LB["llm-broker and independent receiver ledger"]
         UR["US reconciler and payout executor"]
-        UP["Keyless protocol observer: not yet implemented"]
+        UP["Keyless protocol observer"]
     end
     UC -->|"Private broker admin"| AB
     UC -->|"Private broker admin"| LB
     AB -->|"Private receipts and snapshot requests"| UC
     LB -->|"Private receipts and snapshot requests"| UC
-    UR -.->|"Private read-only revenue: proposed"| AB
-    UR -.->|"Private read-only revenue: proposed"| LB
+    UR -.->|"Private source-qualified read-only revenue"| AB
+    UR -.->|"Private source-qualified read-only revenue"| LB
     Coord -->|"Private authenticated broker admin"| AB
     Coord -->|"Private authenticated broker admin"| LB
     Client -->|"HTTPS 443: funded workloads"| AB
@@ -176,8 +174,8 @@ flowchart TB
     EC -.->|"Private atomic GPU claims and transfers"| Ownership
     UC -.->|"Private atomic GPU claims and transfers"| Ownership
     Member -->|"HTTPS 443"| Portal
-    Portal -.->|"Scoped member API: proposed"| EC
-    Portal -.->|"Scoped member API: proposed"| UC
+    Portal -.->|"Scoped regional member API"| EC
+    Portal -.->|"Scoped regional member API"| UC
     Client -->|"HTTPS 443: signed manifest"| Coord
     Client -->|"HTTPS 443: funded workloads"| EB
     Client -->|"HTTPS 443: funded workloads"| UB
@@ -191,10 +189,10 @@ flowchart TB
     ER -->|"Local revenue query"| EB
     UR -->|"Local controller API"| UC
     UR -->|"Local revenue query"| UB
-    ER -.->|"Existing round API over local Unix socket"| EP
-    UR -.->|"Existing round API over local Unix socket"| UP
-    EP -.->|"HTTPS: chain reads only"| Chain
-    UP -.->|"HTTPS: chain reads only"| Chain
+    ER -->|"Existing round API over local Unix socket"| EP
+    UR -->|"Existing round API over local Unix socket"| UP
+    EP -->|"HTTPS: chain reads only"| Chain
+    UP -->|"HTTPS: chain reads only"| Chain
     Coord -->|"Private authenticated broker admin"| EB
     Coord -->|"Private authenticated broker admin"| UB
     Cold -->|"Operator-mediated manifest sign cycle"| Coord
@@ -218,7 +216,7 @@ through ingress; it does not expose the secure console or protocol control.
 | Controller or coordinator to broker admin | Authenticated private access to broker listener; ingress must exclude admin paths from public routing |
 | Broker to controller receipts / snapshots | Authenticated private access to host 8083 / container 8080; distinct from the public member listener |
 | Reconciler / executor to local services | Internal controller API and local receiver Unix socket as applicable; executor uses its own payout wallet |
-| Regional reconciler to local protocol observer | Existing round API over Unix socket; new keyless read-only mode required, no secure-orch connection |
+| Regional reconciler to local protocol observer | Existing round API over Unix socket; keyless `--mode=read-only`, no secure-orch connection |
 
 These host ports are current example-stack defaults, not requirements for the
 new topology. Cross-host service connections require explicit ingress/bindings
@@ -256,14 +254,14 @@ flowchart LR
         B -->|"Account validation and settlement"| PD
         PD --> Ledger
         B -->|"Work receipts and outcomes"| C
-        R -.->|"Read round status and events"| Observer
-        R -->|"Read confirmed revenue"| PD
+        R -->|"Read round status and events"| Observer
+        R -->|"Read scoped revenue and work proofs"| B
         R -->|"Read receipts; submit round close"| C
         E -->|"Claim intents; report transaction status"| C
         E -->|"Sign member payouts"| Wallet
     end
-    UI -.->|"Member-scoped actions and reports: proposed"| C
-    UI -.->|"Member-scoped actions and reports: proposed"| Other
+    UI -->|"Pool-scoped member actions and reports"| C
+    UI -->|"Pool-scoped member actions and reports"| Other
 ```
 
 The receiver ledger contains buyer wholesale credit and settlement records.
@@ -284,10 +282,9 @@ not make it the old pool.
 
 The pool ID is distinct from the member wallet, enrollment ID and each broker's
 settlement-domain ID. Cross-region references must qualify controller-local
-identifiers by pool identity. Exact encoding, API propagation and upgrade of
-existing controller stores remain implementation details to audit; no new
-network protocol field is assumed necessary. The identity decision is accepted,
-not yet implemented.
+identifiers by pool identity. The controller stores a generated `pool_` identity
+and propagates it through regional enrollment,
+service authorization, source evidence and accounting records.
 
 Decision 3 (locked): each pool owns separate, versioned membership terms, even
 when regional settings initially match. Terms describe commission, payout
@@ -300,14 +297,16 @@ Material changes require acceptance before the member takes new work under the
 changed terms. Existing work and earned amounts retain their original terms.
 Implementation must preserve the applicable terms version for work and its
 resulting obligations, including in-flight work across a terms change. The
-exact version representation and admission enforcement remain implementation
-details; regional terms and acceptance are not yet implemented.
+controller and brokers preserve `terms_version` in acceptance, enrollment,
+credential grants, admitted work and final receipts. Safe economic transitions
+use a durable admission barrier and verified settlement before publishing a
+future aligned version; see [regional terms](../../pool-controller/docs/regional-terms.md).
 
 The signup flow is wallet sign-in, region selection and acceptance of that
 region's terms, regional enrollment, then its one-command agent bundle. Joining
-the other region creates a separate membership. Existing controller sessions
-are local (`pool-controller/internal/server/member/session.go`); a unified
-sign-in is additional work, not a shared-cookie configuration change.
+the other region creates a separate membership. The shared `member-portal` owns durable wallet sessions and mints narrowly scoped
+regional authorization; controller-local legacy sessions remain local. See
+[portal authentication](../../member-portal/docs/authentication.md).
 
 Decision 5 (locked): members sign in once with their wallet to the shared portal.
 Sign-in proves wallet ownership without automatically joining either pool.
@@ -321,9 +320,9 @@ The implementation must preserve nonce/CSRF protection and keep admin
 credentials out of the browser. Private member earnings require member-scoped
 access. Public regional health and available-offering descriptions must not
 disclose member data. A portal outage makes portal access unavailable but does
-not interrupt enrolled runners, accounting or payouts. Token format, issuer
-trust, key rotation, expiry and revocation behavior remain implementation
-details to specify. Federated sign-in is accepted, not yet implemented.
+not interrupt enrolled runners, accounting or payouts. The implemented fixed Ed25519 token format has a two-minute maximum lifetime,
+reloadable issuer trust, key validity/revocation and session revocation. See
+[regional member authorization](../../pool-controller/docs/federated-member-access.md).
 
 Names such as `members.<domain>`, `eu.members.<domain>` and
 `us.members.<domain>` are examples, not assigned domains. Separate domains are
@@ -331,8 +330,9 @@ optional. Pool identity must survive a domain change.
 
 ## Accounting and reporting boundaries
 
-Each regional reconciler closes its own controller's books. Current code reads
-one receiver socket, requests up to 500 final receipts, and uses
+Each regional reconciler closes its own controller's books from every required
+source-qualified receiver report and every page of finalized work receipts.
+It durably prepares a complete snapshot before submitting
 `round-close-<round>` as the close ID
 (`pool-reconciler/cmd/livepeer-pool-reconciler/main.go`,
 `prepareRoundCloseRequest`). Identical IDs in separate controller stores are
@@ -371,8 +371,9 @@ accounted for; a shutdown-time snapshot alone does not establish finality.
 If a host disappears before required data is collected, hold affected closure
 until reporting is restored or an explicit audited recovery resolves the gap.
 Stopping a whole region likewise preserves accounting and payout services long
-enough to discharge outstanding obligations. Exact late-settlement and recovery
-mechanics remain to be decided; this lifecycle is accepted, not implemented.
+enough to discharge outstanding obligations. The implemented source lifecycle,
+complete-history proofs and durable retry behavior are described in
+[regional collection](../../pool-reconciler/docs/regional-collection.md).
 
 Decision 9, payout model and grouping (locked): use Model B, full realized
 revenue sharing, with one member revenue pot per regional pool. US combines
@@ -395,10 +396,9 @@ Decision 9, accounting window (locked): each regional pool has a configurable
 accounting window, initially 14 Livepeer rounds. Track work and revenue per
 round, then calculate member shares across the whole window. Close only after
 the window ends and all required source reports are complete, and create a
-payout batch for approval. Regions close independently. This fixes the
-accounting interval, not the policy for attributing delayed redemptions, and
-does not imply scheduled closure is already implemented. Window alignment and
-configuration-change validation remain implementation details to specify.
+payout batch for approval. Regions close independently. Scheduled closure and
+atomic approved obligations are implemented in [regional accounting](../../pool-controller/docs/regional-accounting.md);
+window-aligned policy changes use the [terms publication barrier](../../pool-controller/docs/regional-terms.md).
 
 Decision 9, contribution weighting (locked): each member's share is their
 finalized, accepted billed-work value divided by the pool's total eligible
@@ -436,9 +436,10 @@ the chain evidence needed to verify the assignment, handle reorgs and resume
 after outages without assigning old transactions to new windows. Each source
 report must establish processing completeness through the window's relevant
 chain history; responding with a current total alone is insufficient to close.
-The confirmation threshold, chain completeness evidence and recovery mechanics
-remain implementation details to specify and validate. No ticket-to-work
-mapping is introduced.
+Confirmation depth, canonical inclusion proofs and historical replay are
+implemented in the receiver and [regional collection](../../pool-reconciler/docs/regional-collection.md).
+The deployment scenario sets four confirmation blocks; operators retain the
+configured threshold in their evidence. No ticket-to-work mapping is introduced.
 
 Decision 9, commission and costs (locked): one configurable commission rate
 per pool applies uniformly across its offerings. EU and US may have different
@@ -494,14 +495,20 @@ the revenue allocated for the window. The zero-work exception instead allocates
 the whole amount directly to the operator.
 
 The main payout rules are now accepted. Later-window member adjustments were
-discussed but have not been accepted as a policy. Safe term transitions and
-exceptional post-close chain corrections still require implementation design
-consistent with immutable approved payouts.
+discussed but have not been accepted as a policy. Term transitions now use the durable all-source publication barrier described
+in [regional terms](../../pool-controller/docs/regional-terms.md). Conflicting
+post-close evidence creates an append-only correction hold for manual review;
+approved obligations remain immutable. The [accounting runbook](../../pool-controller/docs/regional-accounting.md)
+documents historical re-collection and the hold boundary. No automatic
+later-window member adjustment policy is introduced.
 
 The portal reports regional and combined earnings, pending obligations and
 paid amounts separately. It sums only compatible denominations and periods,
 retains source pool attribution and marks data freshness. Missing data is
 unavailable, not zero. Reading a payout record never authorizes a payment.
+The [reporting contract](../../member-portal/docs/reporting.md) documents the
+implemented atomic member snapshot, exact categories, source evidence, coverage
+spans and bounded stale-response cache.
 
 Broker wholesale credit remains scoped by the
 [settlement-domain contract](settlement-domain-identity.md). Regional pool
@@ -510,10 +517,9 @@ appropriate new authorization and a funding decision for that account.
 
 ## High-level sequences
 
-These sequences specify the intended regional behavior. Existing local flows
-are reused; cross-region authentication, ownership enforcement and remote round
-timing remain proposed. They do not define new RPC names or imply that the
-shared portal is already implemented.
+These sequences specify the intended regional behavior. The local implementation uses scoped regional authorization, shared GPU ownership
+and local keyless protocol observers. These sequences do not imply that the
+shared portal has been deployed.
 
 ### Member signup and first workload eligibility
 
@@ -590,11 +596,12 @@ sequenceDiagram
     end
     Client->>B: Submit workload with broker-bound authorization
     B->>PD: Validate / reserve authorized spend
-    B->>C: Idempotent stub work receipt
+    B->>B: Persist member binding before dispatch
     B->>Runner: Dispatch to eligible regional member
     Runner-->>B: Result / final usage evidence
     B->>PD: Settle accounted usage
-    B->>C: Final attributed receipt and outcome
+    B->>B: Persist billed delta and final receipt
+    B->>C: Retry source-qualified receipt until acknowledged
     B-->>Client: Result / protocol completion
     Note over C,PD: Member earnings stay in this pool. Buyer credit stays in this broker ledger.
 ```
@@ -605,16 +612,19 @@ and independently decide whether that account needs funding.
 
 ### Round reconciliation, payout approval and execution
 
-The starting policy is human batch approval. The diagram deliberately shows
-window closure as an explicit request: existing close/policy functions do not
-by themselves prove a scheduled automatic closer is wired. Automatic closure
-and bounded approval must be validated separately before rollout.
+The starting policy is human batch approval. Regional controllers check complete,
+ended windows at startup and every 30 seconds; operators can also request the
+same idempotent close. Missing rounds produce durable holds. Local schedule and
+restart tests do not constitute a live rollout. See
+[`regional accounting`](../../pool-controller/docs/regional-accounting.md) for
+exact arithmetic, interval alignment and telemetry.
 
 ```mermaid
 sequenceDiagram
     participant Timing as Local keyless protocol observer
     participant R as Regional reconciler
     participant PD as Regional receiver ledgers
+    participant B as Regional broker reporting APIs
     participant C as Regional controller
     actor Operator as Regional operator
     participant E as Regional payout executor
@@ -623,13 +633,15 @@ sequenceDiagram
     R->>Timing: Read completed round through existing local API
     R->>C: Read all final receipts for the round
     loop Every configured regional settlement domain
-        R->>PD: Read confirmed source revenue
-        PD-->>R: Source-qualified revenue evidence
+        R->>B: Read scoped revenue and work proofs over HTTPS
+        B->>PD: Private local confirmed revenue read
+        PD-->>B: Inclusion-round evidence
+        B-->>R: Source-qualified complete proofs
     end
     R->>R: Verify source completeness and deduplicate
     R->>C: Submit idempotent regional round close
-    C->>C: Reconcile attribution, commission and available revenue
-    Operator->>C: Request settlement-window close
+    C->>C: Freeze complete regional round evidence
+    C->>C: Scheduled or requested aligned-window close
     alt Incomplete sources or accounting anomaly
         C-->>Operator: Hold window with reason. Do not release payouts.
     else Complete window with revenue and exactly zero eligible work
@@ -639,7 +651,7 @@ sequenceDiagram
     else Window passes validation
         C->>C: Persist pending window and payout batch
         Operator->>C: Review and approve batch
-        C->>C: Materialize immutable payout intents
+        C->>C: Atomically approve batch, persist member intents and audit
         Note over Operator,E: Regional payout wallet must be funded separately
         E->>C: Claim / lease approved intents
         E->>Chain: Submit signed native ETH payouts
@@ -657,9 +669,10 @@ Retries preserve the approved recipient and amount and must not pay twice.
 
 ### Moving a GPU between regions
 
-This sequence applies the accepted shared ownership decision. Its cross-pool
-API and fencing mechanics are not yet implemented. A UI toggle alone cannot
-establish that an old controller or runner has stopped using a device.
+The [regional transfer implementation](../../pool-controller/docs/regional-device-transfers.md)
+persists this sequence, including per-device broker fences, generation revocation,
+revision-bound agent stop evidence and shared ownership release. Source uncertainty
+holds activation; a UI selection cannot establish that a runner has stopped.
 
 ```mermaid
 sequenceDiagram
@@ -674,7 +687,8 @@ sequenceDiagram
     Old->>Old: Complete or explicitly terminate in-flight work
     Old->>Source: Final receipts and drain evidence
     Source->>Old: Revoke old placement / enrollment authority as appropriate
-    Old-->>Source: Old runner execution stopped
+    Source->>Old: Issue explicit stop desired-state revision
+    Old-->>Source: Matching revision confirms containers stopped
     alt Source ownership release can be established
         Member->>Target: Enroll selected GPU under destination membership
         Source->>Ownership: Record fenced release of old assignment
@@ -737,3 +751,15 @@ region. The shared portal must not double-count earnings or turn stale data
 into a financial action. Deployment also depends on applicable settlement
 release gates and verified runner images; the regional design does not waive
 those existing requirements.
+
+Machine API implementation details and the endpoint permission matrix are in
+[regional service access](regional-service-access.md).
+
+Implementation details for durable source proofs and complete collection are documented in [regional work accounting](../../capability-broker/docs/regional-work-accounting.md) and [regional collection](../../pool-reconciler/docs/regional-collection.md). These local paths do not imply live rollout or completion of the remaining regional-pool epic.
+
+Regional deployment configurations and local parser checks are documented in the
+[regional deployment scenario](../../infra/scenarios/regional-pools/README.md).
+The [backup and manual restore runbook](../../infra/scenarios/regional-pools/backup-and-restore.md)
+covers stopped writers, every durable store and secret role, identity checks,
+old-writer fencing and post-snapshot chain reconciliation. These paths do not
+claim a live rollout.

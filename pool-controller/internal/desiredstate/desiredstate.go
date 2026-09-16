@@ -13,7 +13,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/gpu"
@@ -31,7 +33,10 @@ type Document struct {
 
 // Service is one runner the agent should have running.
 type Service struct {
-	Name string `json:"name"`
+	SecretEnv      []string `json:"secret_env,omitempty"`
+	LocalBearerEnv string   `json:"local_bearer_env,omitempty"`
+	Name           string   `json:"name"`
+	CacheVolumes   []string `json:"cache_volumes,omitempty"`
 	// RTMPPort is the container port the agent's RTMPS edge forwards to;
 	// zero for a service with no ingest (plan 0046 §2.7).
 	RTMPPort int `json:"rtmp_port,omitempty"`
@@ -51,6 +56,8 @@ type Service struct {
 	// dispatching, and stops it once quiet — it is still listed here
 	// precisely because it must not simply vanish.
 	Draining bool `json:"draining,omitempty"`
+	// Stop is issued only after dispatch revocation and confirmed quiescence.
+	Stop bool `json:"stop,omitempty"`
 	// TemplateID and AssignmentID are for the agent's own reporting and
 	// for an operator correlating a container back to a decision.
 	TemplateID   string `json:"template_id"`
@@ -141,6 +148,14 @@ func Build(in Input) (Document, error) {
 			return Document{}, fmt.Errorf("assignment %s names template %q, which is not in the catalog",
 				assignment.ID, assignment.TemplateID)
 		}
+		if gpu.VendorOfModel(unit.GPUModel) == gpu.VendorIntel && requiresGPU(tmpl) {
+			if !intelRenderNodeRE.MatchString(unit.RuntimeFacts["render_node"]) {
+				return Document{}, fmt.Errorf("assignment %s: Intel render_node inventory is missing or invalid", assignment.ID)
+			}
+			if _, err := strconv.ParseUint(unit.RuntimeFacts["render_node_gid"], 10, 32); err != nil {
+				return Document{}, fmt.Errorf("assignment %s: Intel render_node_gid inventory is missing or invalid", assignment.ID)
+			}
+		}
 		admission, err := hostAdmissionFor(in.EnrollmentID, tmpl, unit)
 		if err != nil {
 			return Document{}, fmt.Errorf("assignment %s: %w", assignment.ID, err)
@@ -152,12 +167,14 @@ func Build(in Input) (Document, error) {
 			Protocol:        tmpl.Protocol,
 			Identity:        identityFor(tmpl),
 			ComposeFragment: renderCompose(ServiceName(assignment.ID), tmpl, unit, admission),
-			DeviceIDs:       []string{unit.GPUUUID},
-			Models:          modelsOf(tmpl),
-			Draining:        withdrawn,
-			TemplateID:      tmpl.ID,
-			AssignmentID:    assignment.ID,
-			HostAdmission:   admission,
+			CacheVolumes:    cacheVolumes(ServiceName(assignment.ID), tmpl),
+			SecretEnv:       append([]string(nil), tmpl.RunnerCompose.SecretEnv...), LocalBearerEnv: tmpl.RunnerCompose.LocalBearerEnv,
+			DeviceIDs:     []string{unit.GPUUUID},
+			Models:        modelsOf(tmpl),
+			Draining:      withdrawn,
+			TemplateID:    tmpl.ID,
+			AssignmentID:  assignment.ID,
+			HostAdmission: admission,
 		})
 	}
 	// Stable order, so an unchanged pool yields an unchanged revision.
@@ -215,7 +232,7 @@ func modelsOf(tmpl templates.Template) []Model {
 // The GPU is pinned by UUID rather than `gpus: all`: a host with two
 // cards running two workloads must not have both services claim both
 // devices, and a UUID is the only identifier stable across reboots.
-func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit, admission *HostAdmission) string {
+func renderContainer(name string, tmpl templates.Template, unit types.HardwareUnit, admission *HostAdmission, assignmentName string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "  %s:\n", name)
 	// The image is the vendor's build. Placement already refused a card
@@ -233,23 +250,23 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		fmt.Fprintf(&b, "    image: %s\n", image)
 	}
 	b.WriteString("    restart: unless-stopped\n")
+	if tmpl.RunnerCompose.ShmSizeBytes > 0 {
+		fmt.Fprintf(&b, "    shm_size: %d\n", tmpl.RunnerCompose.ShmSizeBytes)
+	}
 	if cmd := tmpl.RunnerCompose.Command; len(cmd) > 0 {
 		b.WriteString("    command:\n")
 		for _, item := range cmd {
-			fmt.Fprintf(&b, "      - %s\n", item)
+			fmt.Fprintf(&b, "      - %q\n", serviceRefs(item, assignmentName, tmpl.RunnerCompose.Companions))
 		}
 	}
-	// One environment block, whoever supplied the values. The pool's
-	// own settings and the member's passthroughs are the same compose
-	// key, and emitting two would be duplicate-key YAML the agent could
-	// not load.
-	//
-	// Member values are rendered as ${NAME}: docker substitutes them
-	// from the member's own .env at `compose up`, so the pool renders
-	// the reference and never the secret.
+	// Values are catalog-owned literals. Quote YAML scalars and escape Compose
+	// interpolation so host environment variables cannot alter runner settings.
 	env := make(map[string]string, len(tmpl.RunnerCompose.Env))
 	for name, value := range tmpl.RunnerCompose.Env {
 		env[name] = value
+	}
+	for _, name := range tmpl.RunnerCompose.SecretEnv {
+		env[name] = "{{secret." + name + "}}"
 	}
 	if admission != nil {
 		env[admission.EnvVar] = admission.BasePath
@@ -279,12 +296,17 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		sort.Strings(names)
 		b.WriteString("    environment:\n")
 		for _, name := range names {
-			fmt.Fprintf(&b, "      %s: %s\n", name, env[name])
+			fmt.Fprintf(&b, "      %s: %q\n", name, serviceRefs(env[name], assignmentName, tmpl.RunnerCompose.Companions))
 		}
+	}
+	if admission != nil || len(tmpl.RunnerCompose.Caches) > 0 {
+		b.WriteString("    volumes:\n")
+	}
+	for _, key := range sortedCacheKeys(tmpl.RunnerCompose.Caches) {
+		fmt.Fprintf(&b, "      - type: volume\n        source: %s-cache-%s\n        target: %q\n", assignmentName, key, tmpl.RunnerCompose.Caches[key])
 	}
 	if admission != nil {
 		dir := strings.TrimSuffix(admission.BasePath, "/lock")
-		b.WriteString("    volumes:\n")
 		fmt.Fprintf(&b, "      - type: bind\n        source: %s\n        target: %s\n        read_only: true\n", dir, dir)
 		for _, suffix := range admission.FileSuffixes {
 			path := admission.BasePath + suffix
@@ -292,14 +314,11 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 		}
 	}
 	// How the card reaches the container is the vendor's to say, and
-	// the two known vendors do it differently. NVIDIA pins one card by
-	// UUID through its container runtime, which is what makes a
-	// two-card host two services that cannot contend. Intel exposes the
-	// DRI render nodes, and compose has no per-card selector for them —
-	// so on a multi-card Intel host every service sees every card, and
-	// the one-service-per-GPU invariant the UUID pin enforces is not
-	// enforced there. Stated here rather than papered over: it is a
-	// real limit of the runtime, not of this renderer.
+	// NVIDIA pins a UUID; Intel maps only the assigned render node to the
+	// stable in-container path expected by encoder images.
+	if tmpl.RunnerCompose.GPU != nil && !*tmpl.RunnerCompose.GPU {
+		return b.String()
+	}
 	switch vendor {
 	case gpu.VendorNVIDIA:
 		if uuid := strings.TrimSpace(unit.GPUUUID); uuid != "" {
@@ -308,7 +327,7 @@ func renderCompose(name string, tmpl templates.Template, unit types.HardwareUnit
 			fmt.Fprintf(&b, "              device_ids: [%q]\n", uuid)
 		}
 	case gpu.VendorIntel:
-		b.WriteString("    devices:\n      - /dev/dri:/dev/dri\n")
+		fmt.Fprintf(&b, "    devices:\n      - %q\n    group_add:\n      - %q\n", unit.RuntimeFacts["render_node"]+":/dev/dri/renderD128", unit.RuntimeFacts["render_node_gid"])
 	case gpu.VendorAMD:
 		// ROCm's standard exposure. No AMD image ships yet; rendering the
 		// right devices when one does costs nothing now.
@@ -368,4 +387,18 @@ func servingUnit(unit types.HardwareUnit) bool {
 	default:
 		return true
 	}
+}
+
+var intelRenderNodeRE = regexp.MustCompile(`^/dev/dri/renderD[0-9]+$`)
+
+func requiresGPU(t templates.Template) bool {
+	if t.RunnerCompose.GPU == nil || *t.RunnerCompose.GPU {
+		return true
+	}
+	for _, c := range t.RunnerCompose.Companions {
+		if c.GPU {
+			return true
+		}
+	}
+	return false
 }

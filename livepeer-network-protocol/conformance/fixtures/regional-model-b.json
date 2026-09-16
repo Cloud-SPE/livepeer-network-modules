@@ -1,0 +1,13 @@
+{
+ "contract": "regional-model-b/v1",
+ "revenue_wei": "10000003",
+ "commission_bps": 1000,
+ "receipts": [
+  {"member": 1, "billed_wei": "1"},
+  {"member": 2, "billed_wei": "1"},
+  {"member": 1, "billed_wei": "2"}
+ ],
+ "expected_commission_wei": "1000000",
+ "expected_member_payouts_wei": ["6750002", "2250000"],
+ "expected_rounding_residual_wei": "1"
+}

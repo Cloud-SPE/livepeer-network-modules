@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 )
 
@@ -58,7 +59,14 @@ func fakeIntelSysfs(t *testing.T) string {
 }
 
 func TestCollectIntelGPUsFromSysfs(t *testing.T) {
-	units, err := collectIntelGPUs(fakeIntelSysfs(t), "host-a")
+	root := fakeIntelSysfs(t)
+	if err := os.MkdirAll(filepath.Join(root, "dev/dri"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "dev/dri/renderD128"), nil, 0600); err != nil {
+		t.Fatal(err)
+	}
+	units, err := collectIntelGPUs(root, "host-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,6 +76,9 @@ func TestCollectIntelGPUsFromSysfs(t *testing.T) {
 	a770 := units[0]
 	if a770.GPUModel != "Intel Arc A770" || a770.VRAMBytes != 16<<30 || a770.Driver != "i915" {
 		t.Fatalf("a770 = %+v", a770)
+	}
+	if a770.Facts["render_node_gid"] != strconv.Itoa(os.Getgid()) {
+		t.Fatalf("device group not inventoried: %v", a770.Facts)
 	}
 	// The id is stable per slot and scoped to the host: a PCI address
 	// alone would collide across members.

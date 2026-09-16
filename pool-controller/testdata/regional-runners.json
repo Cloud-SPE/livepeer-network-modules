@@ -1,0 +1,58 @@
+{
+  "enrollment_id": "regional-runner-fixture",
+  "revision": "rev-4fc59e6f52d2f7f9f5650f7d",
+  "services": [
+    {
+      "name": "runner-unit-a-openai-audio-speech-kokoro",
+      "cache_volumes": [
+        "runner-unit-a-openai-audio-speech-kokoro-cache-models"
+      ],
+      "compose_fragment": "  runner-unit-a-openai-audio-speech-kokoro:\n    image: tztcloud/openai-tts-runner@sha256:b3f4417d966c1ccfcf930cb89b77d456517daedb4f4e2e88c5ac0e5bb5f30369\n    restart: unless-stopped\n    environment:\n      CAPABILITY_NAME: \"openai:audio-speech\"\n      DEFAULT_VOICE: \"af_bella\"\n      DEVICE: \"cuda\"\n      HF_HOME: \"/models/huggingface\"\n      LANG_CODE: \"a\"\n      MAX_QUEUE_SIZE: \"5\"\n      MODEL_ALIAS: \"kokoro\"\n      MODEL_DIR: \"/models\"\n      MODEL_ID: \"hexgrad/Kokoro-82M\"\n      RUNNER_PORT: \"8080\"\n    volumes:\n      - type: volume\n        source: runner-unit-a-openai-audio-speech-kokoro-cache-models\n        target: \"/models\"\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              capabilities: [gpu]\n              device_ids: [\"GPU-regional-5090\"]\n",
+      "device_ids": [
+        "GPU-regional-5090"
+      ],
+      "template_id": "openai-audio-speech-kokoro",
+      "assignment_id": "unit-a|openai-audio-speech-kokoro",
+      "capability": "openai:audio-speech",
+      "protocol": "paid-job/v1",
+      "identity": {
+        "openai.model": "kokoro"
+      }
+    },
+    {
+      "name": "runner-unit-a-openai-audio-transcriptions-whisper-large-v3",
+      "cache_volumes": [
+        "runner-unit-a-openai-audio-transcriptions-whisper-large-v3-cache-models"
+      ],
+      "compose_fragment": "  runner-unit-a-openai-audio-transcriptions-whisper-large-v3:\n    image: tztcloud/openai-audio-runner@sha256:355715003f8b26dc45098fa6ac1242aa592ed370ede9db1f8200b40fb419d1de\n    restart: unless-stopped\n    environment:\n      CAPABILITY_NAME: \"openai:audio-transcriptions\"\n      DEVICE: \"cuda\"\n      DTYPE: \"bfloat16\"\n      INFERENCE_BATCH_SIZE: \"1\"\n      MAX_QUEUE_SIZE: \"2\"\n      MODEL_ALIAS: \"whisper-large-v3\"\n      MODEL_DIR: \"/models\"\n      MODEL_ID: \"openai/whisper-large-v3\"\n      RUNNER_PORT: \"8080\"\n    volumes:\n      - type: volume\n        source: runner-unit-a-openai-audio-transcriptions-whisper-large-v3-cache-models\n        target: \"/models\"\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              capabilities: [gpu]\n              device_ids: [\"GPU-regional-5090\"]\n",
+      "device_ids": [
+        "GPU-regional-5090"
+      ],
+      "template_id": "openai-audio-transcriptions-whisper-large-v3",
+      "assignment_id": "unit-a|openai-audio-transcriptions-whisper-large-v3",
+      "capability": "openai:audio-transcriptions",
+      "protocol": "paid-job/v1",
+      "identity": {
+        "openai.model": "whisper-large-v3"
+      }
+    },
+    {
+      "name": "runner-unit-a-openai-chat-qwen3-6-27b",
+      "cache_volumes": [
+        "runner-unit-a-openai-chat-qwen3-6-27b-cache-compile",
+        "runner-unit-a-openai-chat-qwen3-6-27b-cache-models"
+      ],
+      "compose_fragment": "  runner-unit-a-openai-chat-qwen3-6-27b:\n    image: tztcloud/openai-chat-runner@sha256:769ae95e93cfd9df37d3c8173a52d9ea428ef6dd2b63c0d9300b7277ca190ed7\n    restart: unless-stopped\n    environment:\n      BACKEND_MODEL: \"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP\"\n      CONTEXT_LENGTH: \"8192\"\n      MODEL_ALLOWLIST: \"Qwen3.6-27B\"\n      MODEL_DISCOVERY_RETRIES: \"3600\"\n      QUANTIZATION: \"nvfp4\"\n      REASONING_PARSER: \"qwen3\"\n      RUNNER_ADDR: \":8080\"\n      SERVED_MODEL_NAME: \"Qwen3.6-27B\"\n      TOOL_CALL_PARSER: \"qwen3_coder\"\n      UPSTREAM_KIND: \"vllm\"\n      UPSTREAM_URL: \"http://runner-unit-a-openai-chat-qwen3-6-27b-engine:8000/v1/chat/completions\"\n      USAGE_FIELD: \"total_tokens\"\n    depends_on:\n      - runner-unit-a-openai-chat-qwen3-6-27b-engine\n  runner-unit-a-openai-chat-qwen3-6-27b-engine:\n    image: vllm/vllm-openai@sha256:07ea4e292adf3a26b05ac97114b28849cf4551a26beb1fbe7decd3842d752ed7\n    restart: unless-stopped\n    shm_size: 1073741824\n    command:\n      - \"sakamakismile/Qwen3.6-27B-Text-NVFP4-MTP\"\n      - \"--revision\"\n      - \"6f194695406a3bc88a00573187d5b2eecf984a99\"\n      - \"--served-model-name\"\n      - \"Qwen3.6-27B\"\n      - \"--host\"\n      - \"0.0.0.0\"\n      - \"--port\"\n      - \"8000\"\n      - \"--quantization\"\n      - \"modelopt\"\n      - \"--language-model-only\"\n      - \"--max-model-len\"\n      - \"8192\"\n      - \"--max-num-seqs\"\n      - \"4\"\n      - \"--gpu-memory-utilization\"\n      - \"0.75\"\n      - \"--reasoning-parser\"\n      - \"qwen3\"\n      - \"--enable-auto-tool-choice\"\n      - \"--tool-call-parser\"\n      - \"qwen3_coder\"\n      - \"--speculative-config\"\n      - \"{\\\"method\\\":\\\"mtp\\\",\\\"num_speculative_tokens\\\":3}\"\n    environment:\n      HF_HOME: \"/models/huggingface\"\n      VLLM_CACHE_ROOT: \"/compile-cache\"\n    volumes:\n      - type: volume\n        source: runner-unit-a-openai-chat-qwen3-6-27b-cache-compile\n        target: \"/compile-cache\"\n      - type: volume\n        source: runner-unit-a-openai-chat-qwen3-6-27b-cache-models\n        target: \"/models\"\n    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              capabilities: [gpu]\n              device_ids: [\"GPU-regional-5090\"]\n",
+      "device_ids": [
+        "GPU-regional-5090"
+      ],
+      "template_id": "openai-chat-qwen3.6-27b",
+      "assignment_id": "unit-a|openai-chat-qwen3.6-27b",
+      "capability": "openai:chat-completions",
+      "protocol": "paid-job/v1",
+      "identity": {
+        "openai.model": "Qwen3.6-27B"
+      }
+    }
+  ]
+}

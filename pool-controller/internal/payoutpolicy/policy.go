@@ -35,9 +35,9 @@ type AutoApprove struct {
 	// long before it exceeds anyone's patience for rounding errors.
 	MaxBatchWei     string `json:"max_batch_wei,omitempty"`
 	MaxPerMemberWei string `json:"max_per_member_wei,omitempty"`
-	// RequireScaleGTE refuses a batch derived from a window that did
-	// not collect what it billed. A scale below one means the pool is
-	// paying out more than it took in.
+	// RequireScaleGTE is a legacy attribution-scale bound. Regional Model B
+	// uses actual revenue as its pot, so this bound does not apply; monetary
+	// spend bounds and completeness/integrity checks still do.
 	RequireScaleGTE  float64 `json:"require_scale_gte,omitempty"`
 	MaxBatchesPerDay int     `json:"max_batches_per_day,omitempty"`
 }
@@ -112,6 +112,7 @@ func (p Policy) Validate() error {
 
 // Batch is what a decision is made about.
 type Batch struct {
+	ModelB          bool
 	TotalWei        string
 	MaxPerMemberWei string
 	ScalePPM        uint64
@@ -151,7 +152,7 @@ func Evaluate(policy Policy, hash string, batch Batch, pausePath string, now tim
 	if policy.AutoApprove.MaxBatchesPerDay > 0 && batch.BatchesToday >= policy.AutoApprove.MaxBatchesPerDay {
 		return refuse(fmt.Sprintf("daily limit reached (%d)", policy.AutoApprove.MaxBatchesPerDay))
 	}
-	if policy.AutoApprove.RequireScaleGTE > 0 {
+	if !batch.ModelB && policy.AutoApprove.RequireScaleGTE > 0 {
 		scale := float64(batch.ScalePPM) / 1_000_000
 		if scale < policy.AutoApprove.RequireScaleGTE {
 			return refuse(fmt.Sprintf("settlement scale %.4f below required %.4f",

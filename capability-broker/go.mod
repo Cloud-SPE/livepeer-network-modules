@@ -38,3 +38,7 @@ require (
 replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go => ../livepeer-network-protocol/proto-go
 
 replace github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/version => ../livepeer-network-protocol/version
+
+require github.com/Cloud-SPE/livepeer-network-modules/pool-commons v0.0.0
+
+replace github.com/Cloud-SPE/livepeer-network-modules/pool-commons => ../pool-commons

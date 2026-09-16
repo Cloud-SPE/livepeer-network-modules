@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/payoutpolicy"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/types"
 )
 
@@ -70,6 +71,12 @@ func registerPayoutPolicyRoutes(mux *http.ServeMux, deps Deps, auth func(http.Ha
 		})
 
 		if decision.Approved {
+			if batch.PoolID != "" {
+				_, err := deps.Repo.ApproveRegionalBatchWithPolicy(batch.ID, repo.RegionalApprovalPolicy{Policy: policy, Hash: decision.PolicyHash, PausePath: deps.PayoutPausePath})
+				writeAdminJSON(w, decision, err)
+				return
+			}
+
 			// An approved batch has to be EXPORTED, not merely marked.
 			// Materialising the intents is what actually moves money;
 			// flipping the status alone would leave an auto-approved
@@ -124,6 +131,7 @@ func batchFacts(deps Deps, batch types.PayoutBatch, now time.Time) payoutpolicy.
 	}
 	if window, err := deps.Repo.GetSettlementWindow(batch.SettlementWindowID); err == nil {
 		facts.ScalePPM = window.SettlementScalePPM
+		facts.ModelB = window.PoolID == batch.PoolID && window.PoolID != "" && window.RegionalAllocation != nil
 		facts.Anomaly = window.Anomaly
 	}
 	return facts

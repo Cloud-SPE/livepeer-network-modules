@@ -107,7 +107,8 @@ Current components:
 - `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
 - `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
-- `pool-controller/`, `pool-reconciler/`, `pool-payout-executor/` — Pool control plane (admission, scoring, payout)
+- `pool-controller/`, `pool-reconciler/`, `pool-payout-executor/` — Regional pool policy, complete-source accounting and dedicated-wallet payouts
+- `member-portal/` — Shared wallet sign-in, regional membership actions and qualified reporting
 
 Components can be **extracted to standalone repos later** once they stabilize and have
 independent release cadences. The monorepo isn't a permanent shape; it's the cheapest

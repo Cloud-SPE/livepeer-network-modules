@@ -29,6 +29,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workledger"
 )
 
 // Options aggregates non-host-config dependencies the server takes at
@@ -49,6 +50,8 @@ type Options struct {
 // the admin surface, and a metrics listener (cfg.Listen.Metrics) for
 // Prometheus scraping.
 type Server struct {
+	ownershipMu          sync.Mutex
+	ownershipChecks      map[ownershipCacheKey]uint64
 	settlementSigner     *settlement.Signer
 	mu                   sync.RWMutex
 	cfg                  *config.Config
@@ -75,6 +78,7 @@ type Server struct {
 	backendInFlight      map[string]int
 	backendCapacityUntil map[string]time.Time
 	secrets              backend.SecretResolver
+	workAccounting       *workledger.Client
 	receiptSink          receipts.Client
 	poolReporter         poolreport.Client
 	poolSnapshot         *poolsnapshot.Cache
@@ -229,6 +233,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		},
 	}
 
+	s.runners.Authorize = s.authorizeDeviceDispatch
 	if len(cfg.Offers) > 0 && cfg.OffersStatePath == "" && cfg.OffersSource != config.OffersSourceAdmin {
 		log.Printf("warning: offers[] configured without offers_state_path — frozen shapes will not survive a restart, " +
 			"and a re-freeze from a different runner would be a silent manifest change")
@@ -252,6 +257,15 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 	certEngine.Report = offersEngine.RecordCertification
 	s.runners.OnChange = func(hostID string) { offersEngine.Rematch(hostID) }
 
+	if err := s.initWorkAccounting(); err != nil {
+		return nil, fmt.Errorf("regional accounting: %w", err)
+	}
+	ready := false
+	defer func() {
+		if !ready && s.workAccounting != nil {
+			_ = s.workAccounting.Store.Close()
+		}
+	}()
 	if err := s.initSessionEngine(); err != nil {
 		return nil, fmt.Errorf("session engine: %w", err)
 	}
@@ -278,6 +292,7 @@ func New(cfg *config.Config, opts Options) (*Server, error) {
 		s.registerJobRoutes()
 	}
 	s.metricsSrv = newMetricsServer(cfg.Listen.Metrics)
+	ready = true
 	return s, nil
 }
 
@@ -298,6 +313,9 @@ func loadRuntimeRevision(configPath string, cfg *config.Config) (string, string,
 }
 
 func resolveAdminToken(cfg *config.Config) (string, error) {
+	if cfg != nil && cfg.ServiceAuthFile != "" {
+		return "", nil
+	}
 	if cfg == nil {
 		return "", nil
 	}
@@ -386,6 +404,12 @@ func (s *Server) currentPoolSnapshot() *poolsnapshot.Cache {
 // Run starts the server in the foreground. Blocks until ctx is canceled or
 // any listener errors; performs graceful shutdown on cancellation.
 func (s *Server) Run(ctx context.Context) error {
+	if s.workAccounting != nil {
+		workCtx, cancel := context.WithCancel(ctx)
+		done := make(chan struct{})
+		go func() { defer close(done); s.runWorkAccounting(workCtx) }()
+		defer func() { cancel(); <-done; _ = s.workAccounting.Store.Close() }()
+	}
 	errCh := make(chan error, 4)
 	if s.sessionEngine != nil {
 		// Restart recovery first (rebind-or-terminal), then the

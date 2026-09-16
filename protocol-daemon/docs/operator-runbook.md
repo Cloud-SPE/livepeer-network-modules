@@ -22,12 +22,13 @@ Those stay with:
 
 ## 1. Modes
 
-One binary, three modes:
+One binary, four modes:
 
 | Mode | What runs |
 |---|---|
 | `--mode=round-init` | round initialization only |
 | `--mode=reward` | reward calling only |
+| `--mode=read-only` | keyless round status and events; all mutation RPCs return Unimplemented |
 | `--mode=both` | both services in one process |
 
 The common production shape is `--mode=both`.
@@ -239,3 +240,34 @@ per-round idempotency key). Every write is gated on the fresh authoritative
 round state and pre-flighted with an `eth_call` dry-run before any gas is
 spent. `--treasury-address` sets the LivepeerGovernor contract (empty =
 treasury voting disabled).
+
+## Keyless regional observer
+
+Run one `--mode=read-only` instance beside each regional reconciler using
+[`examples/observer.compose.yaml`](../examples/observer.compose.yaml). Set the
+operator-managed RPC URLs and image reference, then run
+`docker compose -f examples/observer.compose.yaml up -d`. Mount the observer's
+socket volume in the reconciler and configure its existing protocol socket
+path as `/var/run/livepeer/protocol.sock`. Both processes must use the same
+Unix UID because the socket has mode 0600. No network control port is exposed.
+
+The observer validates chain ID and RoundsManager bytecode and reads the current
+round before opening its socket. It does not read a keystore/password, query a
+wallet balance, construct a transaction manager, resume intents, or run any
+write automation. Health, GetRoundStatus and StreamRoundEvents remain available;
+configuration and mutation RPCs return Unimplemented. Signing modes on
+secure-orch keep their existing preflight gates.
+
+Persist `/var/lib/livepeer`; use separate volumes and socket directories per
+region. Normal restarts reread current chain state; round events are wakeups,
+not a replayable history. Reconciler catch-up must query current status and
+its durable accounting cursor. RPC read failures return errors rather than
+successful stale round status. Chain changes can emit a lower round; accounting
+must validate historical inclusion evidence before closing financial windows.
+
+For manual backup, stop the observer and copy its entire data volume while
+closed. Restore only after stopping/fencing the old instance, preserve the
+volume owner UID 65532, and check Health/GetRoundStatus before restarting the
+reconciler. This store contains observer state, not authoritative pool books.
+Even an accidentally reused signing store cannot resume intents in read-only
+mode, but never deliberately share that store or mount signing credentials.

@@ -29,12 +29,14 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-member-agent/internal/attach"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-member-agent/internal/desiredstate"
 	"github.com/gorilla/websocket"
 	"github.com/quic-go/quic-go"
 )
@@ -49,13 +51,16 @@ var version = "dev"
 const LocalIDHeader = "Livepeer-Runner-Local-Id"
 
 type config struct {
-	BrokerURL      string
-	BrokerQUICAddr string
-	HostID         string
-	Credential     string
-	RunnersFile    string
-	Runners        []attach.Runner
-	RefreshEvery   time.Duration
+	AgentCredentialsFile string
+	GPUUUIDs             []string
+	BrokerURLs           []string
+	BrokerURL            string
+	BrokerQUICAddr       string
+	HostID               string
+	Credential           string
+	RunnersFile          string
+	Runners              []attach.Runner
+	RefreshEvery         time.Duration
 
 	// Desired-state loop (plan 0044 §3.4). Empty ControllerURL means
 	// this host is configured by hand: the agent attaches with whatever
@@ -140,7 +145,7 @@ func run(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	if cfg.BrokerURL == "" && cfg.BrokerQUICAddr == "" {
+	if len(cfg.BrokerURLs) == 0 && cfg.BrokerURL == "" && cfg.BrokerQUICAddr == "" {
 		return errors.New("LIVEPEER_BROKER_URL or LIVEPEER_BROKER_QUIC_ADDR is required")
 	}
 	if cfg.Credential == "" {
@@ -150,14 +155,13 @@ func run(ctx context.Context, args []string) error {
 		log.Printf("warning: no runners declared — attaching with hardware only; " +
 			"this host announces itself but serves nothing until runners are configured")
 	}
-	state := newRunnerState()
-	state.set(cfg.Runners, "")
+	state := initialRunnerState(cfg)
 	if err := startEdge(ctx, state); err != nil {
 		log.Print(err)
 	}
 	if cfg.PoolManaged() {
 		// The pool owns the runner set. Whatever was configured locally
-		// is a starting point at most: the first reconcile replaces it.
+		// is never activated before a current desired-state fetch.
 		log.Printf("pool-managed: polling %s for enrollment %s every %s",
 			cfg.ControllerURL, cfg.EnrollmentID, cfg.PollEvery)
 		loopCtx, cancel := context.WithCancel(ctx)
@@ -165,7 +169,7 @@ func run(ctx context.Context, args []string) error {
 		go desiredLoop(loopCtx, cfg, state, nil)
 	}
 
-	err = tunnelLoop(ctx, cfg, state)
+	err = tunnelFleet(ctx, cfg, state, tunnelLoop)
 	if errors.Is(err, context.Canceled) {
 		return nil
 	}
@@ -188,17 +192,23 @@ func loadConfig(args []string) (config, error) {
 		HostID:         strings.TrimSpace(os.Getenv("LIVEPEER_HOST_ID")),
 		RunnersFile:    strings.TrimSpace(os.Getenv("LIVEPEER_RUNNERS_FILE")),
 
-		ControllerURL:       strings.TrimRight(strings.TrimSpace(os.Getenv("POOL_CONTROLLER_URL")), "/"),
-		EnrollmentID:        strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_ID")),
-		EnrollmentToken:     enrollmentToken(),
-		ComposeFile:         envOr("POOL_COMPOSE_FILE", "runners.compose.yaml"),
-		ComposeBinary:       strings.TrimSpace(os.Getenv("POOL_COMPOSE_BINARY")),
-		PollEvery:           envDuration("POOL_POLL_EVERY", 30*time.Second),
-		PollTimeout:         envDuration("POOL_POLL_TIMEOUT", 30*time.Second),
-		RotateEvery:         envDuration("POOL_ROTATE_EVERY", 24*time.Hour),
-		EnrollmentTokenFile: strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_TOKEN_FILE")),
-		RefreshEvery:        *refreshEvery,
+		ControllerURL:        strings.TrimRight(strings.TrimSpace(os.Getenv("POOL_CONTROLLER_URL")), "/"),
+		EnrollmentID:         strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_ID")),
+		EnrollmentToken:      enrollmentToken(),
+		ComposeFile:          envOr("POOL_COMPOSE_FILE", "runners.compose.yaml"),
+		ComposeBinary:        strings.TrimSpace(os.Getenv("POOL_COMPOSE_BINARY")),
+		PollEvery:            envDuration("POOL_POLL_EVERY", 30*time.Second),
+		PollTimeout:          envDuration("POOL_POLL_TIMEOUT", 30*time.Second),
+		RotateEvery:          envDuration("POOL_ROTATE_EVERY", 24*time.Hour),
+		EnrollmentTokenFile:  strings.TrimSpace(os.Getenv("POOL_ENROLLMENT_TOKEN_FILE")),
+		AgentCredentialsFile: strings.TrimSpace(os.Getenv("POOL_AGENT_CREDENTIALS_FILE")),
+		RefreshEvery:         *refreshEvery,
 	}
+	selected, err := parseSelectedGPUs(os.Getenv("POOL_GPU_UUIDS"))
+	if err != nil {
+		return cfg, err
+	}
+	cfg.GPUUUIDs = selected
 	if cfg.RefreshEvery <= 0 {
 		cfg.RefreshEvery = time.Minute
 	}
@@ -207,6 +217,27 @@ func loadConfig(args []string) (config, error) {
 		return cfg, err
 	}
 	cfg.Credential = cred
+	if cfg.AgentCredentialsFile == "" && cfg.EnrollmentTokenFile != "" {
+		cfg.AgentCredentialsFile = filepath.Join(filepath.Dir(cfg.EnrollmentTokenFile), "agent-credentials.json")
+	}
+	if cfg.AgentCredentialsFile != "" {
+		secrets, err := desiredstate.LoadAgentCredentials(cfg.AgentCredentialsFile)
+		if err == nil {
+			if secrets.EnrollmentID != cfg.EnrollmentID {
+				return cfg, fmt.Errorf("agent credential enrollment mismatch")
+			}
+			cfg.EnrollmentToken = secrets.Token
+			cfg.Credential = secrets.AttachCredential
+		} else if !os.IsNotExist(err) {
+			return cfg, err
+		}
+	}
+
+	var fleetErr error
+	cfg.BrokerURLs, fleetErr = parseBrokerFleet(os.Getenv("LIVEPEER_BROKER_URLS"), cfg.BrokerQUICAddr)
+	if fleetErr != nil {
+		return cfg, fleetErr
+	}
 	runners, err := loadRunners(cfg.RunnersFile)
 	if err != nil {
 		return cfg, err
@@ -271,7 +302,7 @@ func defaultHostID() string {
 // plus the declared runners. Hardware is re-read every time, so a GPU
 // that appears or fails shows up on the next refresh.
 func buildDocument(ctx context.Context, cfg config) (*attach.Document, error) {
-	hw := collectHardware(ctx, cfg.HostID)
+	hw := filterSelectedHardware(collectHardware(ctx, cfg.HostID), cfg.GPUUUIDs)
 	// Every runner says what it is, or is named and left out. A missing
 	// contract is the operator's signal — this log line IS the inventory
 	// of runners that do not adhere — and it must not keep the rest of
@@ -331,6 +362,9 @@ func runTunnel(ctx context.Context, cfg config, state *runnerState) error {
 	if state != nil {
 		runners, revision := state.get()
 		cfg.Runners = runners
+		if credential := state.credential(); credential != "" {
+			cfg.Credential = credential
+		}
 		if revision != "" {
 			log.Printf("attaching with desired state %s (%d runner(s))", revision, len(runners))
 		}
@@ -383,6 +417,8 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 		return err
 	}
 	defer func() { _ = conn.Close() }()
+	stopClose := context.AfterFunc(ctx, func() { _ = conn.Close() })
+	defer stopClose()
 
 	var writeMu sync.Mutex
 	send := func(msg tunnelMessage) error {
@@ -443,15 +479,22 @@ func refreshLoop(ctx context.Context, cfg config, state *runnerState, current *a
 	if state != nil {
 		wake = state.wake()
 	}
+	first := make(chan struct{})
+	close(first)
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-first:
+			first = nil
 		case <-wake:
 			// A placement changed. Re-register now rather than at the
 			// next tick: the pool may be withdrawing a runner, and the
 			// broker has to stop dispatching before the container does.
 		case <-time.After(cfg.RefreshEvery):
+		}
+		if state != nil {
+			wake = state.wake()
 		}
 		// Rebuild from the shared state, not from the config this
 		// session started with — otherwise a pool-managed host would
@@ -460,6 +503,9 @@ func refreshLoop(ctx context.Context, cfg config, state *runnerState, current *a
 		if state != nil {
 			runners, _ := state.get()
 			sessionCfg.Runners = runners
+			if credential := state.credential(); credential != "" {
+				sessionCfg.Credential = credential
+			}
 		}
 		next, err := buildDocument(ctx, sessionCfg)
 		if err != nil {
@@ -589,7 +635,7 @@ func readQUICFrameHeader(r io.Reader) (tunnelMessage, error) {
 	return msg, nil
 }
 
-func handleQUICRequest(ctx context.Context, stream *quic.Stream, routes map[string]string) {
+func handleQUICRequest(ctx context.Context, stream *quic.Stream, routes runnerRoutes) {
 	defer func() { _ = stream.Close() }()
 	msg, err := readQUICFrameHeader(stream)
 	if err != nil {
@@ -605,12 +651,12 @@ func handleQUICRequest(ctx context.Context, stream *quic.Stream, routes map[stri
 	}
 }
 
-func forwardQUICRequest(ctx context.Context, stream *quic.Stream, routes map[string]string, msg tunnelMessage) error {
+func forwardQUICRequest(ctx context.Context, stream *quic.Stream, routes runnerRoutes, msg tunnelMessage) error {
 	base, err := routeFor(routes, msg.Headers)
 	if err != nil {
 		return writeQUICFrameHeader(stream, tunnelMessage{Type: "response", ID: msg.ID, Error: err.Error()})
 	}
-	target, err := joinBackendURL(base, msg.URL)
+	target, err := joinBackendURL(base.URL, msg.URL)
 	if err != nil {
 		return writeQUICFrameHeader(stream, tunnelMessage{Type: "response", ID: msg.ID, Error: err.Error()})
 	}
@@ -619,7 +665,10 @@ func forwardQUICRequest(ctx context.Context, stream *quic.Stream, routes map[str
 		return writeQUICFrameHeader(stream, tunnelMessage{Type: "response", ID: msg.ID, Error: err.Error()})
 	}
 	req.Header = runnerHeaders(msg.Headers)
-	httpResp, err := http.DefaultClient.Do(req)
+	if base.Bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+base.Bearer)
+	}
+	httpResp, err := runnerHTTPClient.Do(req)
 	if err != nil {
 		return writeQUICFrameHeader(stream, tunnelMessage{Type: "response", ID: msg.ID, Error: err.Error()})
 	}
@@ -636,14 +685,14 @@ func forwardQUICRequest(ctx context.Context, stream *quic.Stream, routes map[str
 	return err
 }
 
-func forwardTunnelRequest(ctx context.Context, routes map[string]string, msg tunnelMessage) tunnelMessage {
+func forwardTunnelRequest(ctx context.Context, routes runnerRoutes, msg tunnelMessage) tunnelMessage {
 	resp := tunnelMessage{Type: "response", ID: msg.ID}
 	base, err := routeFor(routes, msg.Headers)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp
 	}
-	target, err := joinBackendURL(base, msg.URL)
+	target, err := joinBackendURL(base.URL, msg.URL)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp
@@ -659,7 +708,10 @@ func forwardTunnelRequest(ctx context.Context, routes map[string]string, msg tun
 		return resp
 	}
 	req.Header = runnerHeaders(msg.Headers)
-	httpResp, err := http.DefaultClient.Do(req)
+	if base.Bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+base.Bearer)
+	}
+	httpResp, err := runnerHTTPClient.Do(req)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp
@@ -685,14 +737,14 @@ func forwardTunnelRequest(ctx context.Context, routes map[string]string, msg tun
 // (runner-attach §7). Routing on the path instead would send work for
 // two models behind one capability id to whichever container was
 // listed first.
-func routeFor(routes map[string]string, headers map[string][]string) (string, error) {
+func routeFor(routes runnerRoutes, headers map[string][]string) (runnerRoute, error) {
 	localID := headerValue(headers, LocalIDHeader)
-	if base := routes[localID]; base != "" {
+	if base := routes[localID]; base.URL != "" {
 		return base, nil
 	}
 	// A container serving several capabilities attaches each under a
 	// derived id (attach.LocalIDFor); all of them are the one container.
-	if base := routes[attach.BaseLocalID(localID)]; base != "" {
+	if base := routes[attach.BaseLocalID(localID)]; base.URL != "" {
 		return base, nil
 	}
 	if localID == "" && len(routes) == 1 {
@@ -701,9 +753,9 @@ func routeFor(routes map[string]string, headers map[string][]string) (string, er
 		}
 	}
 	if localID == "" {
-		return "", fmt.Errorf("no %s header and this host serves %d runners", LocalIDHeader, len(routes))
+		return runnerRoute{}, fmt.Errorf("no %s header and this host serves %d runners", LocalIDHeader, len(routes))
 	}
-	return "", fmt.Errorf("no runner with local_id %q", localID)
+	return runnerRoute{}, fmt.Errorf("no runner with local_id %q", localID)
 }
 
 // runnerHeaders strips the broker's routing header before forwarding:

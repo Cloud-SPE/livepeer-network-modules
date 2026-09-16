@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"sync"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -14,7 +15,10 @@ import (
 const snapshotsBucket = "snapshots"
 
 type StateRepo struct {
-	db *bolt.DB
+	termsPublicationMu sync.Mutex
+	deviceTransferMu   sync.Mutex
+	db                 *bolt.DB
+	poolID             string
 }
 
 type Snapshot struct {
@@ -36,8 +40,14 @@ func Open(dir string) (*StateRepo, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open bolt db: %w", err)
 	}
+	var poolID string
 	if err := db.Update(func(tx *bolt.Tx) error {
-		_, err := tx.CreateBucketIfNotExists([]byte(snapshotsBucket))
+		var err error
+		poolID, err = initRegional(tx)
+		if err != nil {
+			return err
+		}
+		_, err = tx.CreateBucketIfNotExists([]byte(snapshotsBucket))
 		if err != nil {
 			return err
 		}
@@ -52,7 +62,7 @@ func Open(dir string) (*StateRepo, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init bolt db: %w", err)
 	}
-	return &StateRepo{db: db}, nil
+	return &StateRepo{db: db, poolID: poolID}, nil
 }
 
 func (r *StateRepo) Close() error {

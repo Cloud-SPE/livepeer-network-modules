@@ -1,6 +1,8 @@
 package member
 
 import (
+	"errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-controller/internal/repo"
 	"math/big"
 	"net/http"
 	"strings"
@@ -19,11 +21,12 @@ import (
 // total is another member's income by subtraction.
 
 type hostStatusView struct {
-	EnrollmentID string          `json:"enrollment_id"`
-	HostLabel    string          `json:"host_label,omitempty"`
-	Status       string          `json:"status"`
-	LastSeenAt   time.Time       `json:"last_seen_at,omitempty"`
-	GPUs         []gpuStatusView `json:"gpus"`
+	Apply        *types.AgentApplyReport `json:"apply,omitempty"`
+	EnrollmentID string                  `json:"enrollment_id"`
+	HostLabel    string                  `json:"host_label,omitempty"`
+	Status       string                  `json:"status"`
+	LastSeenAt   time.Time               `json:"last_seen_at,omitempty"`
+	GPUs         []gpuStatusView         `json:"gpus"`
 	// ContestedGPUs are cards this member reported that another member
 	// already holds. Without this the member sees nothing at all: their
 	// agent declared the GPU, the pool refused to record it, and the
@@ -46,6 +49,7 @@ type contestedGPUView struct {
 }
 
 type gpuStatusView struct {
+	GPUUUID        string                `json:"gpu_uuid"`
 	HardwareUnitID string                `json:"hardware_unit_id"`
 	GPUModel       string                `json:"gpu_model,omitempty"`
 	State          string                `json:"state"`
@@ -101,7 +105,7 @@ func registerStatusRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /member/v1/enrollments/{id}/status", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -115,7 +119,7 @@ func registerStatusRoutes(mux *http.ServeMux, deps Deps) {
 	})
 
 	mux.HandleFunc("GET /member/v1/enrollments/{id}/earnings", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -132,7 +136,7 @@ func registerStatusRoutes(mux *http.ServeMux, deps Deps) {
 	// member holds the only copy afterwards, which is why the new token
 	// is returned exactly once and never readable again.
 	mux.HandleFunc("POST /member/v1/enrollments/{id}/rotate", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -165,7 +169,7 @@ func registerStatusRoutes(mux *http.ServeMux, deps Deps) {
 	// for the same reason the pool's own withdrawal does: work already
 	// dispatched has to finish somewhere.
 	mux.HandleFunc("POST /member/v1/enrollments/{id}/retire", func(w http.ResponseWriter, r *http.Request) {
-		enrollment, ok := authorizeEnrollment(deps, r)
+		enrollment, ok := authorizeMemberEnrollment(deps, r)
 		if !ok {
 			http.Error(w, "valid enrollment bearer token is required", http.StatusUnauthorized)
 			return
@@ -195,6 +199,12 @@ func (d Deps) hostStatus(enrollment types.HostEnrollment) (hostStatusView, error
 		LastSeenAt:   enrollment.LastSeenAt,
 		GPUs:         []gpuStatusView{},
 	}
+	apply, err := d.Repo.AgentApply(enrollment.ID)
+	if err == nil {
+		view.Apply = &apply
+	} else if !errors.Is(err, repo.ErrNotFound) {
+		return view, err
+	}
 	units, err := d.Repo.ListHardwareUnitsByEnrollment(enrollment.ID)
 	if err != nil {
 		return view, err
@@ -204,7 +214,7 @@ func (d Deps) hostStatus(enrollment types.HostEnrollment) (hostStatusView, error
 	view.ContestedGPUs = d.contestedGPUsFor(enrollment)
 	for _, unit := range units {
 		gpu := gpuStatusView{
-			HardwareUnitID: unit.ID, GPUModel: unit.GPUModel,
+			HardwareUnitID: unit.ID, GPUModel: unit.GPUModel, GPUUUID: unit.GPUUUID,
 			State: string(unit.State), Placements: []placementStatusView{},
 		}
 		for _, assignment := range assignments {

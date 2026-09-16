@@ -3,6 +3,7 @@ package repo
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-reconciler/internal/types"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -15,12 +16,13 @@ type StateRepo struct {
 }
 
 type RoundRecord struct {
-	RoundID       uint64    `json:"round_id"`
-	Status        string    `json:"status"`
-	Attempts      uint64    `json:"attempts"`
-	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
-	ClosedAt      time.Time `json:"closed_at,omitempty"`
-	LastError     string    `json:"last_error,omitempty"`
+	Prepared      *types.RoundCloseRequest `json:"prepared,omitempty"`
+	RoundID       uint64                   `json:"round_id"`
+	Status        string                   `json:"status"`
+	Attempts      uint64                   `json:"attempts"`
+	LastAttemptAt time.Time                `json:"last_attempt_at,omitempty"`
+	ClosedAt      time.Time                `json:"closed_at,omitempty"`
+	LastError     string                   `json:"last_error,omitempty"`
 }
 
 func Open(path string) (*StateRepo, error) {
@@ -136,4 +138,9 @@ func (r *StateRepo) update(roundID uint64, mutate func(*RoundRecord)) error {
 
 func roundKey(roundID uint64) string {
 	return fmt.Sprintf("%020d", roundID)
+}
+
+// SavePrepared retains the exact source evidence submitted to the controller.
+func (r *StateRepo) SavePrepared(round uint64, request types.RoundCloseRequest) error {
+	return r.update(round, func(record *RoundRecord) { record.RoundID = round; record.Prepared = &request })
 }

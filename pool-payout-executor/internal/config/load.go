@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"gopkg.in/yaml.v3"
 
 	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
@@ -56,6 +57,7 @@ func Load(raw []byte) (*Config, error) {
 	if cfg.PoolController.TimeoutMS == 0 {
 		cfg.PoolController.TimeoutMS = 1500
 	}
+	cfg.Executor.PoolID = cfg.PoolController.PoolID
 	if cfg.Executor.BatchSize == 0 {
 		cfg.Executor.BatchSize = 25
 	}
@@ -109,6 +111,17 @@ func validate(cfg *Config) error {
 	}
 	if cfg.PoolController.BearerTokenRef != "" && !strings.HasPrefix(cfg.PoolController.BearerTokenRef, "env://") {
 		return fmt.Errorf("pool_controller.bearer_token_ref must use env://")
+	}
+	if cfg.PoolController.PoolID != "" || cfg.PoolController.TokenFile != "" || cfg.PoolController.CAFile != "" {
+		if cfg.PoolController.PoolID == "" || cfg.PoolController.TokenFile == "" || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("regional pool_controller requires pool_id, token_file and an HTTPS origin")
+		}
+		if !common.IsHexAddress(cfg.Executor.ExpectedWalletAddress) || common.HexToAddress(cfg.Executor.ExpectedWalletAddress) == (common.Address{}) || strings.TrimSpace(cfg.Executor.StatePath) == "" {
+			return fmt.Errorf("regional executor requires expected_wallet_address and persistent state_path")
+		}
+		if cfg.PoolController.BearerTokenRef != "" || cfg.PoolController.BearerToken != "" {
+			return fmt.Errorf("scoped token_file cannot be combined with legacy bearer credentials")
+		}
 	}
 	if cfg.PoolController.TimeoutMS < 0 {
 		return fmt.Errorf("pool_controller.timeout_ms must be >= 0")

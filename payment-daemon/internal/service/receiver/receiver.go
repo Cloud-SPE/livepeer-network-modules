@@ -9,10 +9,12 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math/big"
+	"sync"
 	"time"
 
 	ethcommon "github.com/ethereum/go-ethereum/common"
@@ -30,6 +32,9 @@ import (
 
 // Service implements pb.PayeeDaemonServer.
 type Service struct {
+	sourceGate sync.RWMutex
+	// RevenueReporter is installed at boot before the gRPC listener starts.
+	RevenueReporter func(context.Context, int64) (*pb.GetRoundRevenueResponse, error)
 	pb.UnimplementedPayeeDaemonServer
 	pb.UnimplementedPayeeAdminServer
 
@@ -53,6 +58,11 @@ type Service struct {
 // funding batch, and atomically transfers that ticket credit into the stable
 // payer-payee account while reserving this authorization's maximum.
 func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthorizationRequest) (*pb.AdmitAuthorizationResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if len(req.GetAuthorizationBytes()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "authorization_bytes is required")
 	}
@@ -156,7 +166,7 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 			return nil, status.Error(codes.PermissionDenied, "funding payment sender does not match authorization payer")
 		}
 		fundingWorkID = hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-		processed, err := s.ProcessPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
+		processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
 		if err != nil {
 			return nil, err
 		}
@@ -200,6 +210,11 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 }
 
 func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAuthorizationRequest) (*pb.AdvanceAuthorizationResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
 	}
@@ -227,7 +242,7 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 			return nil, status.Error(codes.PermissionDenied, "funding payment sender does not match authorization payer")
 		}
 		fundingWorkID = hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-		processed, err := s.ProcessPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
+		processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
 		if err != nil {
 			return nil, err
 		}
@@ -279,6 +294,11 @@ func (s *Service) SettleAuthorization(_ context.Context, req *pb.SettleAuthoriza
 }
 
 func (s *Service) FundWholesaleAccount(ctx context.Context, req *pb.FundWholesaleAccountRequest) (*pb.FundWholesaleAccountResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
 	}
@@ -287,7 +307,7 @@ func (s *Service) FundWholesaleAccount(ctx context.Context, req *pb.FundWholesal
 		return nil, status.Error(codes.InvalidArgument, "funding payment is malformed")
 	}
 	workID := hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-	processed, err := s.ProcessPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: workID})
+	processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: workID})
 	if err != nil {
 		return nil, err
 	}
@@ -492,6 +512,11 @@ func New(st *store.Store, cfg Config, logger *slog.Logger) *Service {
 // record for the lifetime of the session and is revealed only on
 // winning-ticket redemption.
 func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*pb.OpenSessionResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if req.GetWorkId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "work_id is empty")
 	}
@@ -555,7 +580,15 @@ func (s *Service) OpenSession(_ context.Context, req *pb.OpenSessionRequest) (*p
 // session, validates each ticket-sender-param against the session's
 // recipient-rand secret, sums EV credit, and queues winners for
 // redemption.
-func (s *Service) ProcessPayment(_ context.Context, req *pb.ProcessPaymentRequest) (*pb.ProcessPaymentResponse, error) {
+func (s *Service) ProcessPayment(ctx context.Context, req *pb.ProcessPaymentRequest) (*pb.ProcessPaymentResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
+	return s.processPayment(ctx, req)
+}
+func (s *Service) processPayment(_ context.Context, req *pb.ProcessPaymentRequest) (*pb.ProcessPaymentResponse, error) {
 	if req.GetWorkId() == "" {
 		return nil, status.Error(codes.InvalidArgument, "work_id is empty")
 	}
@@ -972,6 +1005,11 @@ func checkSignedPrice(pay *pb.Payment, sess *store.Session) error {
 // DebitBalance subtracts (work_units × price) from the balance.
 // Idempotent by (sender, work_id, debit_seq).
 func (s *Service) DebitBalance(_ context.Context, req *pb.DebitBalanceRequest) (*pb.DebitBalanceResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if len(req.GetSender()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "sender is empty")
 	}
@@ -1055,6 +1093,11 @@ func (s *Service) GetBalance(_ context.Context, req *pb.GetBalanceRequest) (*pb.
 
 // CloseSession finalizes the session.
 func (s *Service) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (*pb.CloseSessionResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if len(req.GetSender()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "sender is empty")
 	}
@@ -1077,6 +1120,11 @@ func (s *Service) CloseSession(_ context.Context, req *pb.CloseSessionRequest) (
 // ResetSession forcibly rotates the active sender/payee session keyed
 // by the stable sender/recipient/capability/offering identity.
 func (s *Service) ResetSession(_ context.Context, req *pb.ResetSessionRequest) (*pb.ResetSessionResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if len(req.GetSender()) == 0 {
 		return nil, status.Error(codes.InvalidArgument, "sender is empty")
 	}
@@ -1123,6 +1171,11 @@ func (s *Service) ResetSession(_ context.Context, req *pb.ResetSessionRequest) (
 // Re-issuing after the session has been closed generates a fresh rand
 // (and thus a fresh work_id).
 func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequest) (*pb.GetTicketParamsResponse, error) {
+	s.sourceGate.RLock()
+	defer s.sourceGate.RUnlock()
+	if err := s.requireUnfrozenSource(); err != nil {
+		return nil, err
+	}
 	if len(req.GetSender()) != 20 {
 		return nil, status.Error(codes.InvalidArgument, "sender must be 20 bytes")
 	}
@@ -1369,9 +1422,30 @@ func (s *Service) GetRedemptionStatus(_ context.Context, req *pb.GetRedemptionSt
 
 // GetRoundRevenue returns confirmed redemption revenue for a single
 // Livepeer round.
-func (s *Service) GetRoundRevenue(_ context.Context, req *pb.GetRoundRevenueRequest) (*pb.GetRoundRevenueResponse, error) {
+func (s *Service) GetRoundRevenue(ctx context.Context, req *pb.GetRoundRevenueRequest) (*pb.GetRoundRevenueResponse, error) {
 	if req.GetRoundId() < 0 {
 		return nil, status.Error(codes.InvalidArgument, "round_id must be >= 0")
+	}
+	if s.RevenueReporter != nil {
+		result, err := s.RevenueReporter(ctx, req.GetRoundId())
+		if err != nil {
+			return nil, status.Errorf(codes.Unavailable, "revenue report: %v", err)
+		}
+		result.SettlementDomainId = s.settlementDomainID
+		result.ChainId = s.chainID
+		result.Payee = append([]byte(nil), s.recipient...)
+		if result.Complete {
+			raw, _ := json.Marshal(struct {
+				Source  string
+				Chain   uint64
+				Payee   []byte
+				Round   int64
+				Entries []byte
+			}{s.settlementDomainID, s.chainID, s.recipient, result.RoundId, result.InclusionDigest})
+			digest := sha256.Sum256(raw)
+			result.InclusionDigest = digest[:]
+		}
+		return result, nil
 	}
 	revenue, count, err := s.store.RoundRevenue(req.GetRoundId())
 	if err != nil {
@@ -1381,6 +1455,7 @@ func (s *Service) GetRoundRevenue(_ context.Context, req *pb.GetRoundRevenueRequ
 		RoundId:              req.GetRoundId(),
 		ConfirmedRevenueWei:  revenue.Bytes(),
 		ConfirmedTicketCount: count,
+		SettlementDomainId:   s.settlementDomainID, ChainId: s.chainID, Payee: append([]byte(nil), s.recipient...), IncompleteReason: "chain-qualified revenue reporting unavailable",
 	}, nil
 }
 

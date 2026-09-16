@@ -108,7 +108,7 @@ sequenceDiagram
 
 ## Process model
 
-One binary, three modes (`--mode=round-init|reward|both`). Mode-specific RPCs return `Unimplemented` if called on the wrong mode (matches `payment-daemon` and `service-registry-daemon` patterns).
+One binary, four modes (`--mode=round-init|reward|both|read-only`). Mode-specific RPCs return `Unimplemented` if called on the wrong mode (matches `payment-daemon` and `service-registry-daemon` patterns).
 
 Single OS process; no internal goroutine pooling — each service is one Run goroutine + whatever the chain-commons libraries spawn (timesource poller, txintent processor, multi-RPC health probe, controller refresh).
 

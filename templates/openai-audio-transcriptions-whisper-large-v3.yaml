@@ -127,10 +127,22 @@ stacking:
   primary: true
   secondary_on: [rtx-4090, rtx-5090]
 
-# runner_compose omitted: the images that serve this workload are unresolved
-# (tracked as lnm-v12). The rig named a compose service, not a published image
-# reference, and inventing a ghcr tag here would fail at `compose up` on a
-# member's host instead of in review.
+# Published v2.0.0 runtime, pinned by digest; see regional runner-readiness.md.
+runner_compose:
+  image:
+    nvidia: tztcloud/openai-audio-runner@sha256:355715003f8b26dc45098fa6ac1242aa592ed370ede9db1f8200b40fb419d1de
+  caches: {models: /models}
+  env:
+    CAPABILITY_NAME: "openai:audio-transcriptions"
+    MODEL_ID: "openai/whisper-large-v3"
+    MODEL_ALIAS: "whisper-large-v3"
+    DTYPE: "bfloat16"
+    INFERENCE_BATCH_SIZE: "1"
+    MAX_QUEUE_SIZE: "2"
+    MODEL_DIR: "/models"
+    RUNNER_PORT: "8080"
+    DEVICE: "cuda"
+
 
 # Probation caps apply to the assignment, so a secondary assignment probates
 # separately from the primary already running on the same card.

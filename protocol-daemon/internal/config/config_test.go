@@ -156,3 +156,17 @@ func TestStringDoesNotLeakKeystore(t *testing.T) {
 	}
 	// Path is not a secret per se; keystore-path appearing is fine.
 }
+
+func TestReadOnlyRequiresChainButNotKeys(t *testing.T) {
+	c := validProdConfig(t)
+	c.Mode = types.ModeReadOnly
+	c.Chain.KeystorePath = "/missing/key"
+	c.Chain.KeystorePassword = ""
+	if err := c.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	c.Chain.EthURLs = nil
+	if err := c.Validate(); err == nil {
+		t.Fatal("observer accepted missing RPC")
+	}
+}

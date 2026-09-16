@@ -15,25 +15,28 @@ import (
 )
 
 type Client struct {
-	baseURL string
-	auth    config.AuthConfig
-	client  *http.Client
+	baseURL     string
+	auth        config.AuthConfig
+	client      *http.Client
+	clientError error
 }
 
 func New(baseURL string, auth config.AuthConfig, timeout time.Duration) *Client {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
+	client, err := auth.ServiceClient(baseURL, timeout)
 	return &Client{
-		baseURL: strings.TrimRight(strings.TrimSpace(baseURL), "/"),
-		auth:    auth,
-		client:  &http.Client{Timeout: timeout},
+		baseURL:     strings.TrimRight(strings.TrimSpace(baseURL), "/"),
+		auth:        auth,
+		client:      client,
+		clientError: err,
 	}
 }
 
 func applyAuth(req *http.Request, auth config.AuthConfig) error {
 	switch auth.Method {
-	case "", "none":
+	case "", "none", "scoped":
 		return nil
 	case "bearer":
 		secret := strings.TrimSpace(auth.SecretRef)
@@ -134,14 +137,18 @@ type OfferPushCertStep struct {
 // hash travels: the controller is the minting authority and holds the
 // plaintext exactly long enough to hand it to the member.
 type CredentialPush struct {
-	CredentialID     string    `json:"credential_id"`
-	HostID           string    `json:"host_id"`
-	Kind             string    `json:"kind"`
-	TokenSHA256      string    `json:"token_sha256"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	Label            string    `json:"label,omitempty"`
-	MemberEthAddress string    `json:"member_eth_address,omitempty"`
-	State            string    `json:"state,omitempty"`
+	CredentialGeneration uint64            `json:"credential_generation,omitempty"`
+	TermsVersion         string            `json:"terms_version,omitempty"`
+	PoolID               string            `json:"pool_id,omitempty"`
+	DeviceOwnership      map[string]uint64 `json:"device_ownership,omitempty"`
+	CredentialID         string            `json:"credential_id"`
+	HostID               string            `json:"host_id"`
+	Kind                 string            `json:"kind"`
+	TokenSHA256          string            `json:"token_sha256"`
+	ExpiresAt            time.Time         `json:"expires_at"`
+	Label                string            `json:"label,omitempty"`
+	MemberEthAddress     string            `json:"member_eth_address,omitempty"`
+	State                string            `json:"state,omitempty"`
 }
 
 // PushResult reports what a push changed.
@@ -260,6 +267,9 @@ func (c *Client) Certification(ctx context.Context) ([]CertificationView, error)
 // the broker's own error body, so a rejected push says which offer and
 // which field rather than a status code.
 func (c *Client) doJSON(ctx context.Context, method, path string, body, out any) error {
+	if c.clientError != nil {
+		return c.clientError
+	}
 	var rdr io.Reader
 	if body != nil {
 		raw, err := json.Marshal(body)

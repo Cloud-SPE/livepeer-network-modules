@@ -72,7 +72,7 @@ func TestForwardTunnelRequest(t *testing.T) {
 	}))
 	defer runner.Close()
 
-	resp := forwardTunnelRequest(t.Context(), map[string]string{"chat": runner.URL}, tunnelMessage{
+	resp := forwardTunnelRequest(t.Context(), runnerRoutes{"chat": {URL: runner.URL}}, tunnelMessage{
 		Type:       "request",
 		ID:         "req-1",
 		Method:     http.MethodPost,
@@ -104,20 +104,20 @@ func TestForwardTunnelRequest(t *testing.T) {
 // Routing is by local_id, because one host can serve the same
 // capability id under two models (runner-attach §7).
 func TestRouteFor(t *testing.T) {
-	two := map[string]string{"chat-8b": "http://a", "chat-70b": "http://b"}
-	one := map[string]string{"only": "http://solo"}
+	two := runnerRoutes{"chat-8b": {URL: "http://a"}, "chat-70b": {URL: "http://b"}}
+	one := runnerRoutes{"only": {URL: "http://solo"}}
 
-	if got, err := routeFor(two, map[string][]string{LocalIDHeader: {"chat-70b"}}); err != nil || got != "http://b" {
+	if got, err := routeFor(two, map[string][]string{LocalIDHeader: {"chat-70b"}}); err != nil || got.URL != "http://b" {
 		t.Fatalf("routeFor(two, chat-70b) = %q, %v", got, err)
 	}
 	// A single runner still answers when the header is absent, so a
 	// bare probe reaches it.
 	// A derived id from a multi-capability container routes to the
 	// container (attach.LocalIDFor / BaseLocalID).
-	if got, err := routeFor(two, map[string][]string{LocalIDHeader: {"chat-70b.1"}}); err != nil || got != "http://b" {
+	if got, err := routeFor(two, map[string][]string{LocalIDHeader: {"chat-70b.1"}}); err != nil || got.URL != "http://b" {
 		t.Fatalf("routeFor(two, chat-70b.1) = %q, %v", got, err)
 	}
-	if got, err := routeFor(one, nil); err != nil || got != "http://solo" {
+	if got, err := routeFor(one, nil); err != nil || got.URL != "http://solo" {
 		t.Fatalf("routeFor(one, no header) = %q, %v", got, err)
 	}
 	// Ambiguity is an error, never a guess.

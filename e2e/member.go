@@ -96,6 +96,7 @@ func (m *member) enrol(label string) host {
 	req, _ := http.NewRequest(http.MethodPost, m.pool.controlURL+"/member/v1/enrollments",
 		strings.NewReader(`{"host_label":"`+label+`"}`))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Origin", m.pool.controlURL)
 	req.AddCookie(m.cookie)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

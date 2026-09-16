@@ -1,9 +1,13 @@
 package repo
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"sort"
+	"strconv"
+	"strings"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -45,7 +49,33 @@ func (r *StateRepo) SaveWorkReceipt(receipt types.WorkReceipt) error {
 		return fmt.Errorf("marshal work receipt: %w", err)
 	}
 	return r.db.Update(func(tx *bolt.Tx) error {
-		return tx.Bucket([]byte(workReceiptsBucket)).Put([]byte(receipt.ID), raw)
+		bucket := tx.Bucket([]byte(workReceiptsBucket))
+		if prior := bucket.Get([]byte(receipt.ID)); prior != nil {
+			var previous types.WorkReceipt
+			if err := json.Unmarshal(prior, &previous); err != nil {
+				return err
+			}
+			if previous.PoolID != "" || receipt.PoolID != "" {
+				if !bytes.Equal(prior, raw) {
+					return fmt.Errorf("regional work receipt is immutable")
+				}
+				return nil
+			}
+		}
+		if receipt.PoolID != "" {
+			round, err := strconv.ParseInt(receipt.RoundID, 10, 64)
+			amount, ok := new(big.Int).SetString(receipt.AttributedRevenueWei, 10)
+			if err != nil || round < 0 || receipt.RoundID != strconv.FormatInt(round, 10) || !ok || amount.Sign() < 0 || amount.String() != receipt.AttributedRevenueWei {
+				return fmt.Errorf("invalid regional receipt round or billed value")
+			}
+			if receipt.PoolID != r.PoolID() || receipt.SourceID == "" || !strings.HasPrefix(receipt.ID, receipt.SourceID+"/") || receipt.Status != "final" {
+				return fmt.Errorf("invalid regional receipt identity or finalization")
+			}
+			if rounds := tx.Bucket([]byte("regional_round_numbers")); rounds != nil && rounds.Get([]byte(receipt.RoundID)) != nil {
+				return fmt.Errorf("regional round already closed")
+			}
+		}
+		return bucket.Put([]byte(receipt.ID), raw)
 	})
 }
 
@@ -118,6 +148,10 @@ func (r *StateRepo) SaveRoundReceipt(receipt types.RoundReceipt) error {
 		return fmt.Errorf("marshal round receipt: %w", err)
 	}
 	return r.db.Update(func(tx *bolt.Tx) error {
+		if sources := tx.Bucket([]byte(revenueSourcesBucket)); sources != nil && sources.Stats().KeyN > 0 {
+			return fmt.Errorf("regional source registry requires atomic source-qualified round closure")
+		}
+
 		return tx.Bucket([]byte(roundReceiptsBucket)).Put([]byte(receipt.ID), raw)
 	})
 }
@@ -205,6 +239,45 @@ func (r *StateRepo) SavePayoutIntent(intent types.PayoutIntent) error {
 		return fmt.Errorf("marshal payout intent: %w", err)
 	}
 	return r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(payoutIntentsBucket))
+		if existing := b.Get([]byte(intent.ID)); existing != nil {
+			var prior types.PayoutIntent
+			if err := json.Unmarshal(existing, &prior); err != nil {
+				return err
+			}
+			if prior.PoolID != "" {
+				if sameJSON(prior, intent) {
+					return nil
+				}
+				if prior.Revision != intent.Revision {
+					return fmt.Errorf("regional payout intent changed; reload before retry")
+				}
+				if prior.PoolID != intent.PoolID || prior.PayoutBatchID != intent.PayoutBatchID || prior.RoundReceiptID != intent.RoundReceiptID || prior.RoundID != intent.RoundID || prior.MemberEthAddress != intent.MemberEthAddress || prior.DestinationAddress != intent.DestinationAddress || prior.ChainID != intent.ChainID || prior.Asset != intent.Asset || prior.AmountWei != intent.AmountWei || !prior.CreatedAt.Equal(intent.CreatedAt) {
+					return fmt.Errorf("regional payout intent economics are immutable")
+				}
+				if prior.Status == "paid" {
+					return fmt.Errorf("paid regional payout intent is immutable")
+				}
+				intent.Revision++
+				raw, err := json.Marshal(intent)
+				if err != nil {
+					return err
+				}
+				return b.Put([]byte(intent.ID), raw)
+			}
+		}
+		if intent.PoolID != "" || intent.PayoutBatchID != "" {
+			return fmt.Errorf("regional intent requires atomic batch approval")
+		}
+		if source := tx.Bucket([]byte(settlementWindowsBucket)).Get([]byte(intent.RoundReceiptID)); source != nil {
+			var window types.SettlementWindow
+			if err := json.Unmarshal(source, &window); err != nil {
+				return err
+			}
+			if window.PoolID != "" {
+				return fmt.Errorf("regional window requires atomic approval")
+			}
+		}
 		return tx.Bucket([]byte(payoutIntentsBucket)).Put([]byte(intent.ID), raw)
 	})
 }

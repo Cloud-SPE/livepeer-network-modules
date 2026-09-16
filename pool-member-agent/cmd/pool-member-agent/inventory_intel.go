@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/pool-member-agent/internal/attach"
 )
@@ -81,6 +82,19 @@ func collectIntelGPUs(sysfsRoot, hostID string) ([]attach.Hardware, error) {
 		facts := map[string]string{"source": "sysfs", "pci_address": pci, "pci_device_id": deviceID}
 		if node := renderNode(dev); node != "" {
 			facts["render_node"] = node
+			devicePath := node
+			if sysfsRoot == "/sys" {
+				if _, err := os.Stat("/host-dev"); err == nil {
+					devicePath = "/host-dev/" + strings.TrimPrefix(node, "/dev/")
+				}
+			} else {
+				devicePath = filepath.Join(sysfsRoot, "dev", strings.TrimPrefix(node, "/dev/"))
+			}
+			if info, err := os.Stat(devicePath); err == nil {
+				if stat, ok := info.Sys().(*syscall.Stat_t); ok {
+					facts["render_node_gid"] = strconv.FormatUint(uint64(stat.Gid), 10)
+				}
+			}
 		}
 		units = append(units, attach.Hardware{
 			GPUUUID:   "intel-" + hostID + "-" + pci,
@@ -122,8 +136,7 @@ func driverName(dev string) string {
 }
 
 // renderNode is the /dev/dri/renderD* a container needs for this card.
-// Reported as a fact for the operator; the compose device block mounts
-// all of /dev/dri today (desiredstate.go) and would use this to pin.
+// The controller pins this exact node and its numeric group in the runner.
 func renderNode(dev string) string {
 	nodes, _ := filepath.Glob(filepath.Join(dev, "drm", "renderD*"))
 	if len(nodes) == 0 {

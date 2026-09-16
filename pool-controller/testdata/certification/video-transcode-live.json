@@ -16,6 +16,15 @@
       "hold_ms": 5000,
       "reach": {
         "field": "rtmp_url"
+      },
+      "session_params": {
+        "metering_rendition": "720p",
+        "output_profile": "live-standard",
+        "publisher_mode": "gateway-relay",
+        "schema": "rtmp-hls-session/v1",
+        "storage": {
+          "kind": "runner-local"
+        }
       }
     }
   },

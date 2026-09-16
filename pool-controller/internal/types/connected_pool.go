@@ -73,6 +73,7 @@ const (
 )
 
 type PoolMember struct {
+	PoolID      string       `json:"pool_id"`
 	ID          string       `json:"id"`
 	EthAddress  string       `json:"eth_address"`
 	DisplayName string       `json:"display_name,omitempty"`
@@ -94,6 +95,11 @@ type MemberNonce struct {
 }
 
 type HostEnrollment struct {
+	GPUUUIDs                []string             `json:"gpu_uuids,omitempty"`
+	CredentialGeneration    uint64               `json:"credential_generation,omitempty"`
+	TermsVersion            string               `json:"terms_version,omitempty"`
+	PoolID                  string               `json:"pool_id"`
+	DeviceOwnership         map[string]uint64    `json:"device_ownership,omitempty"`
 	ID                      string               `json:"id"`
 	MemberEthAddress        string               `json:"member_eth_address"`
 	HostLabel               string               `json:"host_label,omitempty"`
@@ -119,15 +125,16 @@ const (
 func (u HardwareUnit) IsCPU() bool { return u.Kind == HardwareKindCPU }
 
 type HardwareUnit struct {
-	ID               string            `json:"id"`
-	EnrollmentID     string            `json:"enrollment_id"`
-	MemberEthAddress string            `json:"member_eth_address"`
-	GPUUUID          string            `json:"gpu_uuid"`
-	GPUModel         string            `json:"gpu_model"`
-	VRAMBytes        uint64            `json:"vram_bytes,omitempty"`
-	DriverVersion    string            `json:"driver_version,omitempty"`
-	CUDAVersion      string            `json:"cuda_version,omitempty"`
-	RuntimeFacts     map[string]string `json:"runtime_facts,omitempty"`
+	OwnershipGeneration uint64            `json:"ownership_generation,omitempty"`
+	ID                  string            `json:"id"`
+	EnrollmentID        string            `json:"enrollment_id"`
+	MemberEthAddress    string            `json:"member_eth_address"`
+	GPUUUID             string            `json:"gpu_uuid"`
+	GPUModel            string            `json:"gpu_model"`
+	VRAMBytes           uint64            `json:"vram_bytes,omitempty"`
+	DriverVersion       string            `json:"driver_version,omitempty"`
+	CUDAVersion         string            `json:"cuda_version,omitempty"`
+	RuntimeFacts        map[string]string `json:"runtime_facts,omitempty"`
 	// PublicURL is the HOST's outside-facing origin, copied onto each of
 	// its units at relay the way MemberEthAddress is, because the
 	// planner's input is units. Empty: the host is not public, and no
@@ -237,6 +244,11 @@ type CertificationResult struct {
 }
 
 type SettlementWindow struct {
+	ChainID                    uint64                 `json:"chain_id,omitempty"`
+	PoolID                     string                 `json:"pool_id,omitempty"`
+	TermsVersion               string                 `json:"terms_version,omitempty"`
+	CommissionBPS              uint64                 `json:"commission_bps,omitempty"`
+	RegionalAllocation         *RegionalAllocation    `json:"regional_allocation,omitempty"`
 	ID                         string                 `json:"id"`
 	StartRoundID               string                 `json:"start_round_id"`
 	EndRoundID                 string                 `json:"end_round_id"`
@@ -264,6 +276,7 @@ type OfferingSettlement struct {
 }
 
 type PayoutBatch struct {
+	PoolID             string            `json:"pool_id,omitempty"`
 	ID                 string            `json:"id"`
 	SettlementWindowID string            `json:"settlement_window_id"`
 	Status             PayoutBatchStatus `json:"status"`

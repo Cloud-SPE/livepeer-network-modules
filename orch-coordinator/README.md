@@ -114,3 +114,8 @@ orch-coordinator/
 ├── compose/                         run-only compose (+ agent overlay)
 └── compose.yaml                     dev compose (coordinator in --dev mode)
 ```
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.

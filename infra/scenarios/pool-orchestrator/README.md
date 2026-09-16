@@ -1,5 +1,7 @@
 # Pool Orchestrator Scenario
 
+For independent regional pools, use the [regional deployment scenario](../regional-pools/README.md). This older single-pool scenario does not provide regional federation or complete multi-source accounting.
+
 This scenario is the **public/data-plane side** of a Pool-based orchestrator.
 It runs on the host that serves the broker, coordinator, and Pool accounting
 workers.

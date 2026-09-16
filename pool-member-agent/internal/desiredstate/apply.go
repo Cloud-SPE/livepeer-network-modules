@@ -54,11 +54,7 @@ func (r ComposeRunner) WriteCompose(path, content string) error {
 	// Written whole and replaced atomically: a compose file caught
 	// half-written by a concurrent `docker compose up` is a host that
 	// stops serving for reasons nobody can reconstruct.
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
+	return writePrivateAtomic(path, []byte(content))
 }
 
 func (r ComposeRunner) Pull(ctx context.Context, path string) error {
@@ -112,7 +108,13 @@ func RenderCompose(doc Document) string {
 		b.WriteString("name: livepeer-runners-" + id + "\n")
 		b.WriteString("networks:\n  default:\n    external: true\n    name: livepeer-member-" + id + "\n")
 	}
-	if len(doc.Services) == 0 {
+	running := 0
+	for _, service := range doc.Services {
+		if !service.Stop {
+			running++
+		}
+	}
+	if running == 0 {
 		b.WriteString("services: {}\n")
 	} else {
 		b.WriteString("services:\n")
@@ -120,11 +122,33 @@ func RenderCompose(doc Document) string {
 	services := append([]Service(nil), doc.Services...)
 	sort.Slice(services, func(i, j int) bool { return services[i].Name < services[j].Name })
 	for _, service := range services {
+		if service.Stop {
+			continue
+		}
 		fragment := service.ComposeFragment
 		if !strings.HasSuffix(fragment, "\n") {
 			fragment += "\n"
 		}
 		b.WriteString(fragment)
+	}
+	volumes := map[string]bool{}
+	for _, service := range services {
+		if !service.Stop {
+			for _, name := range service.CacheVolumes {
+				volumes[name] = true
+			}
+		}
+	}
+	names := make([]string, 0, len(volumes))
+	for name := range volumes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > 0 {
+		b.WriteString("volumes:\n")
+		for _, name := range names {
+			fmt.Fprintf(&b, "  %s: {}\n", name)
+		}
 	}
 	return b.String()
 }
@@ -141,6 +165,11 @@ func Apply(ctx context.Context, runner Runner, composePath string, doc Document)
 
 func applyWithAdmissionRoot(ctx context.Context, runner Runner, composePath string, doc Document, admissionRoot string) StatusReport {
 	report := StatusReport{Revision: doc.Revision}
+	var err error
+	doc, err = ResolveRuntime(composePath, doc)
+	if err != nil {
+		return allFailed(doc, "prepare runner secrets: "+err.Error())
+	}
 	if err := prepareHostAdmissions(doc, admissionRoot); err != nil {
 		return allFailed(doc, "prepare host admission: "+err.Error())
 	}
@@ -160,12 +189,11 @@ func applyWithAdmissionRoot(ctx context.Context, runner Runner, composePath stri
 	for _, service := range doc.Services {
 		status := StatusRunning
 		detail := ""
-		if service.Draining {
-			// The container is up, but the pool has withdrawn it and
-			// the broker has been told to stop dispatching. Reporting
-			// it as running would keep the assignment alive forever.
+		if service.Stop {
 			status = StatusStopped
-			detail = "draining"
+		} else if service.Draining {
+			status = StatusDraining
+			detail = "container remains running while work drains"
 		}
 		report.Services = append(report.Services, ServiceStatus{
 			Name: service.Name, Status: status, Detail: detail,

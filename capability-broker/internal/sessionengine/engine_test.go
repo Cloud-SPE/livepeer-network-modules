@@ -293,6 +293,7 @@ func (f *fakeRunner) TerminateSession(_ context.Context, id, reason string) erro
 type harness struct {
 	engine    *Engine
 	store     *sessionstore.Store
+	storePath string
 	pay       *fakePayment
 	runner    *fakeRunner
 	spec      *OfferingSpec
@@ -336,16 +337,18 @@ func (h *harness) advance(d time.Duration) {
 func newHarness(t *testing.T) *harness {
 	t.Helper()
 	key := make([]byte, sessionstore.KeySize)
-	st, err := sessionstore.Open(filepath.Join(t.TempDir(), "s.db"), key)
+	storePath := filepath.Join(t.TempDir(), "s.db")
+	st, err := sessionstore.Open(storePath, key)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = st.Close() })
 	h := &harness{
-		store:  st,
-		pay:    newFakePayment(),
-		runner: &fakeRunner{},
-		nowVal: time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+		store:     st,
+		storePath: storePath,
+		pay:       newFakePayment(),
+		runner:    &fakeRunner{},
+		nowVal:    time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
 	}
 	h.spec = &OfferingSpec{
 		Capability:          "meet:sfu-room",

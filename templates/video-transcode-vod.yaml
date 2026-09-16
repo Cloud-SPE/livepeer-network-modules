@@ -22,9 +22,8 @@ offering_id: vod-default
 protocol: paid-job/v1
 display_name: VOD transcode
 description: >-
-  File-in, file-out video transcode. Priced per job rather than per second of
-  output, so a caller knows the cost of a transcode before they submit it and
-  the pool absorbs the variance in clip length.
+  File-in, file-out video transcode. Billed by delivered frame-megapixels,
+  with measured usage returned in the response trailer.
 
 # Per 1000 frame-megapixels of delivered output
 # (docs/references/2026-09-05-transcode-megapixel-pricing.md; anchor tier
@@ -49,20 +48,11 @@ extra:
     # has a place for both, and the rig declared neither; a list invented here
     # would be a promise to callers that nothing checks.
 
-# The rig's `constraints:` block, kept as constraints because these are the
-# axes a BUYER routes on and they reach the manifest tuple.
-#
-# `region` is the one that earns this block its keep. A gateway picking an
-# orchestrator for a transcode job is picking a network path — the source file
-# has to get there and the renditions have to come back — so an offering with
-# no region is not merely under-described, it is unfindable by anyone who
-# cares where their work runs (template.go, Constraints). It is also the only
-# region in this catalog: the two AI rigs supplied none, and until they do,
-# their offerings are the ones that cannot be found this way.
+# Shared by independent pools. Membership does not verify execution geography
+# (regional-pools.md); a location promise requires separate admission evidence.
+# Both Intel and NVIDIA builds are eligible, so no single vendor is advertised.
 constraints:
   tier: standard
-  gpu_vendor: NVIDIA
-  region: us-central
 
 # No `match:`. The rig runs exactly one VOD transcode runner and there is no
 # model identity to select on — a transcoder is not a model — so any runner
@@ -84,14 +74,8 @@ certification:
     # step-level override rather than the 30s type default.
     timeout_ms: 60000
     config:
-      # PROPOSED, pending the transcode team (2026-09-05): the VOD runner is
-      # still asynchronous (202 + job_id) and its synchronous request schema
-      # does not exist yet. This body mirrors the ABR runner's
-      # `video-transcode-abr/v2` shape with one rendition and no ladder, as
-      # the shape the team said the VOD runner would move to; they confirm or
-      # correct the schema name and fields. Every URL is run-scoped and
-      # broker-minted (certification-steps.md §4). The runner streams its
-      # progress and claims the count in the response trailer.
+      # Published v2 synchronous stream contract. Every URL is run-scoped
+      # and broker-minted; the response trailer carries delivered usage.
       transport: stream
       body:
         schema: video-transcode-vod/v2
@@ -167,15 +151,17 @@ stacking: { primary: true, secondary_on: [] }
 # archived — decision 11 on lnm-of6): transcode-runner-* serves
 # `POST /v1/video/transcode`. AMD waits for a later iteration and has no key.
 #
-# NOTE — plan 0045 §7: as published, these runners are asynchronous (202 +
-# job_id, status polled) and therefore cannot be billed under paid-job; and
-# they do not yet serve the runner self-description contract (§3). Until both
-# land, the agent refuses this image LOUDLY, naming it. That is the design:
-# the failure message is the impacted-runner inventory.
+# Published v2 runtime contract and immutable image provenance are recorded in
+# infra/scenarios/regional-pools/runner-readiness.md. Vendor builds remain
+# separate; device ownership is enforced by the assignment renderer.
 runner_compose:
   image:
-    nvidia: tztcloud/transcode-runner-nvidia:v1.4.1
-    intel: tztcloud/transcode-runner-intel:v1.4.1
+    nvidia: tztcloud/transcode-runner@sha256:ce0897c10695630efb666c03e71047c04888dc9c4d43148dec8de8505fd1da04
+    intel: tztcloud/transcode-runner@sha256:84c4f3c04eb379f54f46f915ab0ae01cef9d696995994e24600516fa38c7749f
+  env:
+    STATE_DIR: /var/lib/transcode-runner
+    NVIDIA_DRIVER_CAPABILITIES: compute,video,utility
+  caches: {journal: /var/lib/transcode-runner}
   host_admission:
     mechanism: flock-files/v1
     scope: hardware-unit

@@ -130,6 +130,9 @@ func (c *Catalog) Len() int {
 
 // Validate checks one template in isolation.
 func (t Template) Validate() error {
+	if err := t.validateCompanions(); err != nil {
+		return err
+	}
 	if !templateIDRE.MatchString(t.ID) {
 		return fmt.Errorf("id %q must match %s", t.ID, templateIDRE)
 	}

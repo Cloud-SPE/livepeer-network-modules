@@ -145,6 +145,8 @@ type BrokerOfferings struct {
 // BrokerHealthCapability is one tuple-health entry from
 // capability-broker /registry/health.
 type BrokerHealthCapability struct {
+	// LastDispatchedAt is informational; freshness comes from ProbedAt/StaleAfter.
+	LastDispatchedAt     time.Time             `json:"last_dispatched_at,omitempty"`
 	ID                   string                `json:"id"`
 	OfferingID           string                `json:"offering_id"`
 	Status               string                `json:"status"`
@@ -158,6 +160,8 @@ type BrokerHealthCapability struct {
 }
 
 type BrokerHealthBackend struct {
+	// LastDispatchedAt is informational; an idle runner can still be ready.
+	LastDispatchedAt     time.Time `json:"last_dispatched_at,omitempty"`
 	BackendID            string    `json:"backend_id,omitempty"`
 	Status               string    `json:"status"`
 	Reason               string    `json:"reason,omitempty"`

@@ -176,6 +176,10 @@ broker's scrape freshness and its live view of the tuple — `live=ready`,
 `live=degraded`, `live=unreachable` — with the broker's own reason as the
 cell's tooltip.
 
+The health decoder accepts `last_dispatched_at` on both capability and backend
+entries as informational metadata. Freshness uses `probed_at` and `stale_after`;
+an old dispatch timestamp does not make an otherwise ready, idle runner stale.
+
 Broker metadata-discovery state used to appear here too (`meta=ok`,
 `meta=stale`, and a per-broker summary of unhealthy tuple counts). The broker
 no longer enriches offerings by polling backends — a runner declares what it

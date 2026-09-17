@@ -476,15 +476,58 @@ Stopping first would drop requests the broker had already dispatched.
 
 ### 7.2 Response framing
 
-A runner's response travels back over the connection as a complete unit,
-so the broker knows the body's length before it writes anything to the
-gateway. The broker MUST length-delimit the reply it relays, whatever the
-runner sent. A runner therefore need not set `Content-Length`, and MUST
-NOT be relied upon to: an agent that omits it must not cause the gateway
-to receive a chunked reply for a response that was never streamed.
+WebSocket requests MAY carry `response_mode: "chunks-v1"`. This is a transport
+extension, independent of capability names, JSON request fields or SSE framing.
+An agent that understands it MUST return the response incrementally, for unary,
+streaming and multipart paid jobs alike. The HTTP job transport still controls
+whether the broker streams to the gateway or measures a unary response first.
+Request bodies retain the existing request envelope; this extension changes only
+response delivery. QUIC and paid-session framing are unchanged.
 
-A runner that declares `Transfer-Encoding` keeps it, and the broker leaves
-the framing alone.
+Every response/control frame carries the original request `id`:
+
+| Type | Fields and meaning |
+| --- | --- |
+| `response_start` | Final HTTP `status_code` (200–599) and `headers`, sent as soon as available. Exactly one; no body. |
+| `response_chunk` | `seq` starting at 1, increasing by exactly 1; nonempty `body_base64` containing at most 32768 decoded bytes. Preserve bytes and order, not application event boundaries. |
+| `response_ack` | Broker acknowledges the fully consumed chunk's `seq`, in order, returning one chunk of credit. |
+| `response_end` | Final `seq` (0 for an empty body) and `trailers` populated after upstream EOF. The only successful terminal frame. |
+| `response_error` | Terminal `error`; permitted before or after headers. Never interpreted as successful EOF. Do not include secrets or request/response payloads in errors. |
+| `request_cancel` | Broker cancels this request; agent cancels its local HTTP request and releases its body/credit state. |
+
+The initial window is eight chunks (at most 256 KiB of unacknowledged body
+bytes per request). The agent MUST acquire credit before reading the next chunk;
+only an acknowledgement of a sent, previously unacknowledged sequence returns
+credit. Duplicate, out-of-order or unsolicited acknowledgements terminate that
+request. Headers and terminal frames consume no chunk credit. The broker MUST
+use bounded per-request queues and MUST NOT block its shared WebSocket reader on
+a slow consumer. A peer overflowing those queues violates framing and the
+connection is closed. Writes are serialized per connection and time-bounded.
+Normal backpressure on one request must leave other requests serviceable.
+
+The broker returns headers to its HTTP forwarding layer on `response_start`,
+with unknown content length, and makes body chunks available as received. Trailers
+become visible only at successful EOF. Connection loss, malformed framing,
+`response_error`, and cancellation fail the body read. On a failed streamed HTTP
+response the broker records partial usage and its accounting outcome before
+aborting the HTTP response; it MUST NOT append a fabricated SSE event or signal a
+successful HTTP EOF. Clients recover accounting through settlement lookup/replay
+if trailers cannot be delivered. Existing extractor rules still govern partial
+usage and authorization caps.
+
+Compatibility: an older broker omits `response_mode`; an updated agent then
+returns the existing single `response` with `body_base64`. Updated brokers accept
+that legacy response from older agents, but it remains buffered. Upgrade both
+ends for incremental WebSocket delivery. Agents reject unsupported nonempty
+response modes. Late acknowledgements/cancellation for a completed request may be
+ignored; active duplicate request IDs are invalid. Cancellation does not replay
+work or invent a replacement authorization.
+
+For the legacy complete-response envelope, the broker knows the body's length
+and length-delimits the relayed response unless `Transfer-Encoding` was explicitly
+declared. Incremental responses MUST NOT reuse an upstream `Content-Length` or
+`Transfer-Encoding` as broker-to-gateway framing. This corrects the earlier
+assumption that every runner response travels as a complete unit.
 
 ## 8. Versioning
 
@@ -556,6 +599,7 @@ Derivative of the numbered sections; where it conflicts, they win.
 
 | Version | Date | Change |
 |---|---|---|
+| chunks-v1 | 2026-09-17 | Negotiated incremental WebSocket response envelope with per-request credit, cancellation and terminal trailers (§7.2, `lnm-pd8`). Attach document version remains unchanged. |
 | 1.2.0-draft | 2026-09-02 | `public_url` added at host level (plan 0046, decision 13 of the 2026-09-02 walkthrough): every paid-session data plane is external, so whether a host is reachable from outside is a fact the pool must see and gate on. `contract_version` goes to 1.2 — an optional field a runner may send; an agent that sets it sends 1.2, one that does not keeps sending 1.1 (§8). Same minor, same day: a hardware unit gains `kind`, `cores`, `threads`, `isa` so a CPU socket is a placeable compute unit (plan 0047, `lnm-iqn`). |
 | 1.1.2-draft | 2026-09-02 | Prose only, no wire change. §3.2 gains the capability id vocabulary rule (plan 0045, decision 1 of the 2026-09-02 walkthrough): prefix is the wire family for a real standard API (`openai:`) else the product domain; suffix is the endpoint name or what it does, `.` for variants, one `:`, never `/`. `livepeer:meet/sfu-room` becomes `meet:sfu-room` in the examples. The broker still treats the id as opaque. Same day, decision 5: `descriptor_schemas[]` no longer has to be "known to the broker" — a well-formed tag with a `schema_versions` entry is accepted, and the `descriptor_schema_unknown` reason code is removed. This is a loosening, so a runner valid before is valid after; `contract_version` stays 1.1. Decision 13: `metering` loses `broker-observed` (offering-axes 1.0.8 — the relayed data plane it described was never built); a runner that declared it was never matchable, so nothing valid becomes invalid. |
 | 1.1.1-draft | 2026-09-01 | Prose only, no wire change. §3.3's namespacing advice said "across adapter profiles"; the profiles are deleted by plan 0045 §3 and a runner now serves its own capability entry (`runner-contract.md`), so it says "across runner images". |

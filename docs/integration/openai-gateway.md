@@ -25,6 +25,19 @@ Pick with ordinary HTTP negotiation — `Accept: text/event-stream` for
 streaming, `multipart/form-data` for uploads. The offering declares what
 it supports in `job.transports`.
 
+The OpenAI-facing adapter maps a JSON `stream: true` to the broker's
+`Accept: text/event-stream`. Do not require SDK callers to set that header:
+standard OpenAI clients may send `Accept: application/json`. Preserve the body
+and relay successful response bytes incrementally rather than reading the whole
+body before replying. Transport code must not interpret chat payloads or SSE.
+
+For WebSocket-attached runners, both agent and broker must support the
+`chunks-v1` response extension in `runner-attach` §7.2. An older peer's single
+response envelope buffers the complete response even when HTTP streaming headers
+are correct. Validate time to first chunk while the runner is still producing
+output, not merely the final `text/event-stream` content type. If a stream fails,
+recover settlement separately; missing trailers do not mean zero billable work.
+
 ## 3. Reading the result
 
 Consume `Livepeer-Work-Units`, `Livepeer-Work-Unit`, `Livepeer-Job-Id`.

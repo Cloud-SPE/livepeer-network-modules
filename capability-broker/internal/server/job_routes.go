@@ -434,6 +434,13 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		// transport's exchange is classified — rather than from each
 		// terminal return inside the handler.
 		ctx, dispatchSlot := middleware.WithDispatchSlot(ctx)
+		// Let payment and idempotency finish recording partial work before
+		// aborting the HTTP stream. A normal EOF would falsely signal success.
+		defer func() {
+			if d := dispatchSlot.Get(); d != nil && d.StreamFailed {
+				panic(http.ErrAbortHandler)
+			}
+		}()
 		next.ServeHTTP(jrec, r.WithContext(ctx))
 		switch st := jrec.status(); {
 		case st < 400:
@@ -687,13 +694,18 @@ func (s *Server) streamJobResponse(w http.ResponseWriter, r *http.Request, resp 
 	w.WriteHeader(resp.StatusCode)
 
 	var buf bytes.Buffer
+	failed := false
 	flusher, _ := w.(http.Flusher)
+	if flusher != nil {
+		flusher.Flush()
+	}
 	tee := io.TeeReader(io.LimitReader(resp.Body, maxJobBodyBytes), &buf)
 	chunk := make([]byte, 32<<10)
 	for {
 		n, err := tee.Read(chunk)
 		if n > 0 {
 			if _, werr := w.Write(chunk[:n]); werr != nil {
+				failed = true
 				break
 			}
 			if flusher != nil {
@@ -701,7 +713,15 @@ func (s *Server) streamJobResponse(w http.ResponseWriter, r *http.Request, resp 
 			}
 		}
 		if err != nil {
+			failed = err != io.EOF
 			break
+		}
+	}
+	if failed || buf.Len() == maxJobBodyBytes {
+		if slot := middleware.DispatchSlotFrom(r.Context()); slot != nil {
+			if d := slot.Get(); d != nil {
+				d.StreamFailed = true
+			}
 		}
 	}
 	var units uint64

@@ -38,6 +38,8 @@ type Dispatch struct {
 	// capacity pressure, but is neither successful execution nor evidence that
 	// the runner is corrupt/unhealthy.
 	CapacityRefused bool
+	// StreamFailed requests HTTP abort after partial usage and settlement persist.
+	StreamFailed bool
 }
 
 // DispatchSlot is a one-shot holder the idempotency layer installs and

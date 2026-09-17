@@ -305,3 +305,14 @@ assigned node, mapped to `/dev/dri/renderD128`, and that supplemental group.
 This prevents a runner assigned one card from opening another card's node.
 NVIDIA runner assignments remain UUID-pinned. The inventory agent is trusted
 with the Docker socket and host-wide discovery; it is not an inference runner.
+
+### Incremental WebSocket responses
+
+When requested by an updated broker, the agent sends generic response headers,
+32-KiB-or-smaller body chunks, and terminal trailers using `chunks-v1`. Eight
+unacknowledged chunks per request bound buffering; broker acknowledgements resume
+reading from the local runner. Cancellation closes that local HTTP request.
+No model-specific or SSE parsing is performed. Older brokers retain the legacy
+buffered response; upgrade both ends before expecting incremental delivery.
+Request uploads and QUIC framing are unchanged. See
+[response framing](../livepeer-network-protocol/protocols/runner-attach.md#72-response-framing).

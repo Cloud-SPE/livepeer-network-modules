@@ -90,14 +90,16 @@ func (c config) PoolManaged() bool {
 }
 
 type tunnelMessage struct {
-	Type       string              `json:"type"`
-	ID         string              `json:"id"`
-	Body       json.RawMessage     `json:"body,omitempty"`
-	Method     string              `json:"method,omitempty"`
-	URL        string              `json:"url,omitempty"`
-	Headers    map[string][]string `json:"headers,omitempty"`
-	BodyBase64 string              `json:"body_base64,omitempty"`
-	StatusCode int                 `json:"status_code,omitempty"`
+	ResponseMode string              `json:"response_mode,omitempty"`
+	Seq          uint64              `json:"seq,omitempty"`
+	Type         string              `json:"type"`
+	ID           string              `json:"id"`
+	Body         json.RawMessage     `json:"body,omitempty"`
+	Method       string              `json:"method,omitempty"`
+	URL          string              `json:"url,omitempty"`
+	Headers      map[string][]string `json:"headers,omitempty"`
+	BodyBase64   string              `json:"body_base64,omitempty"`
+	StatusCode   int                 `json:"status_code,omitempty"`
 	// Trailers carries the runner's HTTP trailers on a response frame.
 	// A paid-job runner's usage claim on the stream transport is a
 	// trailer (paid-job §3.2), and a broker extractor of type
@@ -424,6 +426,7 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 	send := func(msg tunnelMessage) error {
 		writeMu.Lock()
 		defer writeMu.Unlock()
+		_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		return conn.WriteJSON(msg)
 	}
 	if err := sendRegister(send, doc); err != nil {
@@ -434,6 +437,8 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 	defer cancel()
 	go refreshLoop(sessionCtx, cfg, state, doc, send)
 
+	exchanges := newWSExchanges(sessionCtx, send)
+	defer exchanges.close()
 	for {
 		var msg tunnelMessage
 		if err := conn.ReadJSON(&msg); err != nil {
@@ -449,12 +454,11 @@ func runWSTunnel(ctx context.Context, cfg config, state *runnerState, doc *attac
 				return err
 			}
 		case "request":
-			go func(m tunnelMessage) {
-				resp := forwardTunnelRequest(sessionCtx, state.routes(), m)
-				if err := send(resp); err != nil {
-					log.Printf("tunnel response write failed: %v", err)
-				}
-			}(msg)
+			if err := exchanges.start(state.routes(), msg); err != nil {
+				return err
+			}
+		case "response_ack", "request_cancel":
+			exchanges.control(msg)
 		}
 	}
 }
@@ -685,51 +689,47 @@ func forwardQUICRequest(ctx context.Context, stream *quic.Stream, routes runnerR
 	return err
 }
 
-func forwardTunnelRequest(ctx context.Context, routes runnerRoutes, msg tunnelMessage) tunnelMessage {
-	resp := tunnelMessage{Type: "response", ID: msg.ID}
+func openTunnelResponse(ctx context.Context, routes runnerRoutes, msg tunnelMessage) (*http.Response, error) {
 	base, err := routeFor(routes, msg.Headers)
 	if err != nil {
-		resp.Error = err.Error()
-		return resp
+		return nil, err
 	}
 	target, err := joinBackendURL(base.URL, msg.URL)
 	if err != nil {
-		resp.Error = err.Error()
-		return resp
+		return nil, err
 	}
 	body, err := base64Decode(msg.BodyBase64)
 	if err != nil {
-		resp.Error = err.Error()
-		return resp
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, defaultMethod(msg.Method), target, bytes.NewReader(body))
 	if err != nil {
-		resp.Error = err.Error()
-		return resp
+		return nil, err
 	}
 	req.Header = runnerHeaders(msg.Headers)
 	if base.Bearer != "" {
 		req.Header.Set("Authorization", "Bearer "+base.Bearer)
 	}
-	httpResp, err := runnerHTTPClient.Do(req)
+	return runnerHTTPClient.Do(req)
+}
+
+func forwardTunnelRequest(ctx context.Context, routes runnerRoutes, msg tunnelMessage) tunnelMessage {
+	resp := tunnelMessage{Type: "response", ID: msg.ID}
+	upstream, err := openTunnelResponse(ctx, routes, msg)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp
 	}
-	defer func() { _ = httpResp.Body.Close() }()
-	respBody, err := io.ReadAll(httpResp.Body)
+	defer upstream.Body.Close()
+	body, err := io.ReadAll(upstream.Body)
 	if err != nil {
 		resp.Error = err.Error()
 		return resp
 	}
-	resp.StatusCode = httpResp.StatusCode
-	resp.Headers = map[string][]string(httpResp.Header)
-	resp.BodyBase64 = base64Encode(respBody)
-	// Trailers are only populated once the body has been read to EOF,
-	// which ReadAll above guarantees.
-	if len(httpResp.Trailer) > 0 {
-		resp.Trailers = map[string][]string(httpResp.Trailer)
-	}
+	resp.StatusCode = upstream.StatusCode
+	resp.Headers = map[string][]string(upstream.Header)
+	resp.BodyBase64 = base64Encode(body)
+	resp.Trailers = map[string][]string(upstream.Trailer)
 	return resp
 }
 

@@ -15,13 +15,16 @@ and editing the orch-coordinator. That coupling is the problem this repo exists 
 This repo's target is **a single workload-agnostic capability broker** that:
 
 - Owns one host's `/registry/offerings`.
-- Reads a single declarative `host-config.yaml`.
-- Dispatches paid HTTP/streaming/RTMP/session traffic to arbitrary backends (local
-  containers, LAN services, third-party APIs).
-- Carries no per-capability code — only a small fixed typology of *interaction modes*.
+- Reads a single declarative `host-config.yaml` that carries **offers only** — what
+  is sold, at what price, with what capacity.
+- Admits runners that attach **outbound** and declare themselves (transports, work
+  unit, extractor, readiness), and dispatches paid traffic to them over that
+  connection.
+- Carries no per-capability code — only two fixed wire protocols (`paid-job/v1`,
+  `paid-session/v1`) plus per-offering declared axes.
 
 The orchestrator's day-to-day surface becomes three steps with no code: **define**
-capabilities + price, **identify** the servers, **serve**.
+offers + price, **attach** the runners, **serve**.
 
 The full architectural rationale lives in
 [`docs/references/2026-05-06-architecture-conversation.md`](./docs/references/2026-05-06-architecture-conversation.md).
@@ -32,6 +35,7 @@ Implementation is underway. The repo now contains working component code alongsi
 cross-cutting design docs.
 
 - [`docs/design-docs/`](./docs/design-docs/) — what we believe and why
+- [`PLANS.md`](./PLANS.md) and [`docs/exec-plans/active/`](./docs/exec-plans/active/) — what is in flight
 - [`docs/exec-plans/completed/`](./docs/exec-plans/completed/) — what has shipped
 - [`docs/references/`](./docs/references/) — source material (conversation transcripts, the
   OpenAI Harness PDF)
@@ -98,17 +102,28 @@ top-level subfolder with its own `AGENTS.md`, `docs/`, source, and tests.
 
 Current components:
 
-- `livepeer-network-protocol/` — spec repo (modes, extractors, schemas, conformance)
-- `capability-broker/` — workload-agnostic worker process
+- `livepeer-network-protocol/` — spec subfolder (protocols, descriptors, extractors, headers, manifest schema, protos, conformance)
+- `capability-broker/` — workload-agnostic broker process that connected runners attach to
 - `payment-daemon/` — receiver + sender, decoupled from capability/work-unit enums
 - `orch-coordinator/` — manifest candidate builder + publisher host
 - `secure-orch-console/` — cold-key diff-and-sign console
 - `protocol-daemon/` — chain-side orchestrator daemon: round init, reward, service-URI writes, plus orchestrator self-service actions (set reward/fee cut, transfer bonded LPT, withdraw ETH fees, treasury voting)
 - `service-registry-daemon/` — consumer-side resolver for on-chain orch discovery + manifest fetch/verify/cache
-- `chain-commons/` — shared chain/RPC/txintent support used by protocol-daemon
+- `chain-commons/` — shared chain/RPC/txintent Go library used by protocol-daemon, payment-daemon, and service-registry-daemon
 - `proto-contracts/` — generated protobuf bindings shared by daemon surfaces
 - `pool-controller/`, `pool-reconciler/`, `pool-payout-executor/` — Regional pool policy, complete-source accounting and dedicated-wallet payouts
+- `pool-member-agent/` — host-side agent for connected runners: outbound attach to a broker plus the pool desired-state reconcile loop
+- `pool-commons/` — optional Go helpers shared by the regional pool services (service auth, member auth/reporting, ownership, terms, revenue)
 - `member-portal/` — Shared wallet sign-in, regional membership actions and qualified reporting
+- `customer-portal/` — shared SaaS-shell TypeScript library (API-key auth, customer ledger, Stripe top-ups, admin engine, light-DOM widgets); a library, not a deployed service
+- [`orchestrator-setup/`](./orchestrator-setup/README.md) — offline standalone broker deployment-file and hot-key generation
+
+Supporting top-level directories (not components):
+
+- `templates/` — the workload template catalog `pool-controller` places on member GPUs
+- `infra/` — shared compose services, image build script, and staged scenario stacks
+- `e2e/` — black-box cross-component pool tests that boot the real binaries
+- `scripts/` — repo-wide checks (frontend DOM/CSS invariants)
 
 Components can be **extracted to standalone repos later** once they stabilize and have
 independent release cadences. The monorepo isn't a permanent shape; it's the cheapest
@@ -152,10 +167,15 @@ This repo follows the agent-first harness pattern documented in
 ├── README.md              # You are here
 ├── docs/                  # Cross-cutting (suite-wide) docs
 │   ├── design-docs/       # start at index.md
-│   ├── exec-plans/        # active/, completed/, tech-debt-tracker.md
+│   ├── exec-plans/        # active/, completed/, drafts/, tech-debt-tracker.md
+│   ├── integration/       # Consumer integration guides (gateways, clearinghouse)
 │   ├── product-specs/     # Cross-cutting feature specs (TBD)
-│   ├── generated/         # Machine-produced reference (dep graphs, SBOMs)
+│   ├── generated/         # Machine-produced reference (dep graphs, SBOMs) — empty today
 │   └── references/        # External material (conversation transcripts, PDFs)
+├── templates/             # Workload template catalog (pool-controller placement)
+├── infra/                 # Shared compose, image build script, scenario stacks
+├── e2e/                   # Black-box cross-component tests
+├── scripts/               # Repo-wide checks
 └── <component-name>/      # One subfolder per component
     ├── AGENTS.md
     ├── docs/

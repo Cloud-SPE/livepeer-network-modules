@@ -83,6 +83,7 @@ is_pushable_image() {
     livepeer-pool-reconciler|\
     livepeer-pool-payout-executor|\
     livepeer-secure-orch-console|\
+    livepeer-pool-setup|\
     livepeer-conformance)
       return 0
       ;;
@@ -107,6 +108,8 @@ declare -a IMAGES=(
   "livepeer-pool-reconciler|.|pool-reconciler/Dockerfile||"
   "livepeer-pool-payout-executor|.|pool-payout-executor/Dockerfile||"
   "livepeer-secure-orch-console|.|secure-orch-console/Dockerfile||"
+  # Setup assembles the module binaries built above; it never starts them as services.
+  "livepeer-pool-setup|.|pool-setup/Dockerfile||"
   "livepeer-conformance|.|livepeer-network-protocol/conformance/Dockerfile||"
 )
 

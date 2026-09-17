@@ -27,7 +27,7 @@ Inherited from the repo root. Plus:
 |---|---|
 | What is this library? | [`README.md`](./README.md) |
 | Library design | [`DESIGN.md`](./DESIGN.md) |
-| Plan brief | [`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md) |
+| Plan brief | `docs/exec-plans/completed/0013-shell-customer-portal-extraction.md` — removed from the tree in commit `9ad9898`; recover it from git history |
 | Build / test gestures | [`Makefile`](./Makefile) |
 | DB schema source | [`src/db/schema.ts`](./src/db/schema.ts) |
 | Migration files | [`migrations/`](./migrations/) |
@@ -77,11 +77,12 @@ is complete.
 ## Doing work
 
 - **TypeScript with strict types.** `tsc` is the source of truth; tests run
-  via `node --test` against `dist/`.
+  via `node --test` against `dist-test/` (built by `tsconfig.test.json`).
 - **No emojis.** No comments narrating WHAT the code does. No plan-number
   references in code comments.
-- **Suite-source attribution** lives in commit messages and this file
-  (below), per repo-root AGENTS.md lines 62-66.
+- **Suite-source attribution** lives in commit messages, per the
+  "Do not copy code, schemas, or configs" rule in repo-root AGENTS.md
+  ("Doing work in this repo").
 - **The shell exposes interfaces; consuming services implement them.**
   `Wallet`, `AuthResolver`, `AdminAuthResolver`, `RateLimiter`,
   `RateCardResolver`, `StripeClient`.

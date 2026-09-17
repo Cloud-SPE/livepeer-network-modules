@@ -32,7 +32,7 @@ types → config → repo → service → runtime
 
 Cross-cutting concerns (Eth client, manifest HTTP fetcher, signer, store, clock, logger) enter through a single layer: `internal/providers/`. Nothing in `service/` may import `eth`, `bbolt`, `net/http`, etc. directly — only through a `providers/` interface.
 
-Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-docs/architecture.md).
+golangci-lint `depguard` rules enforce the configured boundaries under `make lint`; `lint/layer-check` is a stub and the monorepo runs no CI workflow for this component. See [docs/design-docs/architecture.md](docs/design-docs/architecture.md).
 
 ## Toolchain
 
@@ -68,5 +68,5 @@ Lints enforce this in CI. See [docs/design-docs/architecture.md](docs/design-doc
 | How does legacy fallback work? | `docs/design-docs/serviceuri-modes.md` |
 | What's the gRPC contract? | `docs/product-specs/grpc-surface.md` |
 | What metrics are emitted? | `docs/design-docs/observability.md` |
-| How do I deploy / run it? | `docs/operations/running-the-daemon.md` + the README's Docker / Quick start sections |
+| How do I deploy / run it? | `docs/operations/running-the-daemon.md` + the README's Docker-first setup section |
 | Known debt? | `docs/exec-plans/tech-debt-tracker.md` |

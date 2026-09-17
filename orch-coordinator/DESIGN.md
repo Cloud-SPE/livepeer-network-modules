@@ -26,9 +26,11 @@ Outputs:
 - The candidate manifest — packaged as a `tar.gz` (`manifest.json` JCS
   bytes + `metadata.json` operator-only sidecar). Operator downloads via
   the web UI.
-  The sidecar now includes broker metadata thresholds, per-broker metadata
-  summaries, and per-tuple metadata warnings so the operator can evaluate
-  degraded discovery state before hand-carrying the candidate for signing.
+  The sidecar carries the scrape window, per-broker freshness and errors,
+  the effective sign policy (`manifest_ttl_seconds`,
+  `renewal_threshold_seconds`), `ha_endpoints`, and settlement-key
+  provenance so the operator can evaluate degraded scrape state before
+  hand-carrying the candidate for signing.
 - The currently-published signed manifest — served on the resolver-facing
   listener at `/.well-known/livepeer-registry.json`.
 
@@ -106,8 +108,9 @@ Same broker offerings + same scrape window → byte-identical manifest.
 ## Aggregation rules
 
 The uniqueness key for tuple identity is the canonicalized
-`(capability_id, offering_id, extra, constraints)` quadruple. `worker_url`
-is **not** part of identity.
+`(capability_id, offering_id, settlement_domain_id, extra, constraints)`
+tuple. `worker_url` is **not** part of identity, but one `worker_url`
+reporting two different `settlement_domain_id` values hard-fails the build.
 
 Three cases when scraping multiple brokers:
 
@@ -131,9 +134,9 @@ Five steps, run synchronously when an upload arrives:
    verifier in
    [`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/).
 3. `manifest.orch.eth_address` matches the configured operator identity.
-4. **Schema-version drift check** — reject if the signed manifest's
-   `spec_version` differs from the candidate the coordinator most
-   recently produced.
+4. **Drift check** — reject if the signed manifest's `spec_version`
+   differs from the coordinator's, or its canonical bytes are not the
+   candidate the coordinator most recently produced.
 5. `issued_at` and `expires_at` well-formed and in the future, plus
    `publication_seq` strictly greater than the currently-published
    manifest's value (rollback defense).
@@ -145,7 +148,8 @@ the currently-published manifest stays live.
 
 Old manifest stays live until the new one verifies. The publish is
 write-tempfile-fsync-rename(2). Single-writer guaranteed by `flock(2)`
-over the publish dir; concurrent uploaders block on the lock.
+over the publish dir; a concurrent uploader fails fast with `ErrLocked`
+rather than queueing.
 
 ## Persistence
 
@@ -173,4 +177,5 @@ over the publish dir; concurrent uploaders block on the lock.
 - Structured slog audit event on every publish (stable error-code
   strings).
 
-See [`AGENTS.md`](./AGENTS.md) for the runtime configuration surface.
+See [`docs/operator-runbook.md`](./docs/operator-runbook.md) for the
+runtime configuration surface.

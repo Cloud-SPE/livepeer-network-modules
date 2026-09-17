@@ -2,8 +2,9 @@
 
 pnpm sub-workspace per OQ1 lock. Three packages:
 
-- `shared/` — shared widget catalog (Lit + RxJS, TypeScript). Per FQ4 +
-  Q5 + OQ4 locks: ships `.ts` sources plus a pre-built `dist/` artifact.
+- `shared/` — shared widget catalog (light-DOM custom elements + RxJS,
+  TypeScript). Per FQ4 + Q5 + OQ4 locks: ships `.ts` sources plus a
+  pre-built `dist/` artifact.
   Per-product portals/admins consume the dist as an ESM dep.
 - `portal/` — customer-facing SPA scaffold consuming `shared/`.
   Per-product portals (openai, vtuber, video) extend.

@@ -13,9 +13,10 @@ the cross-cutting map.
 - **Protocol timing stays outside.** `protocol-daemon` remains the source of
   round events. This component is where round-event consumption meets Pool
   economics.
-- **Manual first, automation second.** The first shipped surface is a
-  file-driven/manual submit command so the contract can stabilize before wiring
-  a live protocol-daemon loop.
+- **Manual first, automation second.** The first shipped surface was a
+  file-driven/manual submit command; the live protocol-daemon loop
+  (`watch-rounds`) and regional source collection now sit on the same
+  preparation path. Keep the manual commands working.
 
 ## Where to look
 
@@ -24,4 +25,5 @@ the cross-cutting map.
 | What is this component? | [`README.md`](./README.md) |
 | Current shape | [`DESIGN.md`](./DESIGN.md) |
 | Example config | [`examples/pool-reconciler-config.example.yaml`](./examples/pool-reconciler-config.example.yaml) |
-| Driving cross-cutting plan | [`../docs/exec-plans/active/0029-pool-node-design.md`](../docs/exec-plans/active/0029-pool-node-design.md) |
+| Regional collection | [`docs/regional-collection.md`](./docs/regional-collection.md) |
+| Original driving plan (history) | [`../docs/exec-plans/completed/0029-pool-node-design.md`](../docs/exec-plans/completed/0029-pool-node-design.md) |

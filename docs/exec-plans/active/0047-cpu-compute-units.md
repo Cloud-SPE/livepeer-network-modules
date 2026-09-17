@@ -1,6 +1,6 @@
 ---
 title: CPU as a placeable compute unit
-status: implementing
+status: implemented
 date: 2026-09-02
 beads: lnm-iqn
 supersedes: none

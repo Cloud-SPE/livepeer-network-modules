@@ -43,19 +43,20 @@ apply. See [backend health](../../../docs/design-docs/backend-health.md).
 
 Routes carry `worker_url`, `eth_address`, capability, offering, `protocol`,
 `work_unit`, decimal price string, `units_per_price`, optional estimator,
-`extra_json`, `constraints_json`, quote metadata and `settlement_keys`.
-The route's `eth_address` is the orchestrator identity, not a runner identity.
+`extra_json`, `constraints_json`, quote metadata, `settlement_keys` and
+`settlement_domain_id`. The route's `eth_address` is the orchestrator
+identity, not a runner identity.
 
 - `units_per_price` comes from signed `per_units` (zero/absent normalizes to 1).
   Do not assume prices have been divided to a per-single-unit value.
 - `quote_version` is the publication sequence for manifest-derived routes,
   otherwise zero. The resolver rejects rollback and conflicting same-sequence signed payloads.
 - `quote_id` is `resolver:v1:` plus SHA-256 of lower-case eth address, worker
-  URL, capability, offering and work unit, joined by `|`.
+  URL, settlement-domain ID, capability, offering and work unit, joined by `|`.
 - `constraint_fingerprint` hashes the canonical JSON constraints object;
   absent/empty constraints become `{}`.
 - `route_fingerprint` hashes NUL-separated lower-case eth address, worker URL,
-  capability, **protocol**, offering, decimal price, work unit, units-per-price,
+  settlement-domain ID, capability, **protocol**, offering, decimal price, work unit, units-per-price,
   canonical extra JSON and canonical constraints JSON. It does not include
   publication sequence, settlement keys or the typed estimator.
 - `settlement_keys` includes all keys projected from the signed publication,

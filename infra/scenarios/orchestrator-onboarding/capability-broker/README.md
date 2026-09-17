@@ -72,6 +72,8 @@ for the full three-layer model (manifest / live / failure-rate).
 ├── payment-keystore.json          # hot wallet for ticket redemption
 ├── payment-keystore-password
 ├── broker-seal.key                # seals the attach-credential store
+├── broker-settlement.key          # optional until you sign settlements (see below)
+├── fixtures/                      # certification fixtures (BROKER_FIXTURES_DIR; may be empty)
 └── host-config.yaml               # the offers this broker sells
 ```
 
@@ -136,7 +138,7 @@ and edit:
 | [`video-transcode.example.yaml`](./host-configs/video-transcode.example.yaml) | Stable | `video:transcode.vod` + `.abr` (`paid-job/v1`), `video:transcode.live` (`paid-session/v1`) | the `livepeer-modules-transcode` images |
 
 The backend service does not need to be reachable *from* the broker. Run an
-agent next to it (`pool-member-agent`), give it an enrolled credential, and
+agent next to it ([`pool-member-agent`](../pool-member-agent/)), give it an enrolled credential, and
 it attaches outbound; the broker sends work back down that connection.
 
 ### Notes on the example host-configs

@@ -78,10 +78,11 @@ route; it is not a manifest pointer.
 
 ### Discover through the chain
 
-Set `DISCOVERY_MODE=chain` and supply `CHAIN_RPC_URLS`. The resolver uses
-Controller-derived `ServiceRegistry` by default, with an explicit primary
-address override and optional AI registry fallback. Active orchestrators are
-seeded on round events. Explicit overlay manifest pointers still take
+Set `DISCOVERY_MODE=chain` and supply `CHAIN_RPC_URLS`. The resolver reads
+`serviceURI` from the AI registry address, which is set by default. An empty
+`--ai-service-registry-address` selects the primary `ServiceRegistry` instead
+(Controller-derived unless overridden); there is no fallback between the two.
+Active orchestrators are seeded on round events. Explicit overlay manifest pointers still take
 precedence for their addresses. See [discovery modes](docs/design-docs/serviceuri-modes.md).
 
 ### Identity-only publisher

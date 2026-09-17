@@ -1,7 +1,7 @@
 ---
 title: Trust model
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-09-17
 ---
 
 # Trust model
@@ -95,8 +95,8 @@ compromise costs the value of in-flight tickets only, because:
 - the ticket signer wallet only pays redemption gas; it is not the recipient
 
 This is the "hot / cold identity split" — see
-[`payment-daemon-interactions.md`](./payment-daemon-interactions.md) §
-*Hot / cold identity split*.
+[`payment-daemon/docs/operator-runbook.md`](../../payment-daemon/docs/operator-runbook.md)
+§5 *Identity: hot wallet vs cold orchestrator*.
 
 ## What signatures attest to
 
@@ -111,7 +111,8 @@ That's a strong claim, and the protocol leans on it heavily:
 
 - it gates Layer-1 manifest health (see
   [`backend-health.md`](./backend-health.md))
-- it determines which payments `payment-daemon` (receiver) will validate
+- it pins the payee, broker route, and unit price a payer's spend
+  authorization commits to
 - it determines what gateways will route to
 
 That's why the signature payload is the manifest's **canonical bytes** —
@@ -207,8 +208,8 @@ coordinator can propose a key; it cannot get one signed unseen.
 
 These hold for every published manifest, by construction:
 
-1. **The cold key signed it.** The receiver-side `payment-daemon` and every
-   resolver re-check this; the chain anchors the identity.
+1. **The cold key signed it.** The coordinator (on upload) and every
+   resolver (on fetch) re-check this; the chain anchors the identity.
 2. **The operator saw the diff — or authored the policy that graded it.**
    For every critical change, secure-orch-console renders the
    candidate-vs-current-published diff before exposing the Sign action;
@@ -254,7 +255,9 @@ These hold for every published manifest, by construction:
    sign path".)
 6. **Revocation is supersession.** There is no separate revoke step — the
    operator signs a new manifest that omits the no-longer-offered
-   capability, and resolvers pick it up on the next round refresh.
+   capability, and resolvers pick it up on their next manifest refresh
+   (cache TTL or a forced `Refresh`). The higher `publication_seq` also
+   stops the superseded manifest from being replayed.
 
 ## Threat model and what each invariant defends against
 
@@ -274,13 +277,15 @@ These hold for every published manifest, by construction:
 - ~~**Automated transport** of manifests from secure-orch to
   coordinator.~~ Shipped by plan 0042: an outbound-only agent on the
   secure host pulls candidates, classifies them against the operator's
-  sign policy, auto-signs within the envelope (invariant #4), and pushes
+  sign policy, auto-signs within the envelope (invariant #5), and pushes
   signed manifests back. Hand-carry remains available as the fallback
   path.
-- **Manifest versioning beyond supersession.** No timestamps, no nonces.
-  The latest signed manifest wins. If versioned histories become valuable
-  for audit, they belong in the coordinator's storage layer, not in the
-  signed payload.
+- **Manifest versioning beyond supersession.** The signed payload carries
+  only what replay protection needs — `issued_at` / `expires_at` and a
+  monotonic `publication_seq` that resolvers persist as a per-orch
+  high-water mark. The latest signed manifest wins. If versioned histories
+  become valuable for audit, they belong in the coordinator's storage
+  layer, not in the signed payload.
 - **Anonymous third-party verification.** Resolvers verify per-fetch;
   no public attestation service exists yet. If the market wants one, it
   belongs in third-party tooling (Layer 8), not in the trust spine.
@@ -290,8 +295,10 @@ These hold for every published manifest, by construction:
 - [`./architecture-overview.md`](./architecture-overview.md) §
   *Layer 5 — Trust spine: operator-driven sign cycle*
 - [`./backend-health.md`](./backend-health.md) § *Layer 1 — Manifest health*
-- [`./payment-daemon-interactions.md`](./payment-daemon-interactions.md) §
-  *Hot / cold identity split*
+- [`../../payment-daemon/docs/operator-runbook.md`](../../payment-daemon/docs/operator-runbook.md)
+  §5 *Identity: hot wallet vs cold orchestrator*
+- [`./payment-daemon-interactions.md`](./payment-daemon-interactions.md) —
+  how the broker and both `payment-daemon` roles interact
 - [`../../secure-orch-console/`](../../secure-orch-console/) — the LAN-only
   signing UI
 - [`../../orch-coordinator/`](../../orch-coordinator/) — the public host

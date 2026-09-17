@@ -205,6 +205,8 @@ Web UI (all behind login when `ORCH_COORDINATOR_ADMIN_TOKENS` is set):
 | GET/POST | `/login`, POST `/logout`   | operator session |
 | POST     | `/refresh-roster`          | force an out-of-band scrape |
 | POST     | `/upload-signed-manifest`  | browser form-post wrapper over `/admin/signed-manifest` |
+| GET      | `/runners`, `/offers`, `/certification`, `/enroll` | hot-zone pages over each broker's admin API (`/admin/v1/...`, bearer from `admin_token_ref`); see the [README](../README.md#hot-zone-console) |
+| POST     | `/runners/disconnect`, `/offers/accept-shape`, `/certification/run`, `/enroll`, `/enroll/revoke` | hot-zone write gestures (form posts; each redirects with a flash, except `/enroll`, which renders the credential once) |
 
 Both candidate routes return an `ETag` over the candidate's canonical
 manifest bytes and honor `If-None-Match` with `304 Not Modified`, so
@@ -272,7 +274,7 @@ Gauges: `orch_coordinator_known_brokers`,
 Broker keeps its last-good entries flagged
 `freshness=stale_failing`. Roster surfaces this; candidate is built
 unaffected. `orch_coordinator_scrape_total{outcome="http_error"}`
-increments.
+(or `"timeout"`) increments.
 
 Action: investigate broker host. The operator may continue signing
 and publishing while the soft failure persists; the published
@@ -291,8 +293,8 @@ spec version.
 
 ### Candidate-build price conflict
 
-Two brokers advertise the same `(capability_id, offering_id, extra,
-constraints)` quadruple at different prices. Coordinator hard-fails
+Two brokers advertise the same `(capability_id, offering_id,
+settlement_domain_id, extra, constraints)` tuple at different prices. Coordinator hard-fails
 the candidate-build pass; the previous candidate stays the
 operator's reference point. `orch_coordinator_candidate_builds_total{
 outcome="conflict"}` increments and the error appears in the slog
@@ -313,6 +315,7 @@ The admin-listener returns the matching HTTP status:
 - `401 identity_mismatch` — `manifest.orch.eth_address` is not the
   configured operator identity.
 - `409 drift_rejected` — `spec_version` differs from the
+  coordinator's, or the signed manifest's canonical bytes are not the
   coordinator's most-recent candidate.
 - `409 window_invalid` — `expires_at` is not in the future, or
   `issued_at` is missing.

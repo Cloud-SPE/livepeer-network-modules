@@ -12,9 +12,12 @@ A single Go binary that **brokers** between:
 
 - **Above**: the Livepeer network's payment + discovery plane (paid HTTP/WS
   traffic from gateways with `Livepeer-Payment` envelopes).
-- **Below**: arbitrary backends — local containers (vLLM, Ollama, Whisper,
-  Kokoro, FFmpeg subprocess), LAN services, third-party APIs (OpenAI,
-  Anthropic, OpenRouter), or anything else operator-declared.
+- **Below**: attached runners fronting arbitrary backends — local containers
+  (vLLM, Ollama, Whisper, Kokoro, FFmpeg subprocess), LAN services,
+  third-party APIs (OpenAI, Anthropic, OpenRouter), or anything else. A
+  runner dials in over the attach tunnel (QUIC or WebSocket) and declares
+  what it serves; the broker forwards down that connection and never dials
+  an operator-declared backend URL.
 
 Peers that negotiate wholesale accounts carry `Livepeer-Authorization` as the
 single-purpose execution authority; `Livepeer-Payment` is then only an optional
@@ -30,10 +33,11 @@ lives in:
    mode-adapter layer 2026-08.
 2. **Extractor implementations** — declarative work-unit recipes
    (`internal/extractors`). A `paid-job/v1` concept only: paid-session
-   usage arrives as runner-reported cumulative claims, and the config
-   grammar rejects an extractor on a session capability.
-3. **The `host-config.yaml` operator config** — capability ID, offering ID,
-   pricing, backend descriptors, declared extractors.
+   usage arrives as runner-reported cumulative claims, and a session
+   runner declaring an extractor is rejected at attach.
+3. **The `host-config.yaml` operator config** — `offers[]`: capability ID,
+   offering ID, pricing, capacity, certification. Transports, work unit,
+   extractor and paths come from the runner's attach document, not the file.
 
 ## Wire spec compliance
 

@@ -9,7 +9,7 @@ related:
   - "active plan 0040 — pool template onboarding and connected-worker reset (§6–8 superseded in part; see §7)"
   - "active plan 0042 — automated manifest sign cycle (unchanged mechanics; policy amended in §3.7)"
   - "active plan 0037 — operator console UI alignment (coordinator pages land in its shell)"
-  - "docs/design-docs/runner-declared-capabilities.md (superseded by this plan once shipped)"
+  - "docs/references/archived/runner-declared-capabilities.md (superseded by this plan; archived)"
   - "docs/design-docs/trust-model.md"
   - "docs/design-docs/pool-overlay-flows.md"
 audience: broker / coordinator / console / registry / pool maintainers, trust-model reviewers
@@ -22,12 +22,12 @@ audience: broker / coordinator / console / registry / pool maintainers, trust-mo
 suite now attaches its own runner and the broker's legacy
 `capabilities[]` grammar is deleted, along with the HTTP health prober
 it fed — `/registry/health` keeps its contract but is now computed from
-the offer set and the attach tunnels (§3.4). One follow-up remains
-split out: `lnm-za5`, the coordinator's now-inert broker
-metadata-discovery plumbing. The legacy worker tunnel that served
-`worker://` backend URLs is inert but not yet removed, because
-`pool-controller` still speaks its admin surface — tracked as
-`lnm-wyu`. One item was deliberately not done: overlay `pin[]` keeps
+the offer set and the attach tunnels (§3.4). Both split-out follow-ups
+have since closed: `lnm-za5` (2026-08-30) deleted the coordinator's
+inert broker metadata-discovery plumbing, and `lnm-wyu` (2026-08-29)
+deleted the legacy worker tunnel that served `worker://` backend URLs,
+together with the `pool-controller` admin surface that spoke to it. One
+item was deliberately not done: overlay `pin[]` keeps
 its current shape, because the declared job/session axes it would gain
 are dropped by the envelope's node projection and no consumer reads
 them (§3.8).

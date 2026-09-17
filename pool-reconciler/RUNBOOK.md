@@ -16,8 +16,12 @@ It then submits canonical round-close payloads back to `pool-controller`.
 - durable `reconcile.state_path`
 - reachable:
   - `protocol-daemon`
-  - `payment-daemon`
+  - `payment-daemon` (legacy single-pool mode) or every configured
+    `revenue_sources` origin (regional mode; see
+    [`docs/regional-collection.md`](./docs/regional-collection.md))
   - `pool-controller`
+
+Check a config offline with `validate-config --config <path>`.
 
 ## Start
 

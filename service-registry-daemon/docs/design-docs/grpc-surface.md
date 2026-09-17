@@ -23,7 +23,8 @@ not be advertised as reserved working endpoints.
 The Go-native server owns selection/projection; adapters convert it to proto
 messages. This distinction matters: domain types carry more information than
 inventory Node messages. SelectedRoute is the gateway-facing contract for
-protocol, denominator, estimator, quote metadata and settlement keys.
+protocol, denominator, estimator, quote metadata, settlement keys and the
+settlement-domain ID.
 
 Eth addresses and integer wei prices are strings. A route price is a numerator
 plus `units_per_price`, not necessarily a normalized one-unit price. Consumers

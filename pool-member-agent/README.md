@@ -77,7 +77,7 @@ session traffic.
 | `LIVEPEER_EDGE_TLS_CERT` | Certificate chain path, default `/etc/livepeer/edge/tls.crt`. |
 | `LIVEPEER_EDGE_TLS_KEY` | Private key path, default `/etc/livepeer/edge/tls.key`. |
 | `LIVEPEER_EDGE_RTMPS_LISTEN` | Agent RTMPS listener, default `:1936`. |
-| `LIVEPEER_EDGE_PORT` | Bundle Docker host port mapped to agent port 8443; default 8443. |
+| `LIVEPEER_EDGE_PORT` | Bundle Docker host port mapped to agent port 8443; default 8443. A selected-GPU bundle sets `0` (dynamic) for both edge ports so another enrollment's agent can share the host; set unique fixed ports before enabling a public URL. |
 | `LIVEPEER_EDGE_RTMPS_PORT` | Bundle Docker host port mapped to agent port 1936; keep 1936 for generated descriptors. |
 
 ## Configuration
@@ -87,22 +87,25 @@ Attach (always):
 | Variable | Meaning |
 |---|---|
 | `LIVEPEER_BROKER_URL` | Broker base URL; the WebSocket transport. |
+| `LIVEPEER_BROKER_URLS` | Comma-separated distinct HTTPS broker origins. When set, the agent runs one attach loop per broker, all sharing one runner set and credential. Cannot be combined with `LIVEPEER_BROKER_QUIC_ADDR`. |
 | `LIVEPEER_BROKER_QUIC_ADDR` | Broker QUIC address. Preferred when set; the WebSocket is the egress-friendly fallback. |
 | `LIVEPEER_ATTACH_CREDENTIAL_FILE` | File holding the attach credential from the bundle. (`LIVEPEER_ATTACH_CREDENTIAL` inline exists for throwaway runs.) |
 | `LIVEPEER_HOST_ID` | Stable host id; defaults to the hostname. Must match the enrollment when the store records one. |
-| `LIVEPEER_RUNNERS_FILE` | JSON array of runner declarations (below). Locally declared runners; a pool-managed host has these replaced on the first reconcile. |
+| `LIVEPEER_RUNNERS_FILE` | JSON array of runner declarations (below). Locally declared runners; a pool-managed host never activates them — it attaches hardware-only until its first desired-state fetch. |
 | `LIVEPEER_RUNNER_URL` | Single-runner shorthand: the runner's base URL. Its contract says the rest. `LIVEPEER_RUNNER_LOCAL_ID` names it (default `runner-0`). |
-| `LIVEPEER_REFRESH_EVERY` | How often to rebuild the document and re-send it if it changed. Default `1m`. |
+| `LIVEPEER_REFRESH_EVERY` | How often to rebuild the document and re-send it if it changed. Default `1m`. (`--refresh-every` overrides it; `--version` prints the build version.) |
 
-Pool-managed (set all three and the reconcile loop starts):
+Pool-managed (set the controller URL, enrollment id and a token, and the reconcile loop starts):
 
 | Variable | Meaning |
 |---|---|
 | `POOL_CONTROLLER_URL` | Controller base URL — its member listener. |
 | `POOL_ENROLLMENT_ID` | This host's enrollment. |
-| `POOL_ENROLLMENT_TOKEN_FILE` | File holding the enrollment token. (`POOL_ENROLLMENT_TOKEN` inline also works.) The agent **rewrites this file** when it rotates. |
+| `POOL_ENROLLMENT_TOKEN_FILE` | File holding the enrollment token. (`POOL_ENROLLMENT_TOKEN` inline also works.) Boot-time only once `agent-credentials.json` exists: rotation does not rewrite this file. |
+| `POOL_AGENT_CREDENTIALS_FILE` | Durable credential file (enrollment token, attach credential, generation); defaults to `agent-credentials.json` beside the token file. When present it takes precedence over the token and attach-credential variables, and the agent **rewrites this file** when it rotates. See [regional credentials](docs/regional-credentials.md). |
+| `POOL_GPU_UUIDS` | Comma-separated GPU UUIDs this enrollment covers. When set, only hardware units with those GPU UUIDs are reported in the attach document; empty reports all hardware. |
 | `POOL_COMPOSE_FILE` | Where the generated compose file goes. Default `runners.compose.yaml`. |
-| `POOL_COMPOSE_BINARY` | For a host whose docker is called something else; default is `docker compose`. Extra args are appended. |
+| `POOL_COMPOSE_BINARY` | For a host whose docker is called something else (run as `<binary> -f <file> …`); default is `docker compose`. |
 | `POOL_POLL_EVERY` | Desired-state poll interval. Default `30s`. |
 | `POOL_POLL_TIMEOUT` | Per-request timeout. Default `30s`. |
 | `POOL_ROTATE_EVERY` | Credential rotation cadence. Default `24h`. |
@@ -160,8 +163,8 @@ On a pool-managed host the runner set is live state, not configuration.
 
 ```
 GET /member/v1/enrollments/{id}/desired-state    (enrollment token, ETag)
-  → {revision, services[]{name, compose_fragment, device_ids, models[],
-                          capability, identity, draining}}
+  → {enrollment_id, revision, services[]{name, compose_fragment, device_ids,
+                          models[], capability, identity, draining, stop}}
   → write runners.compose.yaml
   → docker compose pull
   → docker compose up -d --remove-orphans
@@ -200,10 +203,12 @@ gone, but dropping it here would kill it mid-request.
 
 **The agent rotates its own credential** every `POOL_ROTATE_EVERY`, well inside
 any plausible token lifetime. A host that waits for expiry has already stopped
-earning by the time anyone can act on it. The new token is written to a temp
-file and renamed, and the old one stays in place until the new one is safely
-down — the replacement is returned exactly once, and losing it between the
-response and the disk would leave this host unable to authenticate at all.
+earning by the time anyone can act on it. The new enrollment-token/attach
+credential pair is written to `agent-credentials.json` via a temp file, fsync
+and rename. A secret request proof is persisted before the rotation request, so
+a lost reply or a restart replays the same request and retrieves the same
+result instead of losing the credential; see
+[regional credentials](docs/regional-credentials.md).
 
 ## What the pool asks of the host
 
@@ -223,7 +228,8 @@ network; runners reference it as external. Runner reconciliation cannot remove
 the agent as an orphan. An empty desired state stops the runner project without
 removing its volumes or the shared network.
 
-The enrollment token is `/workspace/enrollment-token` on the writable bundle
+The enrollment token is `/workspace/enrollment-token` and the durable
+credential file `/workspace/agent-credentials.json`, both on the writable bundle
 directory mount. A read-only single-file mount prevents atomic credential
 rotation. The bootstrap image defaults to
 `tztcloud/livepeer-pool-member-agent:v2.0.0`; `REGISTRY` and `TAG` can be set in

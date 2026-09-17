@@ -32,7 +32,7 @@ Inherited from the repo root, plus:
   / gateway verify path. The `internal/canonical/` package is the
   single source of truth on both sides of the sign/verify boundary.
 - **Audit log is append-only.** Every console gesture (load candidate,
-  view diff, sign, write outbox) emits a JSONL record. Rotation is
+  view diff, sign, write signed) emits a JSONL record. Rotation is
   size-based; entries are never edited.
 
 ## Where to look
@@ -106,7 +106,7 @@ because resolvers, coordinators, and gateways all need it.
 
 ## Attribution — ports from the prior reference impl
 
-Per repo-root [`../AGENTS.md`](../AGENTS.md) lines 62–66, code copied
+Per the repo-root [`../AGENTS.md`](../AGENTS.md) no-copy-without-permission rule, code copied
 in from a named source repo records what was copied, from where, and
 that the user authorized the copy. Plan 0019 §12 commit 2 + §4.1
 authorize the verbatim port of the canonicalizer + signer from

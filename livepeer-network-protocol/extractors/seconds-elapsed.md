@@ -49,7 +49,7 @@ determined by the transport the request negotiated:
 | `multipart` | first byte of request body received | last byte of response sent |
 
 There are no configurable anchors: the terminal accounting point is fixed by
-`paid-job/v1` §5 (response completion or stream termination), which is exactly
+`paid-job/v1` §6 (response completion or stream termination), which is exactly
 what makes the claim and the debit consistent.
 
 ## Recipe

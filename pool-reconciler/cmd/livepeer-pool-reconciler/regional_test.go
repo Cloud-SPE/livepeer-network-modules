@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"encoding/pem"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -228,5 +230,69 @@ func TestLostCloseAcknowledgementReplaysPersistedProofAfterSourceRetirement(t *t
 	record, _, err := st.GetRound(100)
 	if err != nil || record.Status != "closed" || calls != 1 {
 		t.Fatalf("lost acknowledgement recovery %+v %v calls=%d", record, err, calls)
+	}
+}
+
+func TestRegionalBootstrapSkipsPreSourceHistory(t *testing.T) {
+	cfg := &config.Config{PoolController: config.PoolController{PoolID: "pool_us"}}
+	cfg.RoundSource.ProtocolDaemonSocket = startProtocolDaemonServer(t, &testProtocolDaemon{lastRound: 4340})
+	cfg.Reconcile.BackfillLimit = 1000
+	cfg.Reconcile.RetryInterval = 1
+	requests := 0
+	cfg.PoolController.URL, cfg.PoolController.TokenFile, cfg.PoolController.CAFile = scopedFixture(t, "pool_us", "controller", "reconciler", func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.URL.Path != "/admin/v1/revenue-sources" {
+			t.Errorf("unexpected request %s", r.URL)
+			http.Error(w, "unexpected", 500)
+			return
+		}
+		if r.URL.Query().Get("round") != "" {
+			http.Error(w, "eligible source unavailable", 503)
+			return
+		}
+		fmt.Fprint(w, `{"pool_id":"pool_us","sources":[{"source":{"pool_id":"pool_us","source_id":"s"},"start_round":4341}]}`)
+	})
+	client, err := poolcontroller.NewClient(cfg.PoolController)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protocolClient, err := newProtocolDaemonClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st, err := repo.Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	var logs bytes.Buffer
+	enc := json.NewEncoder(&logs)
+	if err := backfillClosedRounds(context.Background(), cfg, protocolClient, client, st, enc, &sync.Mutex{}); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || logs.Len() != 0 {
+		t.Fatalf("pre-source backfill requests=%d logs=%s", requests, logs.String())
+	}
+	result, err := attemptRoundClose(context.Background(), cfg, client, st, 4339)
+	if err != nil || result["status"] != "skipped" {
+		t.Fatalf("event result=%v err=%v", result, err)
+	}
+	if err := st.MarkFailed(3340, "old bootstrap error"); err != nil {
+		t.Fatal(err)
+	}
+	if err := retryPendingRounds(context.Background(), cfg, client, st, enc); err != nil {
+		t.Fatal(err)
+	}
+	if logs.Len() != 0 {
+		t.Fatalf("retried pre-source errors: %s", logs.String())
+	}
+	// Once an eligible round is completed, missing source reports must still fail.
+	cfg.RoundSource.ProtocolDaemonSocket = startProtocolDaemonServer(t, &testProtocolDaemon{lastRound: 4342})
+	if _, err := attemptRoundClose(context.Background(), cfg, client, st, 4341); err == nil {
+		t.Fatal("eligible round silently skipped")
+	}
+	record, _, err := st.GetRound(4341)
+	if err != nil || record.Status != "failed" {
+		t.Fatalf("eligible failure not retained: %+v %v", record, err)
 	}
 }

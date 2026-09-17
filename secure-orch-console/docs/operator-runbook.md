@@ -79,7 +79,9 @@ matching coordinator timeline section during the hand-carry cycle.
    that no broker announces is either pinned in coordinator-config on
    purpose or should not be signed.
 6. Operator types the last 4 hex chars of the signer eth address into
-   the confirm input and submits the sign form.
+   the confirm input and submits the sign form. A candidate that
+   changes `spec_version` additionally requires typing the new version
+   string.
 7. Console signs the canonical bytes, atomically updates
    `last-signed.json`, and streams `signed.json` back as a download
    attachment.
@@ -209,8 +211,9 @@ Any one suffices; all are audited:
    `max_auto_signs_per_hour` auto-sign attempts in a sliding hour
    latches a pause on all auto-signing. A sign burst is the loudest
    available signal that the coordinator side is misbehaving:
-   investigate before clearing. The latch clears on console restart
-   (an in-console clear gesture is tracked as tech debt).
+   investigate before clearing. Clear the latch from the Manifests
+   page (see "Clearing a rate-limit pause" above); it is in-memory, so
+   a console restart clears it too.
 
 ### Metrics and the expiry alert
 
@@ -299,7 +302,10 @@ plan 0019 §10 marks this out of architectural scope.
 
 `/var/log/secure-orch/audit.log.jsonl` is append-only. Every gesture
 (`boot`, `load_candidate`, `view_diff`, `sign`, `write_signed`,
-`abort`, `rotate`, `shutdown`) emits one JSON object on its own line.
+`protocol_action`, `abort`, `rotate`, `shutdown`, plus the agent's own
+kinds under `--agent` — `candidate_pulled`, `classified`, `auto_sign`,
+`would_auto_sign`, `held`, `refused`, `publish_confirmed`, …) emits one
+JSON object on its own line.
 Rotation is size-based (default 100 MiB). When the log crosses the
 threshold the active file is renamed to
 `audit.log.jsonl.<UTC-timestamp>` and a fresh file is opened with a

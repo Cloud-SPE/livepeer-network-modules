@@ -15,6 +15,8 @@ type stubProtocolDaemon struct {
 	protocolv1.UnimplementedProtocolDaemonServer
 	roundStatus protocolv1.RoundStatus
 	roundEvents []*protocolv1.RoundEvent
+	delay       time.Duration
+	wait        bool
 }
 
 func (s *stubProtocolDaemon) GetRoundStatus(context.Context, *protocolv1.Empty) (*protocolv1.RoundStatus, error) {
@@ -23,9 +25,20 @@ func (s *stubProtocolDaemon) GetRoundStatus(context.Context, *protocolv1.Empty) 
 
 func (s *stubProtocolDaemon) StreamRoundEvents(_ *protocolv1.Empty, stream grpc.ServerStreamingServer[protocolv1.RoundEvent]) error {
 	for _, evt := range s.roundEvents {
+		if s.delay > 0 {
+			select {
+			case <-time.After(s.delay):
+			case <-stream.Context().Done():
+				return stream.Context().Err()
+			}
+		}
 		if err := stream.Send(evt); err != nil {
 			return err
 		}
+	}
+	if s.wait {
+		<-stream.Context().Done()
+		return stream.Context().Err()
 	}
 	return nil
 }
@@ -120,4 +133,16 @@ func newTestClient(t *testing.T, srv protocolv1.ProtocolDaemonServer) *Client {
 		t.Fatalf("NewClient() error = %v", err)
 	}
 	return client
+}
+
+func TestStreamOutlivesRequestTimeoutAndCancels(t *testing.T) {
+	client := newTestClient(t, &stubProtocolDaemon{delay: 100 * time.Millisecond, wait: true, roundEvents: []*protocolv1.RoundEvent{{Number: 4341}}})
+	client.timeout = 10 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	got := false
+	err := client.StreamRoundEvents(ctx, func(evt RoundEvent) error { got = evt.Number == 4341; cancel(); return nil })
+	if !got || err == nil {
+		t.Fatalf("got event=%v error=%v", got, err)
+	}
 }

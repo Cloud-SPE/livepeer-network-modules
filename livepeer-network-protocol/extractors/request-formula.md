@@ -46,7 +46,7 @@ The expression is **NOT** a general-purpose eval. Implementations MUST restrict
 to:
 
 - Numeric literals: integers and floats.
-- Field references: identifiers declared in `fields`.
+- Field references: identifiers declared in `fields` or `text_fields`.
 - Operators: `+`, `-`, `*`, `/`, `%`, parentheses.
 - Functions (optional, implementations MAY support a small allowlist):
   `min(a, b)`, `max(a, b)`, `floor(x)`, `ceil(x)`, `round(x)`.
@@ -61,7 +61,8 @@ outside the allowed grammar at config-load time, not at runtime.
 ## Recipe
 
 1. Parse the request body as JSON.
-2. For each `fields` entry, evaluate the JSONPath; coerce to number.
+2. For each `fields` entry, evaluate the JSONPath; coerce to number. For each
+   `text_fields` entry, take the code-point count of the string at the path.
 3. Substitute into `expression`.
 4. Evaluate the expression.
 5. Floor to non-negative integer; that is `actualUnits`.

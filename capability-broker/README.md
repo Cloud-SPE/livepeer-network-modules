@@ -11,15 +11,19 @@ One process per orch host. Reads a single declarative `host-config.yaml`,
 exposes:
 
 - `POST /v1/job` — paid one-shot exchanges (`paid-job/v1`; unary, stream, multipart).
-- `POST /v1/session` + `/v1/session/{id}[/topup|/end|/events]` — paid durable sessions (`paid-session/v1`).
+- `POST /v1/session` + `/v1/session/{id}[/topup|/end|/events|/ws]` — paid durable sessions (`paid-session/v1`).
 - `POST /v1/payment/ticket-params` — unpaid quote-free ticket-params proxy for sender-mode payment daemons.
+- `POST /v1/payment/account`, `POST /v1/payment/account/fund` — wholesale-account observation and payer-signed funding (no work is authorized).
+- `GET /v1/settlement/{id}`, `GET /v1/exchange/{request_id}`, `POST /v1/non-admission/{request_id}` — signed settlement, exchange-outcome and non-admission evidence for both protocols.
 - `GET /registry/offerings` — capability inventory for orch-coordinator scrape.
 - `GET /registry/health` — live capability availability for gateway resolvers.
 - `GET /registry/settlement-keys` — the delegated settlement key(s) this broker signs with, self-signed, for orch-coordinator discovery (broker-admin §7.1).
 - `GET /healthz` — process health.
 - `GET /admin/v1/runtime` — private runtime status, including loaded revision.
 - `POST /admin/v1/runtime/reload` — private runtime reload endpoint.
-- `GET /internal/v1/worker/session` — connected-worker WebSocket attach.
+- `GET /internal/v1/worker/session` — runner attach over WebSocket.
+- `/admin/v1/offers*`, `/admin/v1/runners*`, `/admin/v1/certification*`, `/admin/v1/enroll`, `/admin/v1/credentials*` — the private broker-admin contract (sections below).
+- Regional pools only: `GET /reporting/v1/revenue/{round}`, `GET /reporting/v1/work/{round}`, `GET /reporting/v1/source`, `GET|POST /admin/v1/terms-policy`, `POST /admin/v1/devices/drain`, `POST /admin/v1/source/drain|freeze` — see [Regional service credentials](#regional-service-credentials).
 
 Plus `GET /metrics` on a **separate** metrics listener (`--metrics`,
 default `:9090`) — deliberately not mounted on the paid listener, so
@@ -41,7 +45,10 @@ runner success or corruption.
 
 Declaring any `paid-session/v1` offer makes `session_store` (durable bbolt
 path + sealing key) and `external_base_url` required; see
-[`docs/operator-runbook.md`](./docs/operator-runbook.md) §2.
+[`docs/operator-runbook.md`](./docs/operator-runbook.md) §2. Config
+validation enforces `external_base_url` only for session offers, but paid
+jobs need it too: every spend authorization binds it as `broker_uri`, and a
+broker with it unset rejects every paid job.
 
 ### `offers[]` — the operator grammar
 
@@ -99,7 +106,8 @@ Broker runtime admin surface:
 - `GET /admin/v1/runtime` and `POST /admin/v1/runtime/reload` are intended for
   private/operator use only.
 - They stay disabled unless `admin_auth.method: bearer` is configured in
-  `host-config.yaml`.
+  `host-config.yaml` (a regional broker with `service_auth_file` set
+  authorizes the admin surface with scoped service credentials instead).
 - The bearer token must come from `admin_auth.secret_ref: env://...`.
 - `POST /admin/v1/runtime/reload` validates the reloaded config before swap and
   preserves the previous runtime if reload fails.
@@ -161,8 +169,8 @@ contract in [`broker-admin.md`](../livepeer-network-protocol/protocols/broker-ad
 - `PUT /admin/v1/credentials` — pool sync of hashes; a dropped entry is a revoke.
 
 The store holds `sha256(token)` only, sealed at rest. Attach auth consults
-it on both the WebSocket and QUIC paths; the only other accepted bearer is
-the admin token.
+it on both the WebSocket and QUIC paths; no other bearer attaches — the
+admin token is not an attach credential.
 
 ### Runner attach (plan 0043)
 
@@ -187,8 +195,9 @@ is gone on disconnect (kept 24 h as `disconnected` for the console).
   `?latest=true`), `GET /admin/v1/certification/{host}/{offering}`,
   `POST /admin/v1/certification/{host}/{offering}/run`.
   `certification_fixtures_dir` resolves `fixture: {ref}` files for
-  multipart steps (point it at
-  `livepeer-network-protocol/extractors/fixtures` in the image).
+  multipart steps (mount a copy of
+  `livepeer-network-protocol/extractors/fixtures` into the container and
+  point it there; the image does not bundle them).
 
 Attached runners are matched to `offers[]`, certified by the step engine
 (`certification[]` on the offer, executed over the attach connection:
@@ -216,7 +225,7 @@ standardized in the spec.
 ## Status
 
 **Shipped.** Two protocol engines (`paid-job/v1` on `POST /v1/job`,
-`paid-session/v1` on `/v1/session/*`), 8 extractors, a durable bbolt state
+`paid-session/v1` on `/v1/session/*`), 9 extractors, a durable bbolt state
 store backing session authority and job idempotency, and the broker-side
 authorization admission/advance/settlement path are all in. The v0 seven-mode interaction taxonomy —
 its drivers, the RTMP/HLS media pipeline, and the WebRTC/session-control
@@ -315,7 +324,7 @@ one health payload explains both the controller's scoring policy and the
 broker's local freshness contract.
 
 The Prometheus surface now mirrors that Pool snapshot state too. In addition
-to the existing request and metadata families, broker `/metrics` now includes:
+to the existing request, payment-client and registry families, broker `/metrics` now includes:
 
 - `livepeer_pool_snapshot_cache_status{status}`
 - `livepeer_pool_snapshot_generated_timestamp_seconds`
@@ -363,6 +372,11 @@ capability-broker/
 │   ├── selection/      # runner eligibility + weighting
 │   ├── workerconn/     # runner QUIC / WebSocket sessions
 │   ├── payment/        # payment-daemon client (mock for dev)
+│   ├── workledger/     # regional durable work accounting + receipt outbox
+│   ├── poolsnapshot/   # pool-controller snapshot cache
+│   ├── poolreport/     # backend-outcome emission to a pool controller
+│   ├── receipts/       # work-receipt emission
+│   ├── livepeerheader/ # Livepeer-* header vocabulary and errors
 │   └── observability/  # metrics, logging, request-id
 ├── examples/
 │   ├── host-config.example.yaml         # annotated reference

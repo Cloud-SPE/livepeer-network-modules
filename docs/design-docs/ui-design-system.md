@@ -1,7 +1,7 @@
 # UI design system
 
 **Status:** active  
-**Last updated:** 2026-05-08
+**Last updated:** 2026-09-17
 
 Implementation rules for DOM structure and CSS location live in
 [`frontend-dom-and-css-invariants.md`](./frontend-dom-and-css-invariants.md). This
@@ -12,9 +12,12 @@ authoring model.
 
 The rewrite has multiple operator and customer-facing UIs:
 
-- `customer-portal`
+- `customer-portal` (`frontend/portal`, `frontend/admin`)
+- `member-portal`
 - `secure-orch-console`
-- future operator surfaces around resolver / protocol / coordinator status
+- `orch-coordinator` admin UI
+- `pool-controller` admin console
+- future operator surfaces around resolver / protocol status
 
 If each surface develops its own look, the repo will drift into a pile of
 inconsistent dashboards. This doc defines the shared visual and interaction system
@@ -276,6 +279,10 @@ Cards should feel crisp, not bubbly.
 - `portal-data-table`
 - `portal-action-row`
 - `portal-detail-section`
+- `portal-login`
+- `portal-signup`
+- `portal-api-keys`
+- `portal-checkout-button`
 
 ### Still desirable
 
@@ -513,7 +520,8 @@ The system is working when:
 
 - all UIs share the same token source
 - buttons/cards/forms/tables/status states look related everywhere
-- in-repo UIs (today: `secure-orch-console`, `customer-portal`; historically
+- in-repo UIs (today: `secure-orch-console`, `orch-coordinator`,
+  `pool-controller`, `member-portal`, `customer-portal`; historically
   also `openai-gateway`, `video-gateway`, and `vtuber-gateway` — those product
   gateways have since been removed from this repo) feel like products from the
   same organization

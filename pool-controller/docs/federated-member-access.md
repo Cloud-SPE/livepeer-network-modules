@@ -27,7 +27,7 @@ Trust file shape:
 
 ```json
 {
-  "issuer": "member-portal",
+  "issuer": "https://members.example.org",
   "keys": [{
     "id": "portal-key-1",
     "public_key": "BASE64_ED25519_PUBLIC_KEY",
@@ -38,6 +38,9 @@ Trust file shape:
   "revoked_sessions": []
 }
 ```
+
+`issuer` must match the token's issuer exactly; the member portal signs with its
+exact HTTPS `public_origin` and writes this file via `--generate-key ... --trust-output`.
 
 For key rotation, install the new public key on every regional controller before
 switching the portal's signing key. Keep the old public key until issued tokens

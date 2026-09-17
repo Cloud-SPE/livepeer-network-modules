@@ -1,7 +1,7 @@
 ---
 title: Backend health
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-09-17
 ---
 
 # Backend health
@@ -83,15 +83,15 @@ broker or backend say.
 
 ## Layer 2 — Live health
 
-**Question:** is the broker process up, and can it reach its declared
-backends right now?
+**Question:** is the broker process up, and does each advertised tuple have
+a certified runner attached right now?
 
 **Source of truth:** the broker's own health endpoints.
 
 | Endpoint | Scope | Used by |
 |---|---|---|
 | `GET /healthz` | the broker process itself | watchdogs, container orchestrators |
-| `GET /registry/health` | per-capability backend reachability | gateways, coordinators |
+| `GET /registry/health` | per-tuple runner readiness (certification + attach tunnel) | resolvers, gateways, coordinators |
 
 `/registry/health` returns a per-capability health snapshot. Example shape:
 
@@ -186,8 +186,9 @@ runner is not a failing one; the tunnel being up is the current evidence.
 
 **Failure modes:**
 
-- broker process is dead → `/healthz` is unreachable; the orch-coordinator
-  stops scraping and falls back to last-known manifest fragment
+- broker process is dead → `/healthz` and the registry endpoints are
+  unreachable; the orch-coordinator's scrape fails and it falls back to the
+  last-known manifest fragment
 - broker is up but a backend has gone dark → `/registry/health` reports the
   affected capabilities as `degraded` or `unreachable`; gateways should
   route elsewhere
@@ -236,9 +237,9 @@ sequenceDiagram
     SRD-->>GW: route candidate from cached manifest<br/>(layer 1 healthy)
 
     Note over GW,Backend: Optional pre-flight (per gateway policy)
-    GW->>Broker: GET /registry/health?capability=…
+    GW->>Broker: GET /registry/health
     alt healthy
-        Broker->>Backend: probe (cached recently)
+        Broker->>Broker: read certification +<br/>attach-tunnel state (no probe)
         Broker-->>GW: { status: ready }
         GW->>Broker: paid request
     else degraded / draining / unreachable
@@ -256,10 +257,12 @@ both sides of the wire.
 
 **Where the data lives:**
 
-- gateway-side: `livepeer_routes_total{capability, offering, outcome="…"}` —
-  per-route success / 4xx / 5xx / timeout outcomes
-- broker-side: `livepeer_routes_total` with the same label schema, exposed
-  on the broker's `/metrics`
+- gateway-side: a per-route outcome counter labelled
+  `{capability, offering, outcome}` — success / 4xx / 5xx / timeout
+  (gateways live outside this repo; the label schema is the contract)
+- broker-side: `livepeer_paid_requests_total{capability, offering, outcome}`
+  (plus `livepeer_paid_request_duration_seconds`), exposed on the broker's
+  `/metrics`
 - third-party scrapers aggregate both sides into independent market data
 
 **Freshness budget:** minutes. Failure-rate is a moving average — too
@@ -276,10 +279,10 @@ short a window is noisy, too long a window is stale.
 **Failure modes:**
 
 - a specific capability is failing inside an otherwise-healthy broker —
-  e.g., backend started returning 500s for one model but the
-  `/registry/health` probe to that backend is cosmetic enough to still pass
-- intermittent timeouts that exceed the gateway's request budget but
-  pass the broker's probe
+  e.g., a runner started returning 500s for one model while it is still
+  certified and its attach tunnel is up, so `/registry/health` stays `ready`
+- intermittent timeouts that exceed the gateway's request budget while the
+  runner stays attached
 - correlated failures across multiple orchs (chain RPC outage, common
   cloud-provider incident) — visible only at this layer
 
@@ -292,7 +295,7 @@ on purpose (Layer 8 of the architecture overview).
 flowchart LR
     subgraph supply["Per-orch metrics"]
         direction TB
-        B1["broker A /metrics<br/>routes_total, latency, errors"]
+        B1["broker A /metrics<br/>paid_requests_total, latency, errors"]
         B2["broker B /metrics"]
         B3["broker C /metrics"]
     end
@@ -342,7 +345,7 @@ Each layer corresponds to a different operator surface:
 | Layer | Operator action | Surface |
 |---|---|---|
 | 1 | update broker-facing offer/runtime state + sign cycle | standalone broker YAML or `pool-controller`, plus secure-orch-console |
-| 2 | restart broker, mark drain, fix backend | broker `/admin` + container orchestration |
+| 2 | restart broker, disable an offer or drain, fix the runner | broker `/admin/v1/*` + container orchestration |
 | 3 | inspect dashboards, declare incident | metrics / alerting stack |
 
 ## Execution placement
@@ -362,7 +365,7 @@ Anything else tends to smear trust and liveness together.
 | Check | Source of truth | Implemented in | Cached by | Consumed by | Must not do |
 |---|---|---|---|---|---|
 | "Did the operator declare this tuple?" | cold-signed manifest | `orch-coordinator` hosts; `service-registry-daemon` verifies | `service-registry-daemon` | gateways, scrapers, operators | infer live health |
-| "Is the broker process alive?" | `GET /healthz` | capability broker | orch-coordinator, `service-registry-daemon`, watchdogs | coordinator UX, resolver, ops | create or remove manifest entries |
+| "Is the broker process alive?" | `GET /healthz` | capability broker | watchdogs, container orchestrators | ops | create or remove manifest entries |
 | "Is this `(capability, offering)` backend ready right now?" | `GET /registry/health` | capability broker | orch-coordinator, `service-registry-daemon` | gateway route selection, coordinator UX | override signed manifest |
 | "Has this route been failing under real traffic?" | request outcomes over time | gateway + broker metrics | gateway-local policy, third-party scrapers | gateway retry / weighting, dashboards | become a signed market claim |
 
@@ -375,7 +378,7 @@ The coordinator has two separate jobs and they must stay separate:
    - build candidate manifest bytes
    - host the signed manifest after upload
 2. **Operational visibility**
-   - poll `GET /healthz` and `GET /registry/health`
+   - poll `GET /registry/health`
    - show per-broker / per-capability freshness and readiness in the UI
    - expose metrics and alerts for stale or unreachable brokers
 

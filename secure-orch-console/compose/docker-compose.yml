@@ -13,11 +13,12 @@
 #                                   LIVEPEER_KEYSTORE_PASSWORD env)
 # Required env:
 #   SECURE_ORCH_ADMIN_TOKENS      — comma-separated admin bearer tokens
+# Optional env:
 #   PROTOCOL_DAEMON_SOCKET        — local unix socket for protocol status/actions
-#   ./run/last-signed.json        — canonical last-signed envelope
-#                                   (created on first sign cycle)
+#                                   (default /var/run/livepeer/protocol.sock)
 #
-# Audit log + state persist in the secure-orch-data volume.
+# last-signed.json (created on first sign cycle) persists in the
+# secure-orch-data volume; the audit log in secure-orch-audit.
 #
 # Every optional variable carries its default inline (${VAR:-default}) so
 # the .env only needs the Required section of .env.example.

@@ -9,14 +9,16 @@ the workload containers itself.
 - Keep the member workflow simple: configure by environment, run under Docker
   Compose, make outbound-only calls.
 - The agent must not run `capability-broker` or `payment-daemon`.
-- Hardware inventory comes from the host runtime (`nvidia-smi` for NVIDIA GPUs)
-  and rides the attach document, not a controller report.
+- Hardware inventory comes from the host runtime (`nvidia-smi` for NVIDIA GPUs,
+  sysfs for Intel GPUs, `/proc/cpuinfo` for CPU sockets) and rides the attach
+  document, not a controller report.
 - The agent attaches outbound and declares what the host runs
   (`../livepeer-network-protocol/protocols/runner-attach.md`). The broker
   remains the payment and routing authority.
-- **Adapter profiles are where runner facts live** (`internal/attach`). Adding a
-  workload means adding a profile here, not asking an operator to transcribe
-  paths, transports, and extractors into broker config.
+- **Runner facts live in the runner's contract, not here.** `internal/attach`
+  reads each runner's `GET /.well-known/livepeer-runner` and relays it, adding
+  only `local_id`, `devices` and `draining`. The adapter profiles are gone; do
+  not reintroduce per-workload facts in the agent.
 - **The goldens are the contract test.** `make check-attach-docs` validates
   `testdata/attach/*.json` against the protocol schema; the broker's test suite
   runs the same files through its own validator. Regenerate with

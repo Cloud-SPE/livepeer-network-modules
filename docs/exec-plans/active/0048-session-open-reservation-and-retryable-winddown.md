@@ -1,6 +1,6 @@
 ---
 title: Session open reservation, retryable winddown, stream-safe backend timeouts
-status: implementing
+status: implemented
 date: 2026-09-05
 beads: lnm-z72
 supersedes: none

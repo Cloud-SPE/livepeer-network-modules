@@ -220,9 +220,10 @@ capability must get an OpenAI response.
 | `schema_versions` | ✔ | object of tag → SemVer string | One entry for `protocol` and one for every `descriptor_schemas[]` tag. Each entry's major MUST equal the tag's `vN`; each MUST be a version the broker implements or is minor-compatible with (§8). | ✔ at major |
 | `metering` | ✔ for `paid-session`; MUST be absent for `paid-job` | `runner-reported` | `offering-axes.md` §3. The only value: no session traffic transits the broker, so the runner is the only party that can count it. | ✔ |
 | `heartbeat` | opt, session only | `{ "interval_seconds": ≥ 1 }` | Advisory: a cadence slower than the offer's `interval × missed_threshold` is surfaced as a warning; the broker enforces the offer's threshold. | — |
-| `session_params_schema` | opt, session only | object, ≤ 16 KiB | Opaque description, never a validator (`paid-session` §7.1, carried forward). Relayed to `/registry/offerings`. | — |
+| `session_params_schema` | opt, session only | object, ≤ 16 KiB | Opaque description, never a validator (the rule of the retired `paid-session` §7.1, carried forward). Relayed to `/registry/offerings`. | — |
 | `requirements` | opt | `{ "gpu_vram_min_bytes"?, "gpu_models"?[] }` | This host's own `hardware[]` (§4.2). Epic 2 additionally matches it against template policy. | — |
 | `devices[]` | opt | unique list of `gpu_uuid` strings | Each MUST appear in `hardware[]`. Names which of this host's GPUs back this capability. Absent means "unspecified"; a broker or pool that needs the binding (share caps, cross-address GPU rules) treats absent as *all* of `hardware[]`. | — |
+| `draining` | opt (1.1) | boolean | §7.1. Live withdrawal flag: the broker dispatches no new work to the entry; certification, advertisement, and the frozen shape are untouched. | — |
 | `x-certification-suggested[]` | opt | array of step objects (shape per [`certification-steps.md`](./certification-steps.md) §2) | Shown to the offer author; **never** adopted or executed automatically. | — |
 | `x-*` | opt | any JSON, ≤ 32 KiB total per capability | Relayed verbatim to operator surfaces. Promoted into the offer's `extra` only for keys the offer lists in `extra_from_runner` (§3.3). | promoted keys only |
 
@@ -507,8 +508,9 @@ protocol's version.
   changelog marks the intervening minors additive. A broker MAY be
   stricter (exact minor) and MUST say so in `expected`.
 
-The examples under `runner-attach/examples/` are pinned to the
-`contract_version` in this spec's frontmatter.
+The examples under `runner-attach/examples/` send `contract_version: "1.0"`:
+none uses a field a later minor added, and an agent sends the lowest minor
+that carries the fields it uses.
 
 ## 9. Conformance obligations
 

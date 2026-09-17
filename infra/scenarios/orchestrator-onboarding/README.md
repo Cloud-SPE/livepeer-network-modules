@@ -140,7 +140,9 @@ own:
 /opt/livepeer/
 ├── payment-keystore.json
 ├── payment-keystore-password
+├── broker-seal.key              # seals the attach-credential store (openssl rand -hex 32)
 ├── broker-settlement.key        # hot key that signs settlement records
+├── fixtures/                    # certification fixtures (may start empty)
 └── host-config.yaml             # the offers THIS broker box sells
 ```
 
@@ -199,7 +201,7 @@ repeated on every broker host:
 ```sh
 sudo cp infra/scenarios/orchestrator-onboarding/capability-broker/host-configs/openai.example.yaml \
         /opt/livepeer/host-config.yaml
-sudo $EDITOR /opt/livepeer/host-config.yaml             # set orch_eth_address + backend urls
+sudo $EDITOR /opt/livepeer/host-config.yaml             # set orch_eth_address + the offers you sell
 
 cp infra/scenarios/orchestrator-onboarding/capability-broker/.env.example \
    infra/scenarios/orchestrator-onboarding/capability-broker/.env

@@ -1,0 +1,25 @@
+name: orchestrator-setup
+services:
+  setup:
+    image: ${SETUP_IMAGE:-livepeer-orchestrator-setup:local}
+    env_file: .env
+    environment:
+      SETUP_INPUT: /input
+      SETUP_OUTPUT: /output
+    user: "0:0"
+    network_mode: none
+    read_only: true
+    security_opt: ["no-new-privileges:true"]
+    tmpfs: ["/tmp:mode=1777"]
+    volumes:
+      - type: bind
+        source: ${INPUT_DIR:?set INPUT_DIR}
+        target: /input
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${OUTPUT_DIR:?set OUTPUT_DIR}
+        target: /output
+        bind:
+          create_host_path: false

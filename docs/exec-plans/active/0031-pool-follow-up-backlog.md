@@ -52,6 +52,13 @@ The following are already in place:
 The remaining tasks below should be read as follow-up work, not missing core
 behavior from the shipped first slice.
 
+> **Later change.** The synthetic probes in this baseline were deleted with
+> the legacy member model: members are outbound-only, so the controller has
+> no address to dial. Broker-run certification over the runner's attach
+> connection and the ladder's judgement of real billed work replaced them
+> (`pool-controller/README.md`, "Synthetic probes are gone"). Backend-selection
+> state, overrides, the snapshot, and broker-side Pool-aware selection remain.
+
 ## 3. Priority order
 
 ### P0 — close out first-slice plan hygiene
@@ -104,7 +111,14 @@ Why this is first:
 - it closes the biggest remaining functional gap between OpenAI-first Pool
   support and broader Pool support
 
-Status: incomplete and deferred.
+Status: **obsolete as written.** Synthetic probes no longer exist for any
+family (see §2), so there is no probe to add. The architectural blocker is
+also gone: since plan 0043 a member's runner attaches outbound to the Pool
+broker and declares itself, and the template catalog accepts
+`paid-session/v1` (`pool-controller/internal/templates/load.go`); live
+transcode ships as the `video:transcode.live` template
+([`templates/video-transcode-live.yaml`](../../../templates/video-transcode-live.yaml))
+and is proven by certification, not by a probe.
 
 ### P2 — operator workflow and policy automation
 
@@ -120,8 +134,9 @@ since been deleted in full (see
 verify before admission and nothing for an operator to approve. Read 0033 as
 history only.
 
-1. Member self-service portal / wallet sign-in UX. **Deferred — now owned by
-   plan 0044 §3.6 (phase F), where it is required rather than optional.**
+1. ~~Member self-service portal / wallet sign-in UX.~~ **Shipped under plan
+   0044 §3.6 (phase F)** (`lnm-6at.12`), and since extended by the shared
+   regional `member-portal/` (`lnm-l17.4`).
 2. ~~Automated member approval workflow.~~ **Obsolete — the gesture it
    automated no longer exists.** `policy.auto_approve_join_requests` and the
    `autoapprove` worker are gone along with `JoinRequest` and admission review.
@@ -138,19 +153,19 @@ history only.
    scorer, forces recertification after repeated failures, and suspends on
    invalid output — automatically, with a reason code and evidence on every
    transition. Only lifting a suspension stays an operator gesture.
-4. Multi-listener split between admin/member/public binaries if the current
-   single-process surface becomes an operational constraint. **No longer
-   optional — plan 0044 §3.6 (phase F) makes the member/admin listener split
-   mandatory, because the member portal is public and the admin mux must never
-   be mounted on it.**
+4. ~~Multi-listener split between admin/member/public binaries if the current
+   single-process surface becomes an operational constraint.~~ **Shipped under
+   plan 0044 §3.6 (phase F)** (`lnm-6at.10`): `pool-controller/internal/server/`
+   has separate `admin` and `member` muxes, because the member portal is public
+   and the admin mux must never be mounted on it.
 
 Recommended order inside this group:
 
 1. ~~approval workflow~~ (deleted, not shipped)
 2. ~~policy-driven auto-drain / suspend~~ (deleted; replaced by the automatic
    ladder in 0044 §3.5)
-3. member/admin listener split
-4. member self-service UX
+3. ~~member/admin listener split~~ (shipped, 0044 phase F)
+4. ~~member self-service UX~~ (shipped, 0044 phase F)
 
 Reason:
 
@@ -159,7 +174,7 @@ Reason:
   stable, since that is most of what the portal renders
 
 Status: items 2 and 3 were shipped and then deleted with the legacy member
-model; items 1 and 4 are still open and now belong to plan 0044 phase F.
+model; items 1 and 4 shipped under plan 0044 phase F. Nothing in P2 is open.
 
 ### P3 — payout and accounting follow-up
 
@@ -202,8 +217,8 @@ Status: incomplete and deferred.
 
 ## 4. Recommended next slice
 
-If the goal is to continue Pool implementation immediately, the recommended
-next slice is:
+**Obsolete** — this recommendation was built on synthetic probes, which are
+gone (see P1). Kept as history:
 
 1. resolve the Pool contract for remote `video:live.rtmp` beyond the explicit
    `0032` defer/validation

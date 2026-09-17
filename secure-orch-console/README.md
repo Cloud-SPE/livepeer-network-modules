@@ -42,6 +42,17 @@ v0.1 ships:
   per-tuple keyed on `(capability_id, offering_id)`).
 - [`internal/config/`](./internal/config/) — operator config +
   explicit-listen-address validation.
+- [`internal/lastsigned/`](./internal/lastsigned/) — atomic
+  `last-signed.json` read/write.
+- [`internal/policy/`](./internal/policy/) +
+  [`internal/agent/`](./internal/agent/) — the plan 0042 automated sign
+  cycle (`--agent`): sign-policy parsing, candidate classification
+  (`renewal` / `benign` / `critical` / `forbidden`), rate limit, and the
+  outbound-only pull → classify → auto-sign-or-hold → push loop. The
+  hand-carry cycle above stays available as the fallback; see the
+  [runbook](./docs/operator-runbook.md).
+- [`internal/protocol/`](./internal/protocol/) — gRPC client to the local
+  `protocol-daemon` unix socket.
 - [`web/`](./web/) — HTTP server with embedded HTML/CSS templates for
   login, diff renderer, and tap-to-sign confirm.
 - [`cmd/secure-orch-console/`](./cmd/secure-orch-console/) — main
@@ -53,7 +64,8 @@ Cross-cutting verifier (used by resolver / coordinator / gateway)
 lives at
 [`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/).
 
-Manifest transport is HTTP-only via the web UI: no inbox or outbox
+Manifest transport is HTTP-only — the web UI in the hand-carry flow,
+outbound HTTP to the coordinator under `--agent`: no inbox or outbox
 spool dirs, no filesystem watcher, no USB. Hardware-backed signers
 (YubiHSM 2, Ledger, PKCS#11) are explicitly out of scope for v0.1
 (plan 0019 §13 Q1 + §14).

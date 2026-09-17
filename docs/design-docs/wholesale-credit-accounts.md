@@ -61,11 +61,16 @@ to mint that much ticket EV.
 
 ## Account identity and ownership
 
-The economic account is keyed by stable network principals:
+The economic account is keyed by stable network principals and the receiver
+ledger that owns the balance:
 
 ```text
-(chain, payer identity, payee identity, denomination)
+(chain, payer identity, payee identity, settlement_domain_id, denomination)
 ```
+
+`settlement_domain_id` (protocol major 4) names one independent receiver ledger,
+so two brokers that share a payee never merge credit or version counters. See
+[settlement-domain identity](settlement-domain-identity.md).
 
 Capability, offering, quote, broker endpoint, request, session, and `work_id`
 are not account owners. They belong to reservations and settlement records.
@@ -106,7 +111,7 @@ authorization for one exact engagement. The language-neutral authorization
 must bind:
 
 - payer identity;
-- payee and broker identity;
+- payee, settlement-domain, and broker identity;
 - authorization ID and nonce;
 - payer-generated request or session ID;
 - capability, offering, and protocol;
@@ -313,7 +318,8 @@ credit, and customer credit risk.
 ### Service registry
 
 No new economic responsibility. It continues to provide route, payee, protocol,
-price, and settlement-key facts that the payer snapshots into an authorization.
+price, settlement-domain, and settlement-key facts that the payer snapshots into
+an authorization.
 
 ## Safety and exposure policy
 

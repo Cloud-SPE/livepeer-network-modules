@@ -179,10 +179,12 @@ Some changes are still trunk changes — they're just much rarer:
 - **A new extractor recipe.** The broker ships a small fixed set
   (`openai-usage`, `response-jsonpath`, `request-formula`, `bytes-counted`,
   `seconds-elapsed`, `ffmpeg-progress`). Adding one is a broker change.
-- **The receiver-side runtime economics** (`--receiver-ev`, `--redeem-gas`,
-  gas-price multiplier, `MaxFloat`). These are operator knobs, not protocol
-  changes, but they affect acceptance and redeemability — see
-  [`payment-daemon-interactions.md`](./payment-daemon-interactions.md).
+- **The receiver-side runtime economics** (`--redeem-gas`,
+  `--gas-price-multiplier-pct`, `MaxFloat`; the issued ticket face value and
+  win probability are compile-time defaults today). These are operator knobs,
+  not protocol changes, but they affect acceptance and redeemability — see
+  [`payment-daemon/docs/operator-runbook.md`](../../payment-daemon/docs/operator-runbook.md)
+  §2–§4.
 
 ## Migration from the suite
 
@@ -208,8 +210,8 @@ unchanged.
 - [`./payment-daemon-interactions.md`](./payment-daemon-interactions.md) —
   cross-cutting interaction guide
 - [`../../livepeer-network-protocol/protocols/paid-session.md`](../../livepeer-network-protocol/protocols/paid-session.md)
-  — the long-lived-session shape that exercises `OpenSession` / `DebitBalance` /
-  `SufficientBalance` / `CloseSession` (the older
+  — the long-lived-session shape that exercises `AdmitAuthorization` /
+  `AdvanceAuthorization` / `SettleAuthorization` (the older
   [`./streaming-workload-pattern.md`](./streaming-workload-pattern.md) is
   superseded and kept only as provenance)
 - [`../../livepeer-network-protocol/headers/livepeer-headers.md`](../../livepeer-network-protocol/headers/livepeer-headers.md)

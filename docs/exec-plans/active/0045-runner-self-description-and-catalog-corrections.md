@@ -315,6 +315,7 @@ run-scoped URLs, one mechanism.
 - AMD vendor images and classes.
 - CPU as a placeable compute unit — AV1 VOD via SVT-AV1 (`lnm-iqn`, decision 7):
   plan 0047, landed 2026-09-02 with the image unresolved.
+
 The member public edge (`lnm-7cj`, decision 13) is complete. See
 [plan 0046](../completed/0046-public-edge-for-pool-members.md): the supported
 scope uses operator-supplied DNS and certificates; automatic provisioning
@@ -384,7 +385,9 @@ And on 2026-09-02, from the walkthrough in §11:
   `POST /v1/video/transcode` and `/abr` and terminate with the claim — the
   runner already parses that progress internally, so this is plumbing — and
   (b) serve `GET /.well-known/livepeer-runner`. Until then the transcode
-  templates fail certification loudly, naming the image.
+  templates fail certification loudly, naming the image. **Landed:**
+  `lnm-z72` closed 2026-09-09 recording all three external runner blockers
+  verified in `livepeer-modules-transcode`.
 - **`livepeer-modules-openai-runners`** (§3, §4): the OpenAI runner images
   **already exist**, one per capability, and `openai-chat-runner` is already
   the adapter — a Go proxy with `UPSTREAM_KIND`/`UPSTREAM_URL` in front of

@@ -35,6 +35,7 @@ go run ./cmd/livepeer-chain-probe \
   --protocol=wholesale \
   --chain-id=42161 \
   --recipient=0x... \
+  --settlement-domain-id=0x... \
   --broker-url=https://broker.example \
   --broker-uri=https://broker.example \
   --capability=conformance:job \
@@ -51,6 +52,10 @@ go run ./cmd/livepeer-chain-probe \
   --session-max-authorization-units=600 \
   --session-runner-control-url=http://runner:8092
 ```
+
+`--settlement-domain-id` is required: it is the receiver ledger ID from the
+cold-signed route, and every account read fails closed when it is empty or
+differs from the broker's `/v1/payment/account` response.
 
 The first operation restores the stable payer-payee account to the configured
 `--account-float-wei`. After actual work settles and unused reservation is

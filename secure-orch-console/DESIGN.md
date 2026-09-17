@@ -83,7 +83,8 @@ canonical manifest bytes; `v` normalized to `{27, 28}` (plan 0019
 `/var/log/secure-orch/audit.log.jsonl`, append-only, rolled by size
 (default 100 MiB; configurable via `--audit-rotate-size`). Schema:
 one JSON object per line with `at` (RFC3339Nano UTC), `kind`
-(`load_candidate` / `view_diff` / `sign` / `write_signed` / `abort` /
-`boot` / `shutdown` / `rotate`), and event-specific fields. Rotation
+(`load_candidate` / `view_diff` / `sign` / `write_signed` /
+`protocol_action` / `abort` / `boot` / `shutdown` / `rotate`, plus the
+agent kinds in `internal/audit/audit.go`), and event-specific fields. Rotation
 renames the active file with a timestamp suffix and writes a
 `rotate` marker into the new file.

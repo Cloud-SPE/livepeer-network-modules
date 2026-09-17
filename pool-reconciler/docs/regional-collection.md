@@ -1,9 +1,10 @@
 # Complete regional collection
 
 Regional mode uses `pool_controller.pool_id`, scoped HTTPS controller credentials
-and an explicit `revenue_sources` array. Each source declares its immutable
-receiver settlement domain (`source_id`), broker resource (`broker_id`), chain,
-payee, HTTPS origin, token file and optional CA file. Sources sharing a payee
+and an explicit `revenue_sources` array. Each source declares its `pool_id`
+(equal to `pool_controller.pool_id`), its immutable receiver settlement domain
+(`source_id`), broker resource (`broker_id`), chain, payee, HTTPS origin, token
+file and optional CA file. Sources sharing a payee
 remain independent when their receiver ledgers differ. Repeated receiver or
 broker resources are configuration errors.
 
@@ -85,3 +86,21 @@ sequenceDiagram
     Controller->>Broker: Fetch scoped HTTPS drain proof
     Controller->>Controller: Validate and retain immutable retirement evidence
 ```
+
+### Fresh-pool bootstrap and subscription lifetime
+
+Regional startup backfill begins no earlier than the minimum `start_round` in
+the controller's full source registry, including retired sources. Round events
+before that boundary are skipped. Old failed attempts before that boundary remain
+in the local database for diagnosis but do not consume the pending retry limit.
+Saved prepared requests remain available for acknowledgement recovery. Missing
+source reports within the participation interval still fail closed; an empty or
+unavailable registry is not permission to discard accounting history.
+
+The round-event subscription lasts until its caller cancels or the connection
+fails. The protocol request timeout applies to unary observations, not the lifetime
+of this stream. Deployments exhibiting repeated `DeadlineExceeded` followed by
+1,000-round startup replay need the corrected reconciler image; increasing the
+request timeout only delays the old bug. Preserve the reconciler database and
+source registration when replacing the image. No database reset or source
+re-registration is required.

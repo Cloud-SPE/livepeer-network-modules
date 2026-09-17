@@ -17,6 +17,8 @@ Requests carry `Authorization: Bearer <secret>` and `X-Livepeer-Pool-ID`.
 The server selects its expected pool, exact resource and allowed roles from
 local configuration and the endpoint; caller headers cannot grant authority.
 Roles and resources match exactly, without wildcards or implicit admin power.
+A credential can also carry an optional `source_id`; the controller requires it
+on broker receipt-ingestion credentials and rejects receipts from other sources.
 
 Replace the server credential file atomically to rotate/revoke credentials.
 During rotation add the replacement with a distinct ID, switch the caller's

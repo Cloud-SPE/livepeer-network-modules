@@ -54,7 +54,7 @@ Current top-level components include `livepeer-network-protocol/`,
 `capability-broker/`, `payment-daemon/`, `orch-coordinator/`,
 `secure-orch-console/`, `protocol-daemon/`, `service-registry-daemon/`,
 `chain-commons/`, `proto-contracts/`, `pool-controller/`,
-`pool-reconciler/`, `pool-payout-executor/`, `pool-member-agent/`, and `member-portal/`. Additional components still
+`pool-reconciler/`, `pool-payout-executor/`, `pool-member-agent/`, `member-portal/`, `pool-setup/`, and `orchestrator-setup/`. Additional components still
 land as top-level subfolders as the rewrite expands.
 
 ## Task tracking

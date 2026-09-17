@@ -28,8 +28,8 @@ wire format. A selectable route requires a matching offering ID.
 
 Extra and constraints carry opaque JSON objects. The registry preserves them
 and computes route fingerprints; it does not execute workload constraints.
-Signed `protocol`, `job`, and `session` declaration keys may not be shadowed by
-extra metadata. Advertised capacity is not a cross-workload routing guarantee;
+Signed `protocol`, `job`, `session` and `settlement_domain_id` declaration keys
+may not be shadowed by extra metadata. Advertised capacity is not a cross-workload routing guarantee;
 consumers use live broker health and admission responses.
 
 Use the protocol [offering axes](../../../livepeer-network-protocol/protocols/offering-axes.md)

@@ -95,7 +95,8 @@ This plan is complete when:
 
 The `pool-controller` admin UI is brought into the same operator-console family
 as a follow-on slice. It previously shipped as a single server-built page
-(inline `<style>` + one client script) under `internal/ui/adminpage`.
+(inline `<style>` + one client script) under `internal/ui/adminpage` (since
+deleted; the console lives in `internal/ui/web`).
 
 Scope of this extension:
 
@@ -112,9 +113,9 @@ Scope of this extension:
   what this plan owns, not that list. Broker runtime went with plan 0043 (the
   controller pushes offers instead of rendering a config), and Join requests,
   Members & backends, and Assignments went with plan 0044 §5 phase A, which
-  deleted the legacy member model outright. The current set is Overview, Pool,
-  Offers, Audit; plan 0044 phase H rebuilds the console around members, hosts
-  and GPUs, templates, exceptions, settlement, and payouts.
+  deleted the legacy member model outright. Plan 0044 phase H (`lnm-6at.16`)
+  then rebuilt the console for the new model; the current set is Overview,
+  Pool, Offers, Placement, Ladder, Exceptions, Payouts, Audit.
 
 Auth — same login model as the trust-spine consoles:
 

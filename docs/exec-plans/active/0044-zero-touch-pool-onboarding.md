@@ -2,7 +2,7 @@
 plan: 0044
 title: Zero-touch pool onboarding
 status: active
-phase: planning
+phase: shipped
 opened: 2026-08-26
 owner: harness
 related:
@@ -16,9 +16,16 @@ audience: pool-controller / pool-member-agent / payout maintainers, operators
 
 # Plan 0044 — Zero-touch pool onboarding
 
-**Status:** planning — decisions locked 2026-08-26 (§2); no implementation
-started. Epic 2 of two. Depends on epic 1 (`lnm-pkv`) for attach, credentials,
-freeze, certification execution, and selection weights.
+**Status:** shipped 2026-08-27 — decisions locked 2026-08-26 (§2); every
+item in §5 landed (beads epic `lnm-6at`, children `.1`–`.17`, all closed),
+and the follow-ups filed during the epic have closed too (`lnm-v12`
+`runner_compose` for the curated templates, `lnm-5z4`, `lnm-6m8`, and the
+docs items `lnm-y60` / `lnm-8xd` / `lnm-dye`). Epic 2 of two; built on
+epic 1 (`lnm-pkv`, plan 0043) for attach, credentials, freeze,
+certification execution, and selection weights. The "Today" paragraphs
+below describe the pre-plan state. The shared regional `member-portal/`
+(see `docs/design-docs/regional-pools.md`) arrived later and is not part
+of this plan.
 
 ## 1. Purpose
 

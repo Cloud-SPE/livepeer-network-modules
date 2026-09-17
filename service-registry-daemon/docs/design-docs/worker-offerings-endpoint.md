@@ -17,9 +17,9 @@ runner attach/describe → capability broker → coordinator candidate
 
 Broker inventory is unsigned. Its body contains `spec_version`,
 `orch_eth_address`, optional `offers_revision`, and flat capability tuples.
-Tuples include capability/offer ID, protocol and axes, work-unit metadata,
-price numerator, per-units denominator, extra and constraints. The broker
-emits constraints as an object (possibly empty). It does not supply the public
+Tuples include settlement-domain ID, capability/offer ID, protocol and axes,
+work-unit metadata, price numerator, per-units denominator, extra and
+constraints. The broker emits constraints as an object (possibly empty). It does not supply the public
 manifest `worker_url`; the coordinator assigns its configured broker base URL.
 The coordinator checks compatible major spec versions when merging inventory.
 

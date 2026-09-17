@@ -158,7 +158,7 @@ runner's work be billable?**
   `work_unit.extractor` over the source exchange and passes iff
   `units ≥ min_units`. Evidence: `{ "extractor": "openai-usage", "units": 17 }`.
 - **Session:** the broker waits for the first runner usage event
-  (`paid-session` §7.2) on the source session and passes iff its cumulative
+  (`paid-session` §5) on the source session and passes iff its cumulative
   claim `≥ min_units` and its `work_unit` equals the declared one.
   Evidence: `{ "work_unit": "participant_seconds", "units": 4, "event_at": "…" }`.
 
@@ -189,8 +189,8 @@ Evidence: `{ "samples", "p50_ms", "p95_ms", "min_ms", "max_ms",
 **Fixtures** are the binary bodies multipart steps need. A `fixture`
 reference is one of:
 
-- `{ "ref": "audio/wav-16k-mono-3s" }` — a **built-in** the broker ships.
-  The built-in set is this module's
+- `{ "ref": "multipart-audio-duration-v1/wav-16k-mono-3s" }` — a **built-in**
+  the broker ships. The built-in set is this module's
   [`extractors/fixtures/`](../extractors/fixtures/) tree, addressed by
   `<dir>/<file-without-extension>`, plus `video/mp4-2s-720p` and
   `image/png-64` defined by the broker; the broker lists what it has on
@@ -264,7 +264,7 @@ Substitution is textual, JSON-escaped; no expressions, no defaults.
    work.
    A private runner `429` whose JSON body is exactly classified by
    `error: capacity_reached` is a temporary host-admission refusal
-   (`runner-contract` §4.4), not evidence that the workload passed or the
+   (`runner-contract` §6), not evidence that the workload passed or the
    runner failed. The required step and run are recorded `inconclusive`, later
    steps are skipped, and the broker retries after the bounded `Retry-After`
    (default 5 seconds, maximum 60 seconds). Other `429` responses retain the
@@ -425,9 +425,9 @@ certification:
   - { name: ready, type: readiness }
   - name: smoke
     type: request
+    timeout_ms: 60000
     config:
       transport: multipart
-      timeout_ms: 60000
       parts:
         - { name: profiles, value: '[{"name":"720p30","width":1280,"height":720,"fps":30}]' }
         - { name: source, fixture: { ref: video/mp4-2s-720p }, filename: probe.mp4, content_type: video/mp4 }

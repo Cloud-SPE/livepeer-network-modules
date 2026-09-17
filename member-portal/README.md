@@ -11,9 +11,11 @@ proxy. Set the proxy's preserved Host to the configured public origin. Do not
 expose the HTTP backend publicly. See [authentication](docs/authentication.md).
 
 The portal API exposes `/api/auth/challenge`, `/api/auth/login`,
-`/api/auth/logout`, `/api/session`, and an allowlisted regional member API under
-`/api/regions/{pool_id}/`. Regional paths omit the `/member/v1/` prefix there.
-No admin, agent desired-state, or agent stop-proof route is proxied.
+`/api/auth/logout`, `/api/session`, `/api/reports`, and an allowlisted regional
+member API under `/api/regions/{pool_id}/`. Regional paths omit the
+`/member/v1/` prefix there. No admin, agent desired-state, or agent stop-proof
+route is proxied. One-use enrollment links are served at `/install/{secret}`
+and `/bootstrap/{secret}/bundle`.
 
 The server-rendered [member interface](docs/member-interface.md) covers regional
 joins, one-command enrollment, device transfers, workload preferences and payout

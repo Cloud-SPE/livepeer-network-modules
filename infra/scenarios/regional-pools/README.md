@@ -224,3 +224,12 @@ Local transfer acceptance uses
 local Docker socket and creates only isolated test containers. Ordinary
 `e2e` runs skip that explicitly enabled case. See the
 [acceptance evidence and synthetic boundaries](local-acceptance-2026-09-16.md).
+
+## Containerized staged setup
+
+For a fresh regional node or reuse of already provisioned bootstrap material,
+use [pool-setup](../../../pool-setup/README.md). It packages wallet/key generation,
+identity verification, scoped credentials and offline module validation behind
+a `.env`-configured container. The full-topology compiler in this directory
+continues to require EU1/US3; the setup container supports staged node packages
+and does not mutate a running multi-source fleet.

@@ -41,7 +41,7 @@ Inherited from the repo root, plus:
   wall-clock. Capability tuples sorted by `(capability_id, offering_id,
   worker_url)` before serialization.
 - **Uniqueness key for tuple identity.** `(capability_id, offering_id, settlement_domain_id, extra,
-  constraints)` quadruple. `worker_url` is the endpoint, not identity.
+  constraints)` tuple. `worker_url` is the endpoint, not identity.
   Identical key + different prices → hard-fail loud. Identical key + identical
   price + different `worker_url` → emit one tuple, lex-min URL wins, second URL
   in metadata sidecar. Different `extra` / `constraints` → distinct tuples.
@@ -74,6 +74,7 @@ internal/
   types/                        — decoded broker offerings, candidate, signed manifest
   providers/
     brokerclient/               — HTTP GET /registry/{offerings,health,settlement-keys} (real + dev fake)
+    brokeradmin/                — broker admin API client (/admin/v1/...) behind the hot-zone pages
   repo/
     candidates/                 — filesystem snapshots (history, pruned by count)
     audit/                      — BoltDB publish + upload events

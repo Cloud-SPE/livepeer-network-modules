@@ -9,12 +9,15 @@ last_updated: 2026-05-06
 # Extractor: `ffmpeg-progress`
 
 Parse FFmpeg's `-progress` output to compute frame-based units. Designed for
-the video transcode workloads (VOD, ABR, RTMP-live).
+the `paid-job/v1` video transcode workloads (VOD, ABR). Live RTMP is a
+`paid-session/v1` offering metered by runner-reported claims, not by an
+extractor.
 
 ## When to use
 
-- Capabilities whose backend is an FFmpeg subprocess (the broker shells out
-  rather than HTTP-forwards).
+- Capabilities whose backend runs FFmpeg and returns its `-progress` key-value
+  output as the response body. (The reference broker parses that body; it does
+  not shell out to FFmpeg itself.)
 - Pricing by frame count, frame-megapixels, or processed-time.
 
 ## Configuration in `host-config.yaml`
@@ -62,12 +65,10 @@ The broker reads this stream and accumulates the relevant counter.
 |---|---|
 | `"frame"` | Final value of `frame=N` after `progress=end`. |
 | `"frame_megapixel"` | `frame × width × height / 1_000_000`, floored to integer. |
-| `"out_time_seconds"` | Final `out_time_us` divided by 1,000,000, rounded per `rounding` param (default `ceil`). |
+| `"out_time_seconds"` | Final `out_time_us` divided by 1,000,000, rounded up (ceil). |
 
-For interim debits (RTMP-live mode):
-
-- Broker accumulates frames-since-last-tick from successive `frame=N` reports.
-- Per-tick units = delta of the chosen unit since the last tick.
+There are no interim debits: the final values are claimed once, at the
+terminal accounting point (`paid-job/v1` §6).
 
 ## ABR caveat
 
@@ -99,8 +100,6 @@ A 1080p VOD transcode of a 10-second clip at 30fps:
 - `unit: "frame_megapixel"` correctly computes for the declared output
   dimensions.
 - `unit: "out_time_seconds"` correctly converts microseconds and rounds.
-- Interim debits emit per-tick deltas (not cumulative), summing exactly to
-  the total at session-end.
 - `progress=end` line triggers final reconciliation.
 - Crashes / abnormal terminations: extractor reports the last cleanly-parsed
   value (no overcounting).

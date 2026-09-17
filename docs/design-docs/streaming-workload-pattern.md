@@ -11,7 +11,7 @@ last-reviewed: 2026-09-11
 > outbox, replay after restart, persisted session identity) survive as the
 > seller's own obligations in
 > [`paid-session/v1`](../../livepeer-network-protocol/protocols/paid-session.md)
-> §7.3/§9; its "broker meters for the gateway" framing is superseded by
+> §7/§9; its "broker meters for the gateway" framing is superseded by
 > [`dual-meter-trust.md`](./dual-meter-trust.md). Kept as design provenance —
 > do not implement against it.
 > It also predates mandatory wholesale accounts and spend authorizations: all

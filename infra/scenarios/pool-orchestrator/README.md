@@ -31,8 +31,8 @@ secure-orch side to run:
   forward a socket across machines. The scenario does not create that
   transport or expose protocol gRPC over public TCP.
 - One or more Arbitrum RPC endpoints (`CHAIN_RPC_URLS`, comma-separated,
-  primary first). The payout executor takes its list from the
-  `executor.rpc_urls` key of its config file instead.
+  primary first). The compose file passes the same list to the payout
+  executor, where it replaces the `executor.rpc_urls` key of its config file.
 - A funded payment-daemon receiver wallet:
   - `PAYMENT_KEYSTORE_FILE`
   - `PAYMENT_KEYSTORE_PASSWORD_FILE`

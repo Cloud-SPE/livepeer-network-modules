@@ -65,6 +65,12 @@ func (r *StateRepo) GetRound(roundID uint64) (RoundRecord, bool, error) {
 }
 
 func (r *StateRepo) ListPendingRounds(limit int) ([]RoundRecord, error) {
+	return r.ListPendingRoundsFrom(limit, 0)
+}
+
+// ListPendingRoundsFrom excludes pre-pool failures before applying the limit.
+// Prepared evidence is always retained for replay or explicit conflict handling.
+func (r *StateRepo) ListPendingRoundsFrom(limit int, start uint64) ([]RoundRecord, error) {
 	records := []RoundRecord{}
 	err := r.db.View(func(tx *bolt.Tx) error {
 		c := tx.Bucket([]byte(roundsBucket)).Cursor()
@@ -73,7 +79,7 @@ func (r *StateRepo) ListPendingRounds(limit int) ([]RoundRecord, error) {
 			if err := json.Unmarshal(v, &rec); err != nil {
 				return err
 			}
-			if rec.Status == "closed" {
+			if rec.Status == "closed" || (rec.RoundID < start && rec.Prepared == nil) {
 				continue
 			}
 			records = append(records, rec)

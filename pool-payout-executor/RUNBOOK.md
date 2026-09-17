@@ -16,8 +16,13 @@
   in the environment (comma-separated, primary first), which takes
   precedence. Every call fails over between the entries.
 - keystore file
-- keystore password file
+- keystore password file (no example keystore ships; both names are
+  gitignored)
+- regional mode only: `pool_controller.pool_id`, `token_file`, an HTTPS
+  controller `url`, and `executor.expected_wallet_address` — see
+  [`docs/regional-wallets.md`](docs/regional-wallets.md)
 - durable `executor.state_path` if reconcile-loop persistence is desired
+  (required in regional mode)
 - durable `executor.intent_store_path` (default: `payout-intents.db` beside
   `state_path`). This is the transaction intent store: every broadcast's tx
   hash and nonce, so a restart resumes tracking instead of re-sending. Back
@@ -98,6 +103,9 @@ Prometheus metrics on `/metrics`:
   counter of reconcile-loop iterations (`success` or `error`).
 - `livepeer_pool_payout_executor_reconcile_iteration_duration_seconds` —
   histogram of wall-clock time per `reconcileOnce`.
+- chain-commons transport and transaction-intent series (RPC calls by
+  endpoint/outcome, circuit-breaker transitions) are registered on the same
+  listener under their chain-commons names as they are first emitted.
 
 If `executor.metrics_addr` is empty, the listener is not started.
 
@@ -150,7 +158,8 @@ Common root causes by failure_reason substring (best inspected with
 
 Back up:
 
-- the executor BoltDB file if used
+- the executor BoltDB file (`executor.state_path`) if used
+- the transaction intent store (`executor.intent_store_path`)
 - the keystore file
 
 Do not back up the keystore password in the same place as the keystore.

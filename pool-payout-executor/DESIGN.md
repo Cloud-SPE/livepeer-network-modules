@@ -36,25 +36,30 @@ Initial implementation scope for plan 0029:
     record of is adopted from the controller's `tx_hash` + `external_ref`
     on the next confirm pass, which is how in-flight payouts survive an
     upgrade.
-15. Expose a read-only payout-alert view through executor config/auth so
+16. Expose a read-only payout-alert view through executor config/auth so
     operator automation can inspect controller-derived anomalies without
     separate curl wiring.
-16. Consume explicit controller `failed_at` timing so future retry policy can
+17. Consume explicit controller `failed_at` timing so future retry policy can
     evolve from canonical accounting state rather than inferred timestamps.
-17. Expose an explicit command that requeues only controller-flagged stale
+18. Expose an explicit command that requeues only controller-flagged stale
     failed payouts, so operators can act on alert policy without enabling
     unattended auto-retry.
-18. Consume controller-owned retry history (`retry_count`,
+19. Consume controller-owned retry history (`retry_count`,
     `last_requeued_at`) so future retry budgets and stop conditions can be
     defined from canonical accounting state.
-19. Surface controller retry-risk alerts through executor read APIs so ops can
+20. Surface controller retry-risk alerts through executor read APIs so ops can
     inspect the same retry-limit and recent-requeue signals without separate
     controller tooling.
-20. Support a default-off v1 auto-requeue policy in unattended reconcile flows:
+21. Support a default-off v1 auto-requeue policy in unattended reconcile flows:
     `max_retries=3`, `requeue_cooldown_seconds=3600`, and only transient
     failure reasons are eligible for automatic requeue.
-21. Support local keystore-file signing (`keystore.json` + password file) as
+22. Support local keystore-file signing (`keystore.json` + password file) as
     the preferred operator path for live-chain testing and runtime execution.
+23. In regional mode (`pool_controller.pool_id`), verify the loaded key against
+    `executor.expected_wallet_address` and bind the transaction intent store to
+    that pool, wallet and chain before any recovery or signing; adoption then
+    requires RPC evidence of an exact, calldata-free transfer from this wallet.
+    See [`docs/regional-wallets.md`](docs/regional-wallets.md).
 
 This component is intentionally narrow even with signing enabled: it only
 executes native-ETH payouts against intents already approved by

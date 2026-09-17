@@ -114,8 +114,9 @@ The reproducible local probe `python3 check-live-runner-startup.py` uses the
 already-present published CPU live image (never a production GPU fallback).
 On 2026-09-16 it passed required configuration, discovery, 204 readiness,
 private bearer enforcement, persisted session/descriptor replay after a normal
-container restart, and termination with `gateway_close`. Evidence is in
-`/tmp/regional-live-startup-probe.json`; the script removes its temporary
+container restart, and termination with `gateway_close`. The script prints its
+result JSON to stdout and writes no file (that run's output was captured in
+`/tmp/regional-live-startup-probe.json`); the script removes its temporary
 container, secrets and journal volume. It publishes no media and does not test
 callback delivery or GPU encoding. The probe exposed the missing required live
 session parameters in the catalog certification recipe; that recipe now uses

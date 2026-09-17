@@ -104,7 +104,9 @@ Minimal session runner:
 A container that serves more than one capability — the audio runner's
 transcriptions and translations, a vendor-backed runner with several
 models — returns a JSON **array** of such objects, one per capability,
-each validated on its own; two entries MUST NOT share a `capability_id`.
+each validated on its own; two entries MUST NOT share a `capability_id`
+with the same `identity` (the broker's own rule, runner-attach §4.1 — one
+capability under several identities is several entries).
 The agent attaches each as its own capability entry: the first under the
 container's `local_id`, the rest under `<local_id>.<n>`, and routes all of
 them to the container. Between the array and `CAPABILITY_NAME`-style

@@ -4,8 +4,8 @@ Long-lived sidecar that owns the Livepeer-Network payment session state.
 Runs on both sides of a paid request:
 
 - **`--mode=receiver`** — orchestrator-side. Validates incoming
-  `Payment` envelopes, tracks per-sender balances, and (post chain
-  integration) redeems winning tickets on-chain. The capability-broker
+  `Payment` envelopes, tracks per-sender balances and wholesale accounts,
+  and (in chain mode) redeems winning tickets on-chain. The capability-broker
   talks to this daemon over a unix socket via the `PayeeDaemon` gRPC
   service. Operator-only maintenance calls use the co-mounted
   `PayeeAdmin` gRPC service on the same socket.
@@ -13,14 +13,16 @@ Runs on both sides of a paid request:
   paying app. Sender clients and the conformance runner talk to this daemon
   over a unix socket via the `PayerDaemon` gRPC service. Callers may
   later report payee-side rejection outcomes back to the daemon so it
-  can invalidate stale cached sessions.
+  can invalidate stale cached sessions. On a dev clock only, the
+  token-gated `PayerAdmin` service is co-mounted for conformance round
+  advancement.
 
 Wire format and gRPC contracts at [`../livepeer-network-protocol/proto/livepeer/payments/v1/`](../livepeer-network-protocol/proto/livepeer/payments/v1/).
 Operational reading: [`docs/operator-runbook.md`](./docs/operator-runbook.md).
 Payout planning: [`docs/payout-modeling-guide.md`](./docs/payout-modeling-guide.md).
 Simulation inputs: [`scenarios/`](./scenarios/).
 
-## Status (pre-1.0 — sender + receiver + restart-stable sessions)
+## Status (sender + receiver + restart-stable sessions)
 
 - Both `sender` and `receiver` modes wire up. One binary, mode chosen
   at boot.
@@ -28,7 +30,9 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   `net.Payment` per [`wire-compat.md`](../livepeer-network-protocol/docs/wire-compat.md);
   envelopes from this daemon decode against go-livepeer's `pm/`.
 - Receiver sessions persist to BoltDB
-  (`/var/lib/livepeer/payment-daemon/sessions.db`).
+  (`/var/lib/livepeer/payment-daemon/sessions.db`). Sender mode opens the
+  same `--db` path for mint-idempotency records and its durable nonce
+  watermark; give each mode its own file.
 - `GetTicketParams` is restart-stable for an open
   `(sender, recipient, capability, offering)` session. Repeated calls
   reuse the same `recipient_rand_hash` until the session is closed or
@@ -64,9 +68,11 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   workloads gets meaningful protection. See
   [operator-runbook §3.5](./docs/operator-runbook.md).
 
-Anything in [`docs/operator-runbook.md`](./docs/operator-runbook.md)
-that talks about real funds, real gas, or real redemption is
-**forward-looking**. Do not deposit real funds against a v0.2 daemon.
+Everything in [`docs/operator-runbook.md`](./docs/operator-runbook.md)
+about real funds, real gas, or real redemption applies to chain mode
+only. A dev-mode daemon (no `--chain-rpc-urls`) signs with a published
+throwaway key and never touches a chain; do not deposit real funds
+against it.
 
 ## Image
 
@@ -97,9 +103,11 @@ Flags:
 |---|---|---|
 | `--mode` | — (**required**) | `sender` or `receiver`; the process refuses to boot without it |
 | `--socket` | per-mode: `/var/run/livepeer/payer-daemon.sock` (sender), `/var/run/livepeer/payment-daemon.sock` (receiver) | unix socket the gRPC server listens on |
-| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB session ledger path (receiver only) |
+| `--db` | `/var/lib/livepeer/payment-daemon/sessions.db` | BoltDB ledger path: receiver sessions + wholesale accounts, or sender mint-idempotency records |
+| `--settlement-domain-id` | empty (generated once and stored) | receiver only: optional bootstrap import of the immutable ledger ID; a mismatch with the stored ID refuses startup |
 | `--txintent-db` | `txintents.db` beside `--db` | BoltDB transaction-intent store: every redemption the daemon has signed, resumed on restart (receiver, chain mode) |
 | `--payee-admin-token` | empty | bearer token for receiver-only `PayeeAdmin` methods; falls back to `PAYEE_DAEMON_ADMIN_TOKEN` when unset |
+| `--payer-admin-token` | empty | bearer token for sender-only `PayerAdmin` methods (dev clock only; empty disables admin access) |
 
 The full flag set (chain, keystore, gas, and redemption tunables) is in
 [`docs/operator-runbook.md`](./docs/operator-runbook.md); `--version`

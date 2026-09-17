@@ -83,9 +83,9 @@ func (c *Client) StreamRoundEvents(ctx context.Context, fn func(RoundEvent) erro
 	}
 	defer conn.Close()
 
-	reqCtx, cancel := c.withTimeout(ctx)
-	defer cancel()
-	stream, err := protocolv1.NewProtocolDaemonClient(conn).StreamRoundEvents(reqCtx, &protocolv1.Empty{})
+	// Round transitions can be hours apart. Only the caller controls the
+	// subscription lifetime; the unary request timeout must not expire it.
+	stream, err := protocolv1.NewProtocolDaemonClient(conn).StreamRoundEvents(ctx, &protocolv1.Empty{})
 	if err != nil {
 		return fmt.Errorf("protocol daemon StreamRoundEvents: %w", err)
 	}

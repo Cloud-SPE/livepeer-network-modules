@@ -73,8 +73,13 @@ likely to touch:
 
 - `KEYSTORE_FILE` / `KEYSTORE_PASSWORD_FILE` — only if your keystore lives
   somewhere other than `/opt/livepeer/`
-- `SECURE_ORCH_LISTEN` — bind `127.0.0.1:8081` if this host is not fully
-  isolated and reach the console over an SSH tunnel
+- `SECURE_ORCH_BIND` — host interface the console port is published on.
+  Defaults to `127.0.0.1`; reach the console over an SSH tunnel, or set a
+  private LAN address only if this host is fully isolated. The metrics
+  ports have the same knob (`PROTOCOL_METRICS_BIND`,
+  `REGISTRY_METRICS_BIND`). Leave `SECURE_ORCH_LISTEN` (the in-container
+  bind) at `0.0.0.0:8081` — Docker's port forwarding cannot reach a
+  container-loopback listener
 
 ## Optional: automated sign cycle (agent mode)
 

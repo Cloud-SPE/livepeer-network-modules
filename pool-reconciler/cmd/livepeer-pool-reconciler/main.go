@@ -510,6 +510,15 @@ func backfillClosedRounds(
 	if cfg.Reconcile.BackfillLimit > 0 && completed > uint64(cfg.Reconcile.BackfillLimit) {
 		start = completed - uint64(cfg.Reconcile.BackfillLimit) + 1
 	}
+	if cfg.PoolController.PoolID != "" {
+		boundary, err := controllerClient.RevenueStartRound(ctx, cfg.PoolController.PoolID)
+		if err != nil {
+			return err
+		}
+		if start < boundary {
+			start = boundary
+		}
+	}
 	for roundID := start; roundID <= completed; roundID++ {
 		opMu.Lock()
 		record, found, err := stateRepo.GetRound(roundID)
@@ -561,7 +570,15 @@ func retryPendingRounds(
 	stateRepo *repo.StateRepo,
 	enc *json.Encoder,
 ) error {
-	pending, err := stateRepo.ListPendingRounds(cfg.Reconcile.BackfillLimit)
+	boundary := uint64(0)
+	if cfg.PoolController.PoolID != "" {
+		var err error
+		boundary, err = controllerClient.RevenueStartRound(ctx, cfg.PoolController.PoolID)
+		if err != nil {
+			return err
+		}
+	}
+	pending, err := stateRepo.ListPendingRoundsFrom(cfg.Reconcile.BackfillLimit, boundary)
 	if err != nil {
 		return err
 	}
@@ -628,6 +645,22 @@ func attemptRoundClose(
 				outcome = observability.OutcomeClosed
 				return map[string]any{"closed_round": explicitRoundID, "status": "closed", "work_receipt_count": len(prepared.IncludedWorkReceiptIDs), "pool_revenue_wei": prepared.PoolRevenueWei}, nil
 			}
+		}
+	}
+	if explicitRoundID != 0 && cfg.PoolController.PoolID != "" {
+		boundary, err := controllerClient.RevenueStartRound(ctx, cfg.PoolController.PoolID)
+		if err != nil {
+			return nil, err
+		}
+		if explicitRoundID < boundary {
+			record, _, err := stateRepo.GetRound(explicitRoundID)
+			if err != nil {
+				return nil, err
+			}
+			if record.Prepared != nil {
+				return nil, fmt.Errorf("prepared round %d precedes source boundary %d", explicitRoundID, boundary)
+			}
+			return map[string]any{"closed_round": explicitRoundID, "status": "skipped", "reason": "before regional source participation"}, nil
 		}
 	}
 	req, err := prepareRoundCloseRequest(ctx, cfg, explicitRoundID)

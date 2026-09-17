@@ -1,6 +1,6 @@
 # pool-payout-executor
 
-`pool-payout-executor` is the future payout-submission worker for Pool member
+`pool-payout-executor` is the payout-submission worker for Pool member
 distribution.
 
 Operator runbook:
@@ -38,7 +38,11 @@ on the next confirm pass from the controller's `tx_hash` and `external_ref`
 (`nonce-N`), then tracked to confirmation like any other. If the controller
 recorded no nonce and no endpoint knows the transaction, the payout is left
 in `submitted` with a `pending_confirmation` result carrying the reason, for
-the controller's stale-submitted alerting to surface.
+the controller's stale-submitted alerting to surface. A regional executor
+(`pool_controller.pool_id` set) is stricter: it adopts only a transaction the
+RPC returns and that matches this wallet, chain, member and exact amount with
+no calldata; a nonce hint alone is never enough
+([regional wallets](docs/regional-wallets.md)).
 
 A live Arbitrum dust payout has been validated end to end against this path.
 
@@ -216,6 +220,15 @@ go run ./cmd/livepeer-pool-payout-executor state-summary \
   --intents-limit 25
 ```
 
+Validate a config offline, or print the build version:
+
+```bash
+go run ./cmd/livepeer-pool-payout-executor validate-config \
+  --config examples/pool-payout-executor-config.example.yaml
+
+go run ./cmd/livepeer-pool-payout-executor version
+```
+
 Write executor status back:
 
 ```bash
@@ -252,10 +265,19 @@ For local live-chain testing, keep these files side by side:
 - `keystore.json`
 - `keystore-password`
 
-`keystore_path` and `keystore_password_path` resolve relative to the config
-file path when you use `--config ...`.
+No keystore ships in `examples/`: `keystore.json` and `keystore-password` are
+gitignored repo-wide, so supply your own before `make run` or the compose
+defaults will work.
+
+`keystore_path`, `keystore_password_path`, `state_path` and
+`intent_store_path` resolve relative to the config file path when you use
+`--config ...`.
 
 ## Regional service credentials
 
 See the [regional service access contract](../docs/design-docs/regional-service-access.md)
 for HTTPS configuration, exact role permissions, and credential rotation.
+Regional mode (`pool_controller.pool_id` + `token_file` + HTTPS `url`) also
+requires `executor.expected_wallet_address` and a persistent
+`executor.state_path`, and cannot be combined with `bearer_token` /
+`bearer_token_ref`.

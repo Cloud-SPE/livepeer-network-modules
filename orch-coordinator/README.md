@@ -21,7 +21,7 @@ into the candidate rather than transcribed by hand).
 Three listeners:
 
 - `--listen=:8080` — operator UX. Web UI (roster + diff + signed-manifest
-  upload) plus JSON API. Bound to the LAN; the operator hits this from a
+  upload + the hot-zone pages) plus JSON API. Bound to the LAN; the operator hits this from a
   browser on the same LAN.
 - `--public-listen=:8081` — resolver-facing. Serves only
   `GET /.well-known/livepeer-registry.json`; everything else is 404.
@@ -83,8 +83,10 @@ brokers:
 ```
 
 Reference form only, never the secret inline. A broker without one is
-listed but not administrable, and the pages say so. The pages are not
-registered at all when no broker admin surface is configured.
+listed but not administrable, and the pages say so. A regional broker
+entry (one carrying `pool_id`) must use an `https://` `base_url` and a
+`file://` `admin_token_ref`; its scoped token is re-read from that file
+on every request and sent with `X-Livepeer-Pool-ID`.
 
 ## Configuration
 
@@ -104,6 +106,7 @@ orch-coordinator/
 │   ├── config/                      coordinator-config.yaml grammar
 │   ├── types/                       offerings, candidate, signed-manifest types
 │   ├── providers/brokerclient/      HTTP GET /registry/{offerings,health,settlement-keys}
+│   ├── providers/brokeradmin/       broker admin API client (/admin/v1/...) for the hot-zone pages
 │   ├── repo/                        candidates / audit / published manifest
 │   ├── service/                     scrape, settlementkeys, candidate, diff, roster, receive
 │   └── server/                      adminapi / publicapi / metrics

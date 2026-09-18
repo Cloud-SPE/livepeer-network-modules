@@ -294,3 +294,21 @@ with `/v1/payment/account` and the ticket-parameter response, include it in fund
 intents and spend authorizations, and compare it again on settlement. Account
 versions are independent across domains. URL changes do not transfer balances.
 The chain probe requires `--settlement-domain-id` from the signed route.
+
+
+## Definitive payment rejection recovery
+
+`payment_rejected` retains the exact authorization for a definitive receiver
+insufficient-balance refusal before runner execution. Exchange lookup reports
+`ADMISSION_REJECTED` until the existing non-admission endpoint issues signed proof.
+After expiry that endpoint validates the full scope and calls the receiver's
+private unexecuted-authorization fence. Receiver outages return 503 without proof;
+scope mismatches or unexpired authorization return 409. Successful evidence is
+persisted and replayed verbatim; the request cannot run again.
+
+Deploy this broker change before coordinated consumers that depend on recovery
+(BlueClaw be-vtu). Preserve the Bolt store and its evidence horizon. Do not delete
+admission tombstones or rewrite old terminal records from HTTP logs: historical
+ambiguous outcomes lack the new durable refusal evidence. This change does not
+automatically repair those records or change deployed image tags. The associated
+implementation bead is lnm-9da.

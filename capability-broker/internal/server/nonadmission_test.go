@@ -235,7 +235,7 @@ func TestNonAdmissionRequiresCompleteContext(t *testing.T) {
 		"short sender":            `{` + strings.Replace(full, `"sender":"`+strings.Repeat("0a", 20)+`"`, `"sender":"0a0b"`, 1) + `}`,
 		"non-hex recipient":       `{` + strings.Replace(full, `"recipient":"`+strings.Repeat("0b", 20)+`"`, `"recipient":"zzzz"`, 1) + `}`,
 		"missing quote_id":        `{` + strings.Replace(full, `"quote_id":"q"`, `"quote_id":""`, 1) + `}`,
-		"zero quote_version":      `{` + strings.Replace(full, `"quote_version":1`, `"quote_version":0`, 1) + `}`,
+		"null quote_version":      `{` + strings.Replace(full, `"quote_version":1`, `"quote_version":null`, 1) + `}`,
 		"missing fingerprints":    `{"protocol":"paid-job/v1","work_id":"w","sender":"` + strings.Repeat("0a", 20) + `","recipient":"` + strings.Repeat("0b", 20) + `","quote_id":"q","quote_version":1,"job_issued_at":"` + now + `"}`,
 	}
 	for name, body := range cases {

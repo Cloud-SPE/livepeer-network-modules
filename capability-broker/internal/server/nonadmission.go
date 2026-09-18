@@ -1,17 +1,21 @@
 package server
 
 import (
+	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/proto"
+
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
@@ -28,15 +32,15 @@ import (
 // compares every field to its own record before acting, which is what
 // makes echoed context sufficient.
 type nonAdmissionQuery struct {
-	Protocol              string `json:"protocol"`
-	WorkID                string `json:"work_id"`
-	SenderHex             string `json:"sender"`
-	RecipientHex          string `json:"recipient"`
-	QuoteID               string `json:"quote_id"`
-	QuoteVersion          uint64 `json:"quote_version"`
-	ConstraintFingerprint string `json:"constraint_fingerprint"`
-	RouteFingerprint      string `json:"route_fingerprint"`
-	JobIssuedAt           string `json:"job_issued_at"`
+	Protocol              string  `json:"protocol"`
+	WorkID                string  `json:"work_id"`
+	SenderHex             string  `json:"sender"`
+	RecipientHex          string  `json:"recipient"`
+	QuoteID               string  `json:"quote_id"`
+	QuoteVersion          *uint64 `json:"quote_version"`
+	ConstraintFingerprint string  `json:"constraint_fingerprint"`
+	RouteFingerprint      string  `json:"route_fingerprint"`
+	JobIssuedAt           string  `json:"job_issued_at"`
 }
 
 // validate requires every field and parses it strictly.
@@ -73,8 +77,8 @@ func (q *nonAdmissionQuery) validate() (time.Time, error) {
 	if strings.TrimSpace(q.QuoteID) == "" {
 		return time.Time{}, errors.New("quote_id is required")
 	}
-	if q.QuoteVersion == 0 {
-		return time.Time{}, errors.New("quote_version is required and must be >= 1")
+	if q.QuoteVersion == nil {
+		return time.Time{}, errors.New("quote_version is required (zero is valid)")
 	}
 	if _, err := strictHex(q.ConstraintFingerprint); err != nil {
 		return time.Time{}, fmt.Errorf("constraint_fingerprint: %w", err)
@@ -161,11 +165,19 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var rejected *sessionstore.JobRecord
+	if candidate, err := s.jobIdem.ByRequestID(requestID); err == nil && candidate != nil && candidate.State == sessionstore.JobPaymentRejected {
+		if err := validateRejectedScope(candidate, q, time.Now().UTC()); err != nil {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, err.Error())
+			return
+		}
+		rejected = candidate
+	}
 	// The record may be long evicted while the FACT of admission
 	// survives. Checked before anything else, because signing
 	// NOT_ADMITTED for an exchange this broker served is the one failure
 	// this endpoint must never produce.
-	if admitted, jobID, aerr := s.sessionStore.WasAdmitted(requestID); aerr == nil && admitted {
+	if admitted, jobID, aerr := s.sessionStore.WasAdmitted(requestID); aerr == nil && admitted && rejected == nil {
 		w.Header().Set(livepeerheader.Error, livepeerheader.ErrAdmitted)
 		if rec, rerr := s.jobIdem.ByRequestID(requestID); rerr == nil && rec != nil {
 			s.writeExchangeState(w, rec)
@@ -218,6 +230,25 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "settlement domain unavailable", http.StatusServiceUnavailable)
 		return
 	}
+
+	if rejected != nil {
+		var auth pb.SpendAuthorization
+		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "rejected authorization domain mismatch")
+			return
+		}
+		recovery, ok := s.payment.(payment.UnexecutedRecovery)
+		if !ok {
+			http.Error(w, "unexecuted authorization recovery unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if err := recovery.CloseUnexecutedAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), "durable paid-job payment refusal; runner not entered"); err != nil {
+			http.Error(w, "failed to fence rejected authorization", http.StatusServiceUnavailable)
+			return
+		}
+	}
 	rec := &pb.NonAdmissionRecord{
 		SettlementDomainId: domainID,
 		Protocol:           q.Protocol,
@@ -227,7 +258,7 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		Recipient:          recipient,
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               q.QuoteID,
-			QuoteVersion:          q.QuoteVersion,
+			QuoteVersion:          *q.QuoteVersion,
 			ConstraintFingerprint: cfp,
 			RouteFingerprint:      rfp,
 		},
@@ -248,7 +279,12 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 	// signing leaves a window where an exchange is admitted in between,
 	// and the broker emits a signed statement that it never admitted
 	// something it is at that moment running.
-	existing, err := s.sessionStore.RecordNonAdmission(requestID, encoded, time.Now().UTC())
+	var existing string
+	if rejected != nil {
+		existing, err = s.sessionStore.RecordRejectedNonAdmission(requestID, rejected.RejectedAuthorization, encoded, time.Now().UTC())
+	} else {
+		existing, err = s.sessionStore.RecordNonAdmission(requestID, encoded, time.Now().UTC())
+	}
 	if errors.Is(err, sessionstore.ErrExists) {
 		// Not a bare refusal. A consumer asking this is about to decide
 		// how much to charge, and answering only "no" sends it away to
@@ -281,4 +317,27 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		"coverage_started_at": rec.GetCoverageStartedAt(),
 		"non_admission":       encoded,
 	})
+}
+
+// The caller cannot choose which authorization to fence. Every scope field must
+// match the exact wire authorization whose admission the receiver refused.
+func validateRejectedScope(rec *sessionstore.JobRecord, q nonAdmissionQuery, now time.Time) error {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(rec.RejectedAuthorization, &auth); err != nil {
+		return fmt.Errorf("invalid stored authorization")
+	}
+	p := auth.GetPayload()
+	quote := p.GetAcceptedPrice().GetQuoteRef()
+	sender, _ := strictHex(q.SenderHex)
+	recipient, _ := strictHex(q.RecipientHex)
+	cfp, _ := strictHex(q.ConstraintFingerprint)
+	rfp, _ := strictHex(q.RouteFingerprint)
+	if q.QuoteVersion == nil || p.GetRequestId() != rec.RequestID || p.GetProtocol() != q.Protocol || p.GetAuthorizationId() != q.WorkID || !bytes.Equal(p.GetPayer(), sender) || !bytes.Equal(p.GetPayee(), recipient) || quote.GetQuoteId() != q.QuoteID || quote.GetQuoteVersion() != *q.QuoteVersion || !bytes.Equal(quote.GetConstraintFingerprint(), cfp) || !bytes.Equal(quote.GetRouteFingerprint(), rfp) {
+		return fmt.Errorf("rejected authorization scope mismatch")
+	}
+	expires, err := time.Parse(time.RFC3339Nano, p.GetExpiresAt())
+	if err != nil || now.Before(expires) {
+		return fmt.Errorf("rejected authorization has not expired")
+	}
+	return nil
 }

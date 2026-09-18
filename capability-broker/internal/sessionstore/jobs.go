@@ -24,8 +24,9 @@ const (
 
 // Job states.
 const (
-	JobInFlight = "in_flight"
-	JobTerminal = "terminal"
+	JobInFlight        = "in_flight"
+	JobTerminal        = "terminal"
+	JobPaymentRejected = "payment_rejected"
 	// JobAccountingPending: the work was delivered and the exchange is
 	// over, but its debit has not landed and is being retried. It is
 	// deliberately NOT terminal — a terminal record asserts the
@@ -51,9 +52,10 @@ var ErrRequestIDReuse = errors.New("sessionstore: request id reused with differe
 
 // JobRecord is the durable idempotency record for one exchange.
 type JobRecord struct {
-	RequestID   string `json:"request_id"`
-	JobID       string `json:"job_id"`
-	Fingerprint []byte `json:"fingerprint"`
+	RejectedAuthorization []byte `json:"rejected_authorization,omitempty"`
+	RequestID             string `json:"request_id"`
+	JobID                 string `json:"job_id"`
+	Fingerprint           []byte `json:"fingerprint"`
 	// BodyDigest is sha256 of the request body, recorded when the
 	// exchange finishes. The envelope fingerprint above is known before
 	// the body has streamed; this is the half that can only be known
@@ -273,7 +275,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 				return err
 			}
 			switch rec.State {
-			case JobTerminal:
+			case JobTerminal, JobPaymentRejected:
 				if !rec.EndedAt.IsZero() && rec.EndedAt.Before(cutoff) {
 					evict = append(evict, bytes.Clone(k))
 				}
@@ -524,4 +526,69 @@ func (s *Store) JobByRequestID(requestID string) (*JobRecord, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// JobFinishPaymentRejected retains the exact scope of a definitive payment
+// refusal. Admission tombstones remain conservative until daemon fencing and
+// signed non-admission are persisted atomically by RecordRejectedNonAdmission.
+func (s *Store) JobFinishPaymentRejected(id string, status int, digest, authorization []byte) error {
+	return s.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(jobsBucket))
+		if b == nil || b.Get([]byte(id)) == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(b.Get([]byte(id)), &rec); err != nil {
+			return err
+		}
+		if rec.State != JobInFlight || len(authorization) == 0 {
+			return ErrExists
+		}
+		rec.State = JobPaymentRejected
+		rec.Status = status
+		rec.BodyDigest = bytes.Clone(digest)
+		rec.RejectedAuthorization = bytes.Clone(authorization)
+		rec.EndedAt = time.Now().UTC()
+		raw, err := json.Marshal(&rec)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), raw)
+	})
+}
+
+// Call only after the payment daemon has permanently fenced this exact unused
+// authorization. Recheck the durable no-execution fact inside the proof write.
+func (s *Store) RecordRejectedNonAdmission(id string, authorization []byte, envelope string, observed time.Time) (existing string, err error) {
+	err = s.db.Update(func(tx *bolt.Tx) error {
+		jobs := tx.Bucket([]byte(jobsBucket))
+		if jobs == nil || jobs.Get([]byte(id)) == nil {
+			return ErrNotFound
+		}
+		var rec JobRecord
+		if err := json.Unmarshal(jobs.Get([]byte(id)), &rec); err != nil {
+			return err
+		}
+		if rec.State != JobPaymentRejected || !bytes.Equal(rec.RejectedAuthorization, authorization) || len(authorization) == 0 || rec.WorkUnits != 0 || rec.Settlement != "" || rec.Pending != nil {
+			return ErrExists
+		}
+		b, err := tx.CreateBucketIfNotExists([]byte(nonAdmissionBucket))
+		if err != nil {
+			return err
+		}
+		if prior := b.Get([]byte(id)); prior != nil {
+			var entry nonAdmissionEntry
+			if err := json.Unmarshal(prior, &entry); err != nil {
+				return err
+			}
+			existing = entry.Envelope
+			return nil
+		}
+		raw, err := json.Marshal(nonAdmissionEntry{Envelope: envelope, ObservedAt: observed.UTC()})
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), raw)
+	})
+	return
 }

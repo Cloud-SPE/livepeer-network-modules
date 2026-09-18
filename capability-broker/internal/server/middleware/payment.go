@@ -13,6 +13,7 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -243,6 +244,11 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 	}
 	admitted, err := account.AdmitAuthorization(r.Context(), payment.AdmitAuthorizationRequest{AuthorizationBytes: authBytes, PaymentBytes: topup, Reservation: new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue())})
 	if err != nil {
+		// A transport error is ambiguous. Only this definitive receiver result
+		// establishes that this invocation never reached execution.
+		if status.Code(err) == codes.FailedPrecondition && strings.HasPrefix(status.Convert(err).Message(), "insufficient wholesale account balance:") {
+			recordAdmissionFailure(r.Context(), authBytes)
+		}
 		code, errCode := mapClientErr(err)
 		if status.Code(err) == codes.FailedPrecondition {
 			code, errCode = http.StatusPaymentRequired, livepeerheader.ErrInsufficientBalance

@@ -158,6 +158,18 @@ that a request was never admitted; session opens and jobs share its durable
 admission tombstone and cannot later contradict that evidence. SDK delivery of
 settlement to a payer is a latency optimization, not a correctness dependency.
 
+A broker job-idempotency record alone does not establish receiver admission.
+The broker MAY retain a distinct `ADMISSION_REJECTED` diagnostic outcome for a
+definitive insufficient-balance refusal before runner execution. This outcome and
+HTTP 402 are not refund evidence. After expiry, signed non-admission requires
+matching the complete scope to the retained authorization and irrevocably fencing
+that exact unused authorization at the receiver, then atomically persisting proof
+against the durable no-execution state. Failed fencing or ambiguous transport
+results MUST NOT produce non-admission evidence. Replays MUST NOT re-enter payment
+or execution. Existing records without definitive refusal evidence remain unknown.
+Quote version zero is valid; a missing query version is not equivalent to an
+explicit zero. Signed protobuf JSON may omit a zero scalar.
+
 A payer MAY reconcile exclusively by querying the locked broker using its own
 request or session ID. Raw HTTP and SDK callers have identical financial
 semantics.
@@ -191,6 +203,15 @@ contract. The reference broker relays those views at
 shortfall calculation and operational reconciliation but is not terminal
 settlement evidence; terminal financial decisions use the broker-signed
 records above. A caller MUST NOT accept an observation from a different route.
+
+An account observation does not reserve funds. Consumers sharing a payer account
+MUST coordinate observation and funding preparation until the preceding admission
+is visible at that receiver (or signed terminal evidence has been reconciled).
+This coordination must survive client cancellation/restart and cover every replica
+that can prepare funding for the same domain/payer/payee tuple. It need not wait
+for inference completion. An unknown admission must not silently release the fence
+or cause a duplicate paid invocation. TLS account views remain unsuitable for
+customer refunds.
 
 ## 7. Compatibility
 

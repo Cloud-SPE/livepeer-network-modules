@@ -1,0 +1,10 @@
+{
+  "description": "Definitive insufficient-balance admission refusal, scoped proof after expiry and receiver fencing; ambiguous errors never qualify.",
+  "quote_version": 0,
+  "rejection_status": 402,
+  "before_expiry_status": 409,
+  "wrong_scope_status": 409,
+  "receiver_unavailable_status": 503,
+  "fenced_proof_status": 200,
+  "proof_outcome": "NOT_ADMITTED"
+}

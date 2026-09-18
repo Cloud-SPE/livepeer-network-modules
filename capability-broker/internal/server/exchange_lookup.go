@@ -93,6 +93,21 @@ func (s *Server) writeExchangeState(w http.ResponseWriter, rec *sessionstore.Job
 		"state":  rec.State,
 	}
 	switch rec.State {
+	case sessionstore.JobPaymentRejected:
+		if s.sessionStore != nil {
+			if evidence, found, err := s.sessionStore.NonAdmissionFor(rec.RequestID); err == nil && found {
+				body["outcome"] = "NOT_ADMITTED"
+				body["non_admission"] = evidence
+				w.Header().Set(livepeerheader.NonAdmission, evidence)
+				writeJSON(w, http.StatusOK, body)
+				return
+			}
+		}
+		body["outcome"] = "ADMISSION_REJECTED"
+		body["status"] = rec.Status
+		body["detail"] = "payment admission was refused; request signed non-admission after authorization expiry"
+		writeJSON(w, http.StatusOK, body)
+
 	case sessionstore.JobTerminal, sessionstore.JobAbandoned:
 		if !rec.EndedAt.IsZero() {
 			body["ended_at"] = rec.EndedAt.Format(time.RFC3339Nano)

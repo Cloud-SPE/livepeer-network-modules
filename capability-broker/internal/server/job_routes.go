@@ -119,6 +119,7 @@ func negotiateTransport(r *http.Request) string {
 // broker has a configured state store; in-process otherwise (logged —
 // spec conformance requires the durable form).
 type jobIdemStore interface {
+	FinishPaymentRejected(id string, status int, digest, authorization []byte) error
 	Begin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (*sessionstore.JobRecord, bool, error)
 	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte, settlement string) error
 	// FinishPendingAccounting records a delivered exchange whose debit
@@ -134,6 +135,27 @@ type jobIdemStore interface {
 }
 
 type boltJobIdem struct{ store *sessionstore.Store }
+
+func (b *boltJobIdem) FinishPaymentRejected(id string, status int, digest, authorization []byte) error {
+	return b.store.JobFinishPaymentRejected(id, status, digest, authorization)
+}
+func (m *memJobIdem) FinishPaymentRejected(id string, status int, digest, authorization []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rec, ok := m.recs[id]
+	if !ok {
+		return sessionstore.ErrNotFound
+	}
+	if rec.State != sessionstore.JobInFlight {
+		return sessionstore.ErrExists
+	}
+	rec.State = sessionstore.JobPaymentRejected
+	rec.Status = status
+	rec.BodyDigest = bytes.Clone(digest)
+	rec.RejectedAuthorization = bytes.Clone(authorization)
+	rec.EndedAt = time.Now().UTC()
+	return nil
+}
 
 func (b *boltJobIdem) Begin(id string, fp []byte, jobID string, dl time.Time) (*sessionstore.JobRecord, bool, error) {
 	return b.store.JobBegin(id, fp, jobID, dl)
@@ -374,6 +396,11 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		}
 		if !created {
 			switch {
+			case rec.State == sessionstore.JobPaymentRejected:
+				// Never retry the admission under this request identity. A
+				// signed non-admission may have permanently fenced it already.
+				livepeerheader.WriteError(w, rec.Status, livepeerheader.ErrInsufficientBalance, "original payment admission was rejected; reconcile this request before retrying work")
+				return
 			case rec.State == sessionstore.JobTerminal:
 				// The envelope matched; the body still has to. Draining
 				// the retry for its digest costs a read and proves the
@@ -429,6 +456,7 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		// land. It sits inside this layer but the durable record lives
 		// here, so the failure has to travel outward.
 		ctx, pendingSlot := middleware.WithPendingDebitSlot(r.Context())
+		ctx, admissionFailure := middleware.WithAdmissionFailure(ctx)
 		// And one for handleJob to say which runner it chose, so the
 		// outcome can be reported from here — the one place every
 		// transport's exchange is classified — rather than from each
@@ -451,6 +479,13 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 			observability.RecordJobExchange(transport, "backend_error")
 		}
 		s.reportJobOutcome(dispatchSlot.Get(), jrec.status())
+		if len(admissionFailure.Authorization) > 0 {
+			if err := s.jobIdem.FinishPaymentRejected(requestID, jrec.status(), body.digest(), admissionFailure.Authorization); err != nil {
+				log.Printf("warning: rejected payment record failed request_id=%s: %v", requestID, err)
+			}
+			return
+		}
+
 		if pd := pendingSlot.Get(); pd != nil {
 			// Delivered but unsettled. The outcome is recorded so a
 			// replay still returns it; the record stays non-terminal so

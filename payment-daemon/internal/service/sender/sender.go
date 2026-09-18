@@ -398,18 +398,53 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		req.GetTicketParamsBaseUrl(), req.GetAccountFunding().GetSettlementDomainId()))
 	defer unlockSession()
 
-	session, err := s.findOrOpenSession(
-		ctx,
-		req.GetRecipient(),
-		funding.fundedValueWei,
-		acceptedPrice.CapabilityName,
-		acceptedPrice.Offering,
-		req.GetTicketParamsBaseUrl(),
-		acceptedPrice.toPriceInfo(funding.estimatedUnits),
-		req.GetAcceptedPrice().GetQuoteRef(), req.GetAccountFunding().GetSettlementDomainId(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("ticket params: %w", err)
+	// Refresh an exhausted cached identity BEFORE resizing its quote. The payee
+	// may now rotate after consuming tickets that the payer already allocated.
+	// Ordinary re-quoting deliberately rejects identity changes, so doing it
+	// first would trap this route on its stale cached work ID forever.
+	predecessorWorkID := ""
+	refreshedBudget := false
+	var session *senderSession
+	key := sessionKey(req.GetRecipient(), acceptedPrice.CapabilityName,
+		acceptedPrice.Offering, req.GetTicketParamsBaseUrl(),
+		req.GetAccountFunding().GetSettlementDomainId())
+	s.mu.Lock()
+	cachedSession := s.sessions[key]
+	s.mu.Unlock()
+	if s.store != nil && cachedSession != nil {
+		used, uerr := s.store.SenderNoncesUsed(cachedSession.workID)
+		if uerr != nil {
+			return nil, fmt.Errorf("read nonce budget: %w", uerr)
+		}
+		if used >= store.MaxSenderNonces {
+			session, err = s.rotateExhaustedSession(ctx, cachedSession, req.GetRecipient(),
+				acceptedPrice, req.GetTicketParamsBaseUrl(), req.GetAcceptedPrice().GetQuoteRef(), funding)
+			if err != nil {
+				return nil, err
+			}
+			refreshedBudget = true
+			if session.workID != cachedSession.workID {
+				predecessorWorkID = cachedSession.workID
+				s.logger.Info("ticket session rolled over before re-quote: nonce budget exhausted",
+					"predecessor_work_id", predecessorWorkID, "successor_work_id", session.workID,
+					"nonces_used", used, "cap", store.MaxSenderNonces)
+			}
+		}
+	}
+	if session == nil {
+		session, err = s.findOrOpenSession(
+			ctx,
+			req.GetRecipient(),
+			funding.fundedValueWei,
+			acceptedPrice.CapabilityName,
+			acceptedPrice.Offering,
+			req.GetTicketParamsBaseUrl(),
+			acceptedPrice.toPriceInfo(funding.estimatedUnits),
+			req.GetAcceptedPrice().GetQuoteRef(), req.GetAccountFunding().GetSettlementDomainId(),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("ticket params: %w", err)
+		}
 	}
 	if session.ticketParams.SettlementDomainID != req.GetAccountFunding().GetSettlementDomainId() {
 		return nil, grpcstatus.Error(codes.FailedPrecondition, "ticket parameters belong to a different settlement domain")
@@ -481,8 +516,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	// decided to refuse is worse than an error: it is authorisation the
 	// caller believes it spent. If rotation cannot complete, this
 	// returns without signing.
-	predecessorWorkID := ""
-	if s.store != nil && session.workID != "" {
+	if !refreshedBudget && s.store != nil && session.workID != "" {
 		used, uerr := s.store.SenderNoncesUsed(session.workID)
 		if uerr != nil {
 			return nil, fmt.Errorf("read nonce budget: %w", uerr)

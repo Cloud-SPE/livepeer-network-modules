@@ -1238,3 +1238,21 @@ func TestGetDepositInfo_ReportsCurrentRound(t *testing.T) {
 			"(current=%d expires_after=%d)", info.GetCurrentRound(), mint.GetExpiresAfterRound())
 	}
 }
+
+// Nonce-exhaustion recovery must not permit an ordinary resize to switch identities.
+func TestUnexhaustedRequoteStillRejectsChangedIdentity(t *testing.T) {
+	key, err := devkeystore.New("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := sender.New(key, devbroker.New(), devclock.New(), nil, &rotatingFetcher{}, nil, mintStore(t), sender.Limits{})
+	ctx := context.Background()
+	first := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5", "token", 1000, 1, 1000, "https://broker.example.com")
+	if _, err := svc.CreatePayment(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	next := makeCreatePaymentRequest([]byte("0123456789abcdef0123"), "openai:chat", "gpt-5", "token", 1000, 1, 2000, "https://broker.example.com")
+	if _, err := svc.CreatePayment(ctx, next); err == nil || !strings.Contains(err.Error(), "payee moved recipient rand") {
+		t.Fatalf("unexpected identity change must fail closed; got %v", err)
+	}
+}

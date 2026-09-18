@@ -62,6 +62,25 @@ Receiver mode also mounts the operator-only `PayeeAdmin` service on the
 same socket. `ResetSession` requires `Authorization: Bearer <token>`
 matching `--payee-admin-token` or `PAYEE_DAEMON_ADMIN_TOKEN`.
 
+### Ticket-session nonce rotation
+
+A receiver session accepts up to 600 distinct ticket nonces. The payer's
+allocation watermark can exceed 600 when some signed tickets were never delivered;
+the receiver's consumed count determines when it rotates. The sender log
+`payee re-quoted the same ticket session; its nonce budget is not spent` is
+expected in that situation.
+
+Before resizing payment parameters, the payer refreshes an exhausted cached
+session with the receiver. A changed identity is returned with
+`predecessor_work_id`; an unchanged identity has no predecessor. Exact expected
+value and settlement-domain checks still apply. Ordinary re-quotes on an
+unexhausted session continue to reject unexpected recipient-rand changes.
+
+Older payer builds can get stuck with `payee moved recipient rand while
+re-quoting face value` when variable-sized refills encounter nonce exhaustion.
+The fix tracked by `lnm-9bx` is in the sender daemon; deploying it requires
+updating the gateway's payer image. Preserve its database and nonce ledger.
+
 ---
 
 ## 2. Probabilistic-micropayment economics

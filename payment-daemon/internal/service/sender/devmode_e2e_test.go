@@ -791,6 +791,104 @@ func TestSessionRollsOverAtTheNonceBudget(t *testing.T) {
 	}
 }
 
+// Changing funding must not prevent rotation when the receiver finally spends its budget.
+func TestVariableRefillRotatesAfterDelayedReceiverExhaustion(t *testing.T) {
+	recipient := bytes20(0xf5)
+	payee, cleanupPayee := defaultConfigReceiverStand(t, recipient)
+	defer cleanupPayee()
+	payer, baseURL, cleanupPayer := devModeSenderStand(t, payee)
+	defer cleanupPayer()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Second)
+	defer cancel()
+
+	opened := map[string]bool{}
+	pay := func(i int) (workID, predecessor string) {
+		t.Helper()
+		req := devModeCreateRequest(recipient, fmt.Sprintf("roll-%d", i), baseURL)
+		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(int64(2000 + i)).Bytes()}
+		req.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(int64(2000 + i)).Bytes()}
+		created, err := payer.CreatePayment(ctx, req)
+		if err != nil {
+			t.Fatalf("payment %d: %v", i, err)
+		}
+		workID = created.GetWorkId()
+		predecessor = created.GetPredecessorWorkId()
+
+		// Two signed tickets never reach the receiver: its consumed count lags.
+		if i <= 2 {
+			return workID, predecessor
+		}
+
+		if !opened[workID] {
+			if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
+				WorkId:              workID,
+				Capability:          "openai:chat-completions",
+				Offering:            "model-a",
+				PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
+				WorkUnit:            "tokens",
+			}); err != nil {
+				t.Fatalf("OpenSession at payment %d: %v", i, err)
+			}
+			opened[workID] = true
+		}
+		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			PaymentBytes: created.GetPaymentBytes(),
+			WorkId:       workID,
+		})
+		if err != nil {
+			t.Fatalf("ProcessPayment %d: %v", i, err)
+		}
+		if resp.GetTicketsRejected() != 0 {
+			t.Fatalf("payment %d rejected %d of %d tickets (%s) — a payment the payer signed "+
+				"and the payee refused whole",
+				i, resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
+				resp.GetDominantRejection())
+		}
+		if credited := new(big.Int).SetBytes(resp.GetCreditedEv()); credited.Cmp(big.NewInt(int64(2000+i))) != 0 {
+			t.Fatalf("payment %d credited %s; want %d", i, credited, 2000+i)
+		}
+		return workID, predecessor
+	}
+
+	firstWorkID, _ := pay(1)
+	var rolloverAt int
+	var successor, reportedPredecessor string
+	for i := 2; i <= store.MaxSenderNonces+3; i++ {
+		w, pred := pay(i)
+		if pred != "" {
+			if rolloverAt != 0 {
+				t.Fatalf("rolled over twice: at %d and again at %d", rolloverAt, i)
+			}
+			rolloverAt, successor, reportedPredecessor = i, w, pred
+		}
+	}
+
+	if rolloverAt != store.MaxSenderNonces+3 {
+		t.Fatalf("no rollover across %d payments; the budget is %d",
+			store.MaxSenderNonces+3, store.MaxSenderNonces)
+	}
+	// The changed identity must be reported, not discovered.
+	if reportedPredecessor != firstWorkID {
+		t.Fatalf("predecessor_work_id = %q; want the exhausted %q",
+			reportedPredecessor, firstWorkID)
+	}
+	if successor == firstWorkID {
+		t.Fatal("rollover reported a predecessor but did not change work_id")
+	}
+
+	// The exhausted identity is retired: a late payment on it is refused
+	// rather than credited to a session nobody can draw on.
+	stale := devModeCreateRequest(recipient, "roll-stale", baseURL)
+	stale.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	stale.AccountFunding.TargetAvailableWei = &pb.BigUInt{Value: big.NewInt(2000).Bytes()}
+	if created, err := payer.CreatePayment(ctx, stale); err == nil {
+		if created.GetWorkId() == firstWorkID {
+			t.Fatal("still minting against the retired identity")
+		}
+	}
+}
+
 // Two mints racing the boundary must produce ONE successor.
 //
 // Both see the exhausted rand and both ask the payee to rotate. If each

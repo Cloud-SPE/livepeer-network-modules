@@ -1,7 +1,7 @@
 ---
 plan: 0027
 title: Layered route health and check placement
-status: completed
+status: superseded
 phase: shipped
 opened: 2026-05-14
 owner: harness
@@ -11,6 +11,13 @@ related:
   - "completed plan 0025 — per-request ticket-params broker routing"
   - "active plan 0026 — Daydream Scope capability"
 ---
+
+> **Superseded by plan 0043** ([0043-connected-runners-and-offer-manifest.md](../active/0043-connected-runners-and-offer-manifest.md)).
+> The capabilities[] grammar this plan places checks within was deleted. Operators author offers; runners declare themselves; certification replaces configured health checks.
+>
+> Kept as provenance: this is what was decided and shipped at the time,
+> and the reasoning is still worth reading. It is not a description of
+> the system today. Nothing below has been edited.
 
 # Plan 0027 — Layered route health and check placement
 

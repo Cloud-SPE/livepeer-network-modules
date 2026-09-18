@@ -43,13 +43,6 @@ type Policy struct {
 	// StabilityWindowSeconds is how long a pulled candidate's ETag
 	// must stay unchanged before the agent acts on it (§6 step 3).
 	StabilityWindowSeconds int `json:"stability_window_seconds"`
-	// RenewalThresholdFraction × manifest TTL is the remaining
-	// validity below which an unchanged candidate classifies as
-	// renewal instead of no_op (§6 step 5). Must match the
-	// coordinator's --renewal-threshold or renewals arrive before
-	// the agent considers them due; keeping both at the 1/3 default
-	// keeps them aligned.
-	RenewalThresholdFraction float64 `json:"renewal_threshold_fraction"`
 }
 
 // AutoSign holds the two dials. Phase 1 ships renewal=true,
@@ -150,9 +143,6 @@ func (p Policy) Validate() error {
 	}
 	if p.StabilityWindowSeconds < 0 {
 		return fmt.Errorf("stability_window_seconds must be >= 0, got %d", p.StabilityWindowSeconds)
-	}
-	if p.RenewalThresholdFraction <= 0 || p.RenewalThresholdFraction >= 1 {
-		return fmt.Errorf("renewal_threshold_fraction must be in (0,1), got %v", p.RenewalThresholdFraction)
 	}
 	return nil
 }

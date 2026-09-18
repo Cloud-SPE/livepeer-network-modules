@@ -101,7 +101,7 @@ func TestHTTPClient_FetchHealth_HappyPath(t *testing.T) {
 			t.Errorf("unexpected path %q", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"broker_status":"ready","generated_at":"2026-05-14T00:00:00Z","capabilities":[{"id":"cap","offering_id":"off","status":"ready","metadata":{"provider":"vllm","applicable":true,"last_result":"enriched","last_success_age_seconds":12,"consecutive_failures":0}}]}`))
+		w.Write([]byte(`{"broker_status":"ready","generated_at":"2026-05-14T00:00:00Z","capabilities":[{"id":"cap","offering_id":"off","status":"ready"}]}`))
 	}))
 	defer srv.Close()
 	c := New(2 * time.Second)
@@ -112,11 +112,8 @@ func TestHTTPClient_FetchHealth_HappyPath(t *testing.T) {
 	if out.BrokerStatus != "ready" || len(out.Capabilities) != 1 {
 		t.Fatalf("unexpected health %+v", out)
 	}
-	if out.Capabilities[0].Metadata == nil {
-		t.Fatal("expected metadata to decode")
-	}
-	if got := out.Capabilities[0].Metadata.LastResult; got != "enriched" {
-		t.Fatalf("metadata.last_result = %q; want enriched", got)
+	if got := out.Capabilities[0].ID; got != "cap" {
+		t.Fatalf("id = %q; want cap", got)
 	}
 }
 
@@ -143,5 +140,45 @@ func TestHTTPClient_FetchHealth_DecodesBackendDetails(t *testing.T) {
 	}
 	if !backend.SelectionEligible || backend.SelectionWeight != 150 || backend.SelectionReason != "eligible" {
 		t.Fatalf("unexpected backend selection fields: %+v", backend)
+	}
+}
+
+// Dispatch can be much older than the health observation: an idle attached
+// runner is still ready. Both levels of the broker response carry this field.
+func TestHTTPClient_FetchHealth_LastDispatchedAt(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		field string
+		want  time.Time
+	}{
+		{name: "omitted"},
+		{name: "never dispatched", field: `,"last_dispatched_at":"0001-01-01T00:00:00Z"`},
+		{name: "idle runner", field: `,"last_dispatched_at":"2026-09-16T12:00:00Z"`, want: time.Date(2026, 9, 16, 12, 0, 0, 0, time.UTC)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := `{"broker_status":"ready","generated_at":"2026-09-17T12:00:00Z","capabilities":[{"id":"openai:embeddings","offering_id":"embedding","status":"ready","probed_at":"2026-09-17T12:00:00Z","stale_after":"2026-09-17T12:00:30Z"` + tc.field + `,"backends":[{"backend_id":"runner","status":"ready","probed_at":"2026-09-17T12:00:00Z","stale_after":"2026-09-17T12:00:30Z","selection_eligible":true` + tc.field + `}]}]}`
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Write([]byte(body))
+			}))
+			defer srv.Close()
+			out, err := New(2*time.Second).FetchHealth(context.Background(), srv.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(out.Capabilities) != 1 || len(out.Capabilities[0].Backends) != 1 {
+				t.Fatalf("unexpected health response: %+v", out)
+			}
+			cap := out.Capabilities[0]
+			backend := cap.Backends[0]
+			if !cap.LastDispatchedAt.Equal(tc.want) || !backend.LastDispatchedAt.Equal(tc.want) {
+				t.Fatalf("dispatch timestamps: capability=%v backend=%v; want %v", cap.LastDispatchedAt, backend.LastDispatchedAt, tc.want)
+			}
+			if cap.Status != "ready" || backend.Status != "ready" || !backend.SelectionEligible ||
+				!cap.ProbedAt.Equal(out.GeneratedAt) || !backend.ProbedAt.Equal(out.GeneratedAt) ||
+				!cap.StaleAfter.Equal(out.GeneratedAt.Add(30*time.Second)) || !backend.StaleAfter.Equal(cap.StaleAfter) {
+				t.Fatalf("dispatch timestamp changed readiness/freshness: %+v", cap)
+			}
+		})
 	}
 }

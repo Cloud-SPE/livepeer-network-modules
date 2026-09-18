@@ -10,10 +10,13 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 )
 
-// Mode is the daemon's operating mode. One binary, three modes.
+// Mode is the daemon's operating mode. One binary, signing and read-only modes.
 type Mode string
 
 const (
+	// ModeReadOnly observes rounds without constructing signing services.
+	ModeReadOnly Mode = "read-only"
+
 	// ModeRoundInit runs only the round-init service. Mode-specific RPCs
 	// for reward (ForceRewardCall, GetRewardStatus) return Unimplemented.
 	ModeRoundInit Mode = "round-init"
@@ -26,13 +29,13 @@ const (
 	ModeBoth Mode = "both"
 )
 
-// Validate reports whether the mode is one of the three valid values.
+// Validate reports whether the mode is a supported value.
 func (m Mode) Validate() error {
 	switch m {
-	case ModeRoundInit, ModeReward, ModeBoth:
+	case ModeRoundInit, ModeReward, ModeBoth, ModeReadOnly:
 		return nil
 	default:
-		return fmt.Errorf("invalid mode %q (must be round-init|reward|both)", m)
+		return fmt.Errorf("invalid mode %q (must be round-init|reward|both|read-only)", m)
 	}
 }
 

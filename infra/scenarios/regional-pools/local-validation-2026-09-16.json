@@ -1,0 +1,42 @@
+{
+  "status": "passed",
+  "scope": "local offline configuration parsers and Compose; no deployment, chain calls or usable financial keys",
+  "images": {
+    "controller": "sha256:a2ae677fe16da13f08b0159f255539f16cbdd07bf47bc197731e1ee7f484a314",
+    "broker": "sha256:7949fb5387e9e1f2675681c9c4e9bb62a8fe6a6f38febc70aa8f713cc381dacb",
+    "receiver": "sha256:0470c2982b8330d8a07043e36de130ed61029ae4a88316c23d62b8f7df3a8504",
+    "observer": "sha256:815f2b53ecb87a941659e9a74b45896a41236dc2188ae564d02f4e79fedcb56c",
+    "reconciler": "sha256:ca6ee38fa5e5591418ddd56f3e79b968bfd9eb3b1012ad8dbca4a3f490f970c7",
+    "executor": "sha256:0ff58654b8d0d8414ab21b2b3d304223ccccf8829b235d0756a6f419f97ab558",
+    "portal": "sha256:3eb95dc2d86d57d088167d90ff22266aa67446bf6b955ba6f5d2f0cb2bf62c21",
+    "agent": "sha256:f06cce454d13bc143e3744e9fd6a6f7d51aaa8c49f9b4a5287e3ee879ed3bf45",
+    "proxy": "sha256:dc73b49f5124cf2ee538dfbdfbd121f0b4ccdcb20fea30f3a81bd477c02e2bb5",
+    "volume-init": "sha256:db287cb6be81219cd18c1d82b70908f5d33eb028568b456f78eedff2ff2930e4"
+  },
+  "provenance": {
+    "git_commit": "66e38d04be5bab770c8787fafad2d48265fde5fc",
+    "tree_sha256": "5aa9885201a618c1c1d17c480c8bcce4a60b65b3ee8f8de3d607c8a7c76c7070",
+    "validation_evidence": "/tmp/regional-deployment-validation.ftdgul74",
+    "local_only": true,
+    "tree_hash_scope": "validation working-tree snapshot, excluding .beads; source was uncommitted"
+  },
+  "build_evidence": [
+    "/tmp/regional-deployment-build.log",
+    "/tmp/regional-deployment-controller-rebuild.log",
+    "/tmp/regional-runtime-images-rebuild.log",
+    "/tmp/regional-controller-startup-rebuild.log",
+    "/tmp/regional-controller-release-replay-rebuild.log"
+  ],
+  "parser_evidence": "/tmp/regional-deployment-parser-final.log",
+  "scenario_tests": {
+    "result": "passed",
+    "tests": 7,
+    "evidence": "/tmp/regional-scenario-tests-final.log"
+  },
+  "acceptance_evidence": [
+    "/tmp/regional-e2e-final-race.log",
+    "/tmp/regional-transfer-release-replay.log",
+    "/tmp/regional-live-startup-probe.json"
+  ],
+  "limitations": "Local validation only; GPU target-hardware acceptance and authorized live two-region rollout remain open. No image publication, deployment, funds movement, commit or push."
+}

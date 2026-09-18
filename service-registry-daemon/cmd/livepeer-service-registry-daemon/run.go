@@ -17,6 +17,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/seeder"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/publisher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
 // run is the testable entrypoint — main() calls it with os.Args.
@@ -44,9 +45,10 @@ func run(ctx context.Context, args []string) error {
 	auditRepo := audit.WithMetrics(audit.New(bp.store), bp.recorder)
 
 	srvCfg := grpc.Config{
-		Cache:  cacheRepo,
-		Audit:  auditRepo,
-		Logger: bp.log,
+		Diagnostics: bp.diagnostics.Snapshot,
+		Cache:       cacheRepo,
+		Audit:       auditRepo,
+		Logger:      bp.log,
 	}
 	var resolverSvc *resolver.Service
 	switch cfg.Mode {
@@ -64,6 +66,7 @@ func run(ctx context.Context, args []string) error {
 			CacheManifestTTL: cfg.CacheManifestTTL,
 			MaxStale:         cfg.MaxStale,
 			RejectUnsigned:   cfg.RejectUnsigned,
+			OverlayOnly:      cfg.Discovery == config.DiscoveryOverlayOnly,
 			LiveHealth:       bp.liveHealth,
 		})
 		srvCfg.Resolver = resolverSvc
@@ -75,6 +78,11 @@ func run(ctx context.Context, args []string) error {
 			Logger:   bp.log,
 			Recorder: bp.recorder,
 		})
+	}
+	if resolverSvc != nil && len(bp.chainSeed) > 0 {
+		if err := seedChainCache(ctx, resolverSvc, bp.chainSeed); err != nil {
+			return fmt.Errorf("chain-seed readiness: %w", err)
+		}
 	}
 
 	srv, err := grpc.NewServer(srvCfg)
@@ -122,10 +130,9 @@ func run(ctx context.Context, args []string) error {
 
 	// Overlay-only resolver: walk the overlay once at startup so
 	// ListKnown / Select return the operator-curated pool without a
-	// per-consumer Refresh roundtrip. Each ResolveByAddress drops into
-	// either the chain path (production overlay-only with a real RPC) or
-	// the chainless static-overlay synth path (dev / static-overlay-only
-	// example). Per-address errors are logged and swallowed.
+	// per-consumer Refresh roundtrip. Each address uses its signed manifest_url
+	// or unsigned static pins. Per-address errors are logged and swallowed;
+	// subsequent Select/Refresh calls retry configured manifest pointers.
 	if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryOverlayOnly {
 		seedOverlayCache(ctx, resolverSvc, bp.overlayAccessor(), bp.log)
 	}
@@ -147,6 +154,19 @@ func run(ctx context.Context, args []string) error {
 	})
 }
 
+// seedChainCache resolves every explicitly configured dev chain seed before
+// the listener reports readiness. Unlike overlay warming, this is strict: an
+// explicit signed-path seed that cannot resolve is a broken startup contract,
+// not an optional route to skip.
+func seedChainCache(ctx context.Context, r *resolver.Service, addresses []types.EthAddress) error {
+	for _, addr := range addresses {
+		if _, err := r.ResolveByAddress(ctx, resolver.Request{Address: addr}); err != nil {
+			return fmt.Errorf("resolve %s: %w", addr, err)
+		}
+	}
+	return nil
+}
+
 // seedOverlayCache calls ResolveByAddress once for each enabled overlay
 // entry. Errors are non-fatal — a missing manifest for one address must
 // not prevent the others from seeding.
@@ -166,7 +186,7 @@ func seedOverlayCache(ctx context.Context, r *resolver.Service, o *config.Overla
 		}
 		if _, err := r.ResolveByAddress(ctx, req); err != nil {
 			log.Warn("overlay-only seed: ResolveByAddress failed",
-				"addr", e.EthAddress, "err", err)
+				"addr", e.EthAddress, "manifest_url", e.ManifestURL, "err", err)
 		}
 	}
 }

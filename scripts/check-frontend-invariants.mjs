@@ -7,6 +7,7 @@ const baselinePath = path.join(repoRoot, "scripts", "frontend-invariants-allowli
 
 const frontendRoots = [
   "customer-portal/frontend",
+  "member-portal/internal/portal/web",
 ];
 
 const skipDirs = new Set([

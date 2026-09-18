@@ -24,10 +24,10 @@ var uiPages = []string{
 	"overview",
 	"pool",
 	"offers",
-	"join-requests",
-	"members",
-	"assignments",
-	"broker-runtime",
+	"placement",
+	"ladder",
+	"exceptions",
+	"payouts",
 	"audit",
 }
 
@@ -93,17 +93,26 @@ func renderLogin(w http.ResponseWriter, tmpl *template.Template, data loginPageD
 	}
 }
 
+// renderPage buffers before it writes.
+//
+// Executing straight into the ResponseWriter commits a 200 and whatever
+// markup rendered before the failure, then appends the error text into
+// the page body — so a template bug reaches an operator as a
+// half-drawn console rather than as an error. Buffering means a failed
+// render is a 500 and nothing else.
 func renderPage(w http.ResponseWriter, tmpl *template.Template, data any) {
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	if tmpl == nil {
 		http.Error(w, "render: template not loaded", http.StatusInternalServerError)
 		return
 	}
-	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
 		http.Error(w, fmt.Sprintf("render: %s", err), http.StatusInternalServerError)
 		return
 	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store, max-age=0")
+	_, _ = w.Write(buf.Bytes())
 }
 
 var zeroTime time.Time

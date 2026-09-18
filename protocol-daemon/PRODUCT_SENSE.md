@@ -16,7 +16,7 @@ A typical deployment:
 
 ## What "good" looks like
 
-- Operator runs `--mode=both --eth-urls=URL1,URL2 --controller-address=0x... --keystore-path=...`. Everything else picks safe defaults.
+- Operator runs `--mode=both --chain-rpc-urls=URL1,URL2 --controller-address=0x... --keystore-path=...`. Everything else picks safe defaults.
 - Daemon refuses to start on misconfiguration with a structured log line that names the failing gate.
 - Round transitions trigger exactly one on-chain `initializeRound` call — even if the operator runs the daemon on multiple machines.
 - Reward calls land at the right transcoder-pool position the first time. Pool walks are cached, not re-walked every round.

@@ -19,6 +19,9 @@ WORKDIR /src
 
 COPY payment-daemon/go.mod payment-daemon/go.sum ./payment-daemon/
 COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
+# chain-commons is consumed via a relative replace (../chain-commons); the
+# sibling module must be visible to the builder (context = monorepo root).
+COPY chain-commons/ ./chain-commons/
 RUN cd payment-daemon && go mod download
 
 COPY payment-daemon/ ./payment-daemon/
@@ -38,6 +41,16 @@ RUN cd payment-daemon && CGO_ENABLED=0 GOOS=linux \
         -o /out/payout-sim \
         ./cmd/payout-sim
 
+# Manual real-chain verification tool. It is intentionally present in the
+# image but never selected by CMD or CI: operators must invoke the explicitly
+# gated scenario before it can mint a ticket.
+RUN cd payment-daemon && CGO_ENABLED=0 GOOS=linux \
+    go build \
+        -trimpath \
+        -ldflags="-s -w" \
+        -o /out/livepeer-chain-probe \
+        ./cmd/livepeer-chain-probe
+
 # Pre-create the runtime data + socket directories so Docker named volumes
 # mounted at these paths inherit the nonroot ownership rather than the
 # default root-owned-empty-dir behavior.
@@ -50,6 +63,9 @@ FROM golang:${GO_VERSION}-alpine AS test
 WORKDIR /src
 COPY payment-daemon/go.mod payment-daemon/go.sum ./payment-daemon/
 COPY livepeer-network-protocol/proto-go/ ./livepeer-network-protocol/proto-go/
+# chain-commons is consumed via a relative replace (../chain-commons); the
+# sibling module must be visible to the builder (context = monorepo root).
+COPY chain-commons/ ./chain-commons/
 RUN cd payment-daemon && go mod download
 COPY payment-daemon/ ./payment-daemon/
 RUN cd payment-daemon && go test ./...
@@ -59,6 +75,7 @@ FROM gcr.io/distroless/static-debian12:nonroot
 
 COPY --from=builder /out/livepeer-payment-daemon /usr/local/bin/livepeer-payment-daemon
 COPY --from=builder /out/payout-sim /usr/local/bin/payout-sim
+COPY --from=builder /out/livepeer-chain-probe /usr/local/bin/livepeer-chain-probe
 
 # nonroot UID is 65532 in distroless; --chown carries through. These dirs
 # are the canonical mount points for the BoltDB ledger and the unix socket.

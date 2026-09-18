@@ -1,0 +1,34 @@
+name: livepeer-pool-setup
+services:
+  setup:
+    image: ${SETUP_IMAGE:-tztcloud/livepeer-pool-setup:v2.0.0}
+    env_file: .env
+    environment:
+      SETUP_OUTPUT: /output
+      SETUP_INPUT: /input
+      SETUP_CONTROLLER: /controller
+    user: "0:0"
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:mode=1777
+    volumes:
+      - type: bind
+        source: ${OUTPUT_DIR:?set OUTPUT_DIR}
+        target: /output
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${EXISTING_MATERIAL_DIR:?set EXISTING_MATERIAL_DIR}
+        target: /input
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: volume
+        source: controller
+        target: /controller
+volumes:
+  controller:
+    name: ${CONTROLLER_VOLUME:?set CONTROLLER_VOLUME}
+    external: true

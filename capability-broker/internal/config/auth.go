@@ -12,6 +12,9 @@ import (
 //   - bare scalar: `auth: none` → AuthConfig{Method: "none"}
 //   - mapping:    `auth: { method: bearer, secret_ref: "vault://..." }`
 type AuthConfig struct {
+	PoolID    string `yaml:"pool_id,omitempty"`
+	TokenFile string `yaml:"token_file,omitempty"`
+	CAFile    string `yaml:"ca_file,omitempty"`
 	Method    string `yaml:"method,omitempty"`
 	SecretRef string `yaml:"secret_ref,omitempty"`
 }

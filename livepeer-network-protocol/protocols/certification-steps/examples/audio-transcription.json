@@ -1,0 +1,11 @@
+[
+  { "name": "ready", "type": "readiness", "config": { "attempts": 5, "interval_ms": 3000 } },
+  { "name": "smoke", "type": "request",
+    "config": { "transport": "multipart",
+                "parts": [
+                  { "name": "model", "value": "{{identity.openai.model}}" },
+                  { "name": "file", "fixture": { "ref": "multipart-audio-duration-v1/wav-16k-mono-3s" }, "filename": "probe.wav", "content_type": "audio/wav" } ],
+                "assert": [ "$.text" ] } },
+  { "name": "usage", "type": "usage", "config": { "min_units": 1 } },
+  { "name": "latency", "type": "latency", "required": false, "config": { "samples": 3, "p50_max_ms": 6000 } }
+]

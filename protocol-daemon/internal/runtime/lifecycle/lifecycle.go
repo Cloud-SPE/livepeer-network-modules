@@ -52,6 +52,12 @@ func Run(ctx context.Context, cfg Config) error {
 		return errors.New("lifecycle: Reward service is required for reward mode")
 	}
 
+	if cfg.Mode == types.ModeReadOnly && (cfg.RoundInit != nil || cfg.Reward != nil || cfg.LockedActions != nil) {
+		return errors.New("lifecycle: read-only mode rejects write automation")
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	var wg sync.WaitGroup
 	errs := make(chan error, 4)
 
@@ -108,6 +114,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		// Drain the rest by waiting; ctx cancel will propagate on caller's
 		// side.
+		cancel()
 		wg.Wait()
 		return err
 	}

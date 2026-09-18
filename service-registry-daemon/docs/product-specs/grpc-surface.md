@@ -1,167 +1,137 @@
----
-title: gRPC surface — product spec
-stability: v1-stable
-last-reviewed: 2026-05-19
----
+# gRPC consumer contract
 
-# gRPC surface (consumer contract)
+The authoritative wire definitions are in the sibling
+[proto-contracts registry package](../../../proto-contracts/livepeer/registry/v1/resolver.proto).
+They use package `livepeer.registry.v1`; the current mounted service depends
+on `--mode`. All methods are unary. Earlier build/sign/probe publisher RPCs
+were removed in the coordinated manifest migration; the package name alone
+is not a promise of compatibility with those earlier binaries.
 
-This is what a consumer can rely on across versions of the daemon. It's deliberately narrower than the design-doc version: design can change, contract cannot.
+## Resolver
 
-## Stability rules
+| Method | Inputs | Behavior |
+|---|---|---|
+| `ResolveByAddress` | `eth_address`, `allow_legacy_fallback`, `allow_unsigned`, `force_refresh` | Source-aware resolution, signature validation, overlay merge and inventory health pruning |
+| `Select` | required `capability`, `offering`; optional `tier`, `min_weight` | First ranked route |
+| `SelectMany` | Same filter | Ordered matching routes; no matches returns `not_found` |
+| `ListKnown` | Empty request | Cached candidate addresses, mode and cached timestamp |
+| `Refresh` | `eth_address` or `*`, `force` | Re-resolve; `force=true` bypasses TTL |
+| `GetAuditLog` | address, optional since/limit | Stored audit records |
+| `Health` | Empty | Process diagnostic values; see limits below |
 
-- **v1 services** (`livepeer.registry.v1.Resolver`, `livepeer.registry.v1.Publisher`) are stable. Method signatures, field numbers, and error codes will not change.
-- New optional fields may be added to existing messages without bumping the version.
-- New methods may be added to existing services without bumping the version.
-- Removing methods or required fields requires a `v2` package.
-- Error codes (the `code` string in status detail) are stable and never reused for a different meaning.
+Resolve returns the address, resolved URI, mode, nodes, freshness, timestamps
+and schema version. Success can contain zero nodes, for example after policy
+filtering. Capability and offering IDs are opaque. Do not normalize slash and
+colon forms into an alias. Selection uses case-insensitive string matching
+without semantic rewriting; use the keys returned by discovery.
 
-## Resolver service
+`SelectMany` skips individual addresses that fail resolution. It then applies
+conjunctive enabled/tier/min-weight and capability/offering filtering, then sorts by descending weight. Equal
+weights preserve input order. `Select` uses that same process and returns the
+first result. Separate calls need not produce identical results if health,
+publications or configuration change between them.
 
-```proto
-service Resolver {
-  rpc ResolveByAddress(ResolveByAddressRequest) returns (ResolveResult);
-  rpc Select(SelectRequest) returns (SelectResult);
-  rpc SelectMany(SelectRequest) returns (SelectManyResult);
-  rpc ListKnown(ListKnownRequest) returns (ListKnownResult);
-  rpc Refresh(RefreshRequest) returns (google.protobuf.Empty);
-  rpc GetAuditLog(GetAuditLogRequest) returns (AuditLogResult);
-  rpc Health(google.protobuf.Empty) returns (HealthResult);
-}
-```
+With the production live-health provider enabled, targeted selection requires
+a fresh `ready` capability/offering entry from the broker's `/registry/health`.
+Unknown additive health-response fields are tolerated. Inventory resolution
+is more permissive when health fetching is unavailable or empty; a visible
+inventory tuple is not necessarily selectable. Static-only resolution bypasses
+live-health filtering on its initial synthesis; consumer admission checks still
+apply. See [backend health](../../../docs/design-docs/backend-health.md).
 
-### ResolveByAddress
+## Selected route fields
 
-Input: `eth_address` (string), `allow_legacy_fallback` (bool), `allow_unsigned` (bool).
-Output: `mode`, `nodes[]`, `freshness_status`, `cached_at`.
+Routes carry `worker_url`, `eth_address`, capability, offering, `protocol`,
+`work_unit`, decimal price string, `units_per_price`, optional estimator,
+`extra_json`, `constraints_json`, quote metadata, `settlement_keys` and
+`settlement_domain_id`. The route's `eth_address` is the orchestrator
+identity, not a runner identity.
 
-Guarantees:
-- If the on-chain `serviceURI` exists and is dial-able as a URL, AND `allow_legacy_fallback=true`, this RPC NEVER returns `not_found` — at minimum a single legacy-synthesized node is returned.
-- `nodes[]` is non-empty on success.
-- `freshness_status` is one of `fresh`, `stale_recoverable`, `stale_failing`. Consumers can choose to short-circuit on the latter.
-- `nodes[].capabilities[].name` and `nodes[].capabilities[].offerings[].id`
-  are discovery metadata, not normalized gateway aliases. Consumers must
-  treat capability IDs as opaque strings when feeding a discovered tuple
-  back into `Select` / `SelectMany`.
+- `units_per_price` comes from signed `per_units` (zero/absent normalizes to 1).
+  Do not assume prices have been divided to a per-single-unit value.
+- `quote_version` is the publication sequence for manifest-derived routes,
+  otherwise zero. The resolver rejects rollback and conflicting same-sequence signed payloads.
+- `quote_id` is `resolver:v1:` plus SHA-256 of lower-case eth address, worker
+  URL, settlement-domain ID, capability, offering and work unit, joined by `|`.
+- `constraint_fingerprint` hashes the canonical JSON constraints object;
+  absent/empty constraints become `{}`.
+- `route_fingerprint` hashes NUL-separated lower-case eth address, worker URL,
+  settlement-domain ID, capability, **protocol**, offering, decimal price, work unit, units-per-price,
+  canonical extra JSON and canonical constraints JSON. It does not include
+  publication sequence, settlement keys or the typed estimator.
+- `settlement_keys` includes all keys projected from the signed publication,
+  sorted newest-first by not-before. Windows are passed through, not filtered
+  against current time. Consumers verify the settlement record's issued-at
+  against the key window. `introduced_in_publication_seq` currently carries
+  the containing publication's sequence, not independently tracked key history.
+- The optional `work_unit_estimator` is typed; consumers must implement the
+  advertised estimator when their protocol requires it.
 
-### Select
+The inventory `Node` wire projection is narrower than `SelectedRoute`: its
+capabilities do not have a typed protocol field, offerings lack the denominator,
+and nodes lack settlement keys. Use Select/SelectMany for the complete route
+contract. Declared protocol/axes are also mirrored into capability extra JSON.
 
-Input: `capability`, `offering`, optional `tier`, optional `min_weight`.
-Output: one selected route (`worker_url`, `eth_address`, `capability`,
-`offering`, `price_per_work_unit_wei`, `work_unit`, `units_per_price`,
-`quote_id`, `quote_version`, `constraint_fingerprint`,
-`route_fingerprint`, optional `extra_json`, optional `constraints_json`).
+Static pin prices and protocol/work-unit completeness are not fully validated
+by selection. Signed tuples receive structural checks at decode; consumers
+must still validate their payment and protocol prerequisites.
 
-Guarantees:
-- `capability` and `offering` are required.
-- `capability` and `offering` are matched case-insensitively but are
-  otherwise exact keys. The resolver does not normalize slash-form and
-  colon-form OpenAI capability IDs into a shared canonical form. If
-  discovery returned `openai:/v1/chat/completions`, callers must use
-  that exact capability string in `Select` / `SelectMany`; likewise for
-  `openai:chat-completions`.
-- Filtering remains conjunctive across `capability`, `offering`, `tier`,
-  and `min_weight`.
-- A single node may publish multiple entries with the same capability
-  name and different offerings. Selection matches across all
-  capability/offering tuples on the node; consumers must not assume
-  capability names are unique within `nodes[].capabilities[]`.
-- If more than one candidate matches, the daemon applies the existing
-  stable weight sort and returns the top-ranked route only.
-- The gateway-facing response never includes `worker_eth_address`.
-- `units_per_price` is always `1` on the current manifest-backed route
-  surface because the signed manifest already publishes normalized
-  per-work-unit pricing.
-- `quote_version` is the signed manifest `publication_seq` when the
-  selected route came from the orch-coordinator envelope; otherwise `0`.
-- `constraint_fingerprint` is the SHA-256 of canonicalized
-  `constraints_json`. Absent or empty constraints canonicalize to `{}`
-  before hashing, so `constraint_fingerprint` is always non-empty for a
-  selectable route. A populated constraint block always re-marshals
-  through JSON canonicalization and therefore cannot collide with the
-  empty-object digest.
-- `route_fingerprint` is the SHA-256 of the selected route record
-  (`eth_address`, `worker_url`, `capability`, `offering`,
-  `price_per_work_unit_wei`, `work_unit`, `units_per_price`, canonical
-  `extra_json`, canonical `constraints_json`).
-- `quote_id` is a deterministic resolver-generated identity for the
-  selected route based on `eth_address`, `worker_url`, `capability`,
-  `offering`, and `work_unit`.
+## Signature policy
 
-### SelectMany
+Verified manifests are always allowed. An unsigned or invalid coordinator
+envelope is rejected regardless of unsigned flags. CSV and static pins are
+unsigned nodes, permitted by per-address `unsigned_allowed`, an explicit
+Resolve request allowance, or daemon `--reject-unsigned=false`. Select and
+SelectMany apply daemon/overlay policy; they do not implicitly allow unsigned
+nodes. Legacy nodes have a distinct legacy status and no signed capability
+inventory.
 
-Input: identical to `Select`.
-Output: ordered `routes[]`, where each element has the same shape as
-`Select.route`.
+## Diagnostics and refresh limits
 
-Guarantees:
-- `routes[]` is sorted in the same resolver order `Select` uses.
-- `Select.route` is always `SelectMany.routes[0]` for the same request.
-- Every returned route is payment-ready and carries the full quote-bound
-  metadata needed for `CreatePayment`.
-- Request-scoped route readiness is derived from the worker's
-  `/registry/health` response when available. That health payload is an
-  additive surface: brokers may add new fields over time, and resolver
-  implementations must continue decoding the fields needed for route
-  selection (`id`, `offering_id`, `status`, `stale_after`) rather than
-  rejecting the response because of unrelated extra fields.
-- `ResolveByAddress` inventory tuples are only selectable when callers
-  pass the same capability/offering keys back into `SelectMany`. Route
-  visibility in discovery does not override live-health, tier, or
-  `min_weight` pruning.
+ListKnown does not resolve or probe entries. Overlay-only restricts it to
+configured candidates that already have cache records. Missing startup
+publications are retried by Select/SelectMany and Refresh, but do not appear in
+ListKnown until cached. KnownEntry's wire `freshness_status` is currently left
+UNSPECIFIED. Domain static-overlay mode also maps to wire UNSPECIFIED; use
+node source STATIC_OVERLAY to recognize pins.
 
-### ListKnown / Refresh / GetAuditLog / Health
+Wildcard Refresh uses all candidate addresses and swallows individual resolve
+errors; use an address-specific call and audit/logs for error details. It
+refreshes known/configured addresses, not the entire chain pool.
 
-Diagnostic. See design-doc for shapes.
+Health reports the most recently completed serviceURI read and manifest HTTP
+fetch. Before the first attempt a required provider is false. Unused providers
+are true (not required), so overlay-only has chain_ok=true and no chain-success
+timestamp; publisher needs neither provider. NotFound from a chain read is a
+successful RPC. Failures preserve the last actual successful chain timestamp.
+These observations do not actively probe or imply a valid signature or a
+selectable route. Standard gRPC health and metrics /healthz are liveness signals.
 
-`ListKnown` returns whatever the cache currently holds. The cache is seeded automatically: in `--discovery=chain` mode, every round event re-walks the BondingManager pool; in `--discovery=overlay-only` mode, the daemon walks the operator overlay once at startup. Consumers do not need to call `Refresh` before `ListKnown` to see the seeded pool.
+## Publisher
 
-## Publisher service
+Only `GetIdentity(Empty)` and `Health(Empty)` remain.
+GetIdentity returns the loaded keystore address. Publisher does not build,
+sign, publish or host manifests and does not write chain pointers.
 
-```proto
-service Publisher {
-  rpc GetIdentity(google.protobuf.Empty) returns (IdentityResult);
-  rpc BuildManifest(BuildManifestRequest) returns (BuildResult);
-  rpc SignManifest(SignManifestRequest) returns (SignedManifest);
-  rpc BuildAndSign(BuildAndSignRequest) returns (SignedManifest);
-  rpc ProbeWorker(ProbeWorkerRequest) returns (ProbeResult);
-  rpc Health(google.protobuf.Empty) returns (HealthResult);
-}
-```
+## Errors
 
-### GetIdentity / BuildManifest / SignManifest / BuildAndSign
+Errors carry `registry_error_code` in a `google.protobuf.Struct` status detail.
 
-`GetIdentity` returns the loaded cold-key eth address. It exists so secure-orch UIs can preflight proposal identity before the operator clicks sign.
+| Stable detail | gRPC status | Meaning |
+|---|---|---|
+| `not_found` | NotFound | Missing/disabled discovery entry, missing chain pointer, or no selectable routes |
+| `manifest_unavailable` | Unavailable | HTTP/transport retrieval failed without usable fallback |
+| `signature_mismatch` | Unauthenticated | Claimed/recovered signer differs from expected address |
+| `parse_error` | InvalidArgument | Malformed manifest, address or request, including malformed signatures, invalid publication windows, and replay/conflicting sequences |
+| `unknown_field` | InvalidArgument | Unknown envelope field where classified separately |
+| `manifest_too_large` | ResourceExhausted | Body exceeds fetch size cap |
+| `chain_unavailable` | Unavailable | Chain lookup failed without usable last-good |
+| `unknown_mode` | InvalidArgument | Chain pointer cannot be classified |
+| `cache_stale_failing` | DeadlineExceeded | Reserved mapping; current max-stale failure returns its underlying error |
+| `keystore_locked` | FailedPrecondition | Keystore unavailable |
+| `chain_write_failed` | FailedPrecondition | Retained mapping for removed write paths; no current publisher write RPC |
+| `internal` | Internal | Unclassified internal failure |
 
-`BuildManifest` is pure with respect to output bytes, but it validates the proposal first. The request must carry `proposed_eth_address`; if that address does not match the loaded signer identity, the RPC fails.
-
-`SignManifest` reads the loaded keystore key and produces a signed manifest. It also enforces that the manifest's top-level `eth_address` matches the loaded signer identity.
-
-`BuildAndSign` is the one-shot path used by secure-orch tooling. It applies the same identity validation as `BuildManifest`, then signs.
-
-### ProbeWorker
-
-Reserved for future worker HTTP probing. In the current v1
-implementation, the method returns `chain_write_failed` /
-failed-precondition and does not fetch worker URLs yet.
-
-## Error codes (frozen)
-
-| Code | Meaning |
-|---|---|
-| `not_found` | Eth address has no on-chain `serviceURI` |
-| `manifest_unavailable` | Manifest fetch / parse / sig failed and no fallback applied |
-| `signature_mismatch` | Manifest signature didn't recover to claimed address |
-| `parse_error` | Manifest body malformed |
-| `manifest_too_large` | Body exceeded `--manifest-max-bytes` |
-| `chain_unavailable` | Chain RPC down beyond TTL |
-| `unknown_mode` | `serviceURI` doesn't match any known mode |
-| `cache_stale_failing` | Last-good is too stale and refresh keeps failing |
-| `keystore_locked` | Publisher needs a keystore but none was loaded |
-| `chain_write_failed` | reserved publisher-side probe path failed |
-
-These strings will not be reused for different meanings. New codes may be added.
-
-## Versioning posture
-
-The proto package is `livepeer.registry.v1`. A future `v2` package will live alongside, and the daemon will mount both for the migration window. We commit to a minimum 12-month overlap before removing v1.
+There is no daemon-level application authentication on the unix socket.
+Control local access through host/container socket permissions. Calling a
+service not mounted in the selected mode returns gRPC Unimplemented.

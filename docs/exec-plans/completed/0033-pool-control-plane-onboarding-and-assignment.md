@@ -1,7 +1,7 @@
 ---
 plan: 0033
 title: Pool control plane onboarding and offer-assignment reset
-status: completed
+status: superseded
 phase: shipped
 opened: 2026-05-18
 owner: harness
@@ -10,6 +10,13 @@ related:
   - "active plan 0031 — pool follow-up backlog"
   - "completed plan 0018 — orch coordinator design"
 ---
+
+> **Superseded by plan 0044** ([0044-zero-touch-pool-onboarding.md](../active/0044-zero-touch-pool-onboarding.md)).
+> The member model this plan specifies — pool members holding their own backend URLs and offer assignments — was deleted. Placement is now by policy over templates and attached runners. Every type, route and screen below names code that no longer exists.
+>
+> Kept as provenance: this is what was decided and shipped at the time,
+> and the reasoning is still worth reading. It is not a description of
+> the system today. Nothing below has been edited.
 
 # Plan 0033 — Pool control plane onboarding and offer-assignment reset
 

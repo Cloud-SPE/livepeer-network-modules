@@ -2,7 +2,9 @@ package config
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
+	"net/url"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	"gopkg.in/yaml.v3"
@@ -20,6 +22,7 @@ type Overlay struct {
 // OverlayEntry is one operator-curated record per orchestrator.
 type OverlayEntry struct {
 	EthAddress      types.EthAddress
+	ManifestURL     string // optional signed coordinator manifest pointer; bypasses serviceURI
 	Enabled         bool
 	TierAllowed     []string // nil = no tier filter
 	Weight          int      // 1..1000; 0 means "default" → 100
@@ -60,6 +63,7 @@ type rawOverlay struct {
 
 type rawEntry struct {
 	EthAddress      string       `yaml:"eth_address"`
+	ManifestURL     string       `yaml:"manifest_url"`
 	Enabled         *bool        `yaml:"enabled"`
 	TierAllowed     []string     `yaml:"tier_allowed"`
 	Weight          *int         `yaml:"weight"`
@@ -76,7 +80,12 @@ type rawPinNode struct {
 }
 
 type rawPinCapability struct {
-	Name      string           `yaml:"name"`
+	SettlementDomainID string `yaml:"settlement_domain_id"`
+	Name               string `yaml:"name"`
+	// Protocol is the protocol tag a pinned capability speaks
+	// ("paid-job/v1", "paid-session/v1"). Consumers gate their open path
+	// on it, so a pin without one projects a route they cannot use.
+	Protocol  string           `yaml:"protocol"`
 	WorkUnit  string           `yaml:"work_unit"`
 	Offerings []rawPinOffering `yaml:"offerings"`
 	Extra     map[string]any   `yaml:"extra"`
@@ -85,7 +94,13 @@ type rawPinCapability struct {
 type rawPinOffering struct {
 	ID                  string `yaml:"id"`
 	PricePerWorkUnitWei string `yaml:"price_per_work_unit_wei"`
-	Warm                *bool  `yaml:"warm"`
+	// PerUnits is the price denominator (offering-axes.md §6); absent
+	// means 1.
+	PerUnits uint64 `yaml:"per_units"`
+	// No `warm` here on purpose. It was accepted and then discarded —
+	// nothing in the manifest, the axes, or any consumer has ever read
+	// it — so an operator who declared it got silence. Strict parsing
+	// now rejects it, which at least says so.
 }
 
 // ParseOverlayYAML decodes overlay YAML bytes into a validated *Overlay.
@@ -114,8 +129,15 @@ func ParseOverlayYAML(raw []byte) (*Overlay, error) {
 		if _, dup := o.byAddr[addr]; dup {
 			return nil, fmt.Errorf("overlay[%d]: duplicate eth_address %s", i, addr)
 		}
+		if re.ManifestURL != "" {
+			u, err := url.Parse(re.ManifestURL)
+			if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.Fragment != "" {
+				return nil, fmt.Errorf("overlay[%d].manifest_url: must be an absolute HTTPS URL without credentials or fragment", i)
+			}
+		}
 		entry := OverlayEntry{
 			EthAddress:      addr,
+			ManifestURL:     re.ManifestURL,
 			Enabled:         true, // default
 			TierAllowed:     append([]string(nil), re.TierAllowed...),
 			Weight:          100,
@@ -165,7 +187,22 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 		if rc.Name == "" {
 			return OverlayPinNode{}, fmt.Errorf("capability name missing")
 		}
-		c := types.Capability{Name: rc.Name, WorkUnit: rc.WorkUnit}
+		c := types.Capability{SettlementDomainID: rc.SettlementDomainID, Name: rc.Name, Protocol: rc.Protocol, WorkUnit: rc.WorkUnit}
+		// Carry `extra` through. This is where the declared
+		// compatibility axes live (offering-axes.md), so a pin that
+		// drops it projects a route a consumer cannot evaluate: it can
+		// see the capability and the price and still not know whether it
+		// can speak to it. The field was parsed and then silently
+		// discarded, which is the worst of the three options — the
+		// operator writes axes, the config validates, and the route goes
+		// out without them.
+		if len(rc.Extra) > 0 {
+			raw, err := json.Marshal(rc.Extra)
+			if err != nil {
+				return OverlayPinNode{}, fmt.Errorf("capability %q extra: %w", rc.Name, err)
+			}
+			c.Extra = raw
+		}
 		for _, ro := range rc.Offerings {
 			if ro.ID == "" {
 				return OverlayPinNode{}, fmt.Errorf("capability %q offering id missing", rc.Name)
@@ -173,6 +210,7 @@ func convertPin(rp rawPinNode) (OverlayPinNode, error) {
 			c.Offerings = append(c.Offerings, types.Offering{
 				ID:                  ro.ID,
 				PricePerWorkUnitWei: ro.PricePerWorkUnitWei,
+				PerUnits:            ro.PerUnits,
 			})
 		}
 		caps = append(caps, c)

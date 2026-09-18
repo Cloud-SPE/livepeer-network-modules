@@ -25,7 +25,7 @@
     padding: 0.45rem 0.7rem;
   }
 
-  /* Dynamically-built list cards (offers, members, backends, assignments). */
+  /* Dynamically-built list cards (offers, pool members, hardware, templates). */
   .card-list {
     display: grid;
     gap: 0.75rem;
@@ -70,7 +70,34 @@
     font-weight: 500;
   }
 
-  /* Preview checklists (join review, assignment draft preview). */
+  /* Pill state variants. Placement rejections, drains, shadow mode, and
+     a paused payout policy all have to read as different weights at a
+     glance; the colors are the shared tokens, no new values. */
+  .pill.pill-ok {
+    background: var(--ok-tint);
+    color: var(--ok);
+    border-color: transparent;
+  }
+
+  .pill.pill-warn {
+    background: var(--warn-tint);
+    color: var(--warn);
+    border-color: transparent;
+  }
+
+  .pill.pill-danger {
+    background: var(--danger-tint);
+    color: var(--danger);
+    border-color: transparent;
+  }
+
+  .pill.pill-accent {
+    background: var(--accent-tint);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  /* Preview checklists. */
   .check-list {
     display: grid;
     gap: 0.5rem;
@@ -90,7 +117,7 @@
     font-size: 0.8rem;
   }
 
-  /* Static control-plane forms (offer editor, join request, assignment draft). */
+  /* Static control-plane forms (offer editor, audit filters). */
   .form-grid {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));

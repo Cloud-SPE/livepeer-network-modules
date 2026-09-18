@@ -30,6 +30,7 @@ type Prometheus struct {
 	creditedEVGwei   prometheus.Counter
 	debits           *prometheus.CounterVec
 	workUnitsDebited prometheus.Counter
+	wholesaleAccount *prometheus.GaugeVec
 
 	// Settlement
 	redemptions     *prometheus.CounterVec
@@ -62,6 +63,9 @@ type Prometheus struct {
 	// Daemon-level
 	uptimeSeconds prometheus.Gauge
 	buildInfo     *prometheus.GaugeVec
+
+	// chain-commons series, registered by name on first emission.
+	dyn dynamicVecs
 }
 
 // NewPrometheus builds the production Recorder. It installs the standard
@@ -73,7 +77,11 @@ func NewPrometheus() *Prometheus {
 		collectors.NewGoCollector(),
 		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
 	)
-	p := &Prometheus{reg: reg}
+	p := &Prometheus{reg: reg, dyn: dynamicVecs{
+		counters:   map[string]*dynamicCounter{},
+		gauges:     map[string]*dynamicGauge{},
+		histograms: map[string]*dynamicHistogram{},
+	}}
 
 	counterVec := func(name, help string, labels ...string) *prometheus.CounterVec {
 		v := prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: namespace, Name: name, Help: help}, labels)
@@ -119,6 +127,7 @@ func NewPrometheus() *Prometheus {
 	p.creditedEVGwei = counter("credited_ev_gwei_total", "Cumulative credited expected value in gwei.")
 	p.debits = counterVec("debits_total", "DebitBalance calls, labeled by result.", "result")
 	p.workUnitsDebited = counter("work_units_debited_total", "Cumulative work units debited.")
+	p.wholesaleAccount = gaugeVec("wholesale_account_value_wei", "Aggregate stable wholesale-account value by ledger position (wei).", "position")
 
 	// Settlement
 	p.redemptions = counterVec("redemptions_total", "Redemption attempt outcomes, labeled by result.", "result")
@@ -175,12 +184,14 @@ func (p *Prometheus) SetGRPCInFlight(role, method string, n int) {
 	p.grpcInFlight.WithLabelValues(unset(role), unset(method)).Set(float64(n))
 }
 
-func (p *Prometheus) IncSessionEvent(event string) { p.sessionEvents.WithLabelValues(unset(event)).Inc() }
-func (p *Prometheus) IncTicket(result string)      { p.tickets.WithLabelValues(unset(result)).Inc() }
+func (p *Prometheus) IncSessionEvent(event string) {
+	p.sessionEvents.WithLabelValues(unset(event)).Inc()
+}
+func (p *Prometheus) IncTicket(result string) { p.tickets.WithLabelValues(unset(result)).Inc() }
 func (p *Prometheus) IncTicketRejected(reason string) {
 	p.ticketsRejected.WithLabelValues(unset(reason)).Inc()
 }
-func (p *Prometheus) IncWinningTicket()             { p.winningTickets.Inc() }
+func (p *Prometheus) IncWinningTicket() { p.winningTickets.Inc() }
 func (p *Prometheus) AddCreditedEVGwei(gwei float64) {
 	if gwei > 0 {
 		p.creditedEVGwei.Add(gwei)
@@ -192,6 +203,11 @@ func (p *Prometheus) AddWorkUnitsDebited(units float64) {
 		p.workUnitsDebited.Add(units)
 	}
 }
+func (p *Prometheus) SetWholesaleAccountTotals(credited, reserved, debited, available float64) {
+	for position, value := range map[string]float64{"credited": credited, "reserved": reserved, "debited": debited, "available": available} {
+		p.wholesaleAccount.WithLabelValues(position).Set(value)
+	}
+}
 
 func (p *Prometheus) IncRedemption(result string) { p.redemptions.WithLabelValues(unset(result)).Inc() }
 func (p *Prometheus) ObserveRedemption(d time.Duration) {
@@ -201,7 +217,7 @@ func (p *Prometheus) SetRedemptionQueueDepth(n int) { p.redemptionQueue.Set(floa
 func (p *Prometheus) IncRedemptionTx(result string) {
 	p.redemptionTx.WithLabelValues(unset(result)).Inc()
 }
-func (p *Prometheus) SetGasPriceWei(wei float64) { p.gasPriceWei.Set(wei) }
+func (p *Prometheus) SetGasPriceWei(wei float64)  { p.gasPriceWei.Set(wei) }
 func (p *Prometheus) SetCurrentRound(round int64) { p.currentRound.Set(float64(round)) }
 
 func (p *Prometheus) SetEscrowPendingFloatWei(wei float64) { p.escrowPendingFloat.Set(wei) }
@@ -231,7 +247,7 @@ func (p *Prometheus) IncTicketParamsFetch(result string) {
 func (p *Prometheus) ObserveTicketParamsFetch(d time.Duration) {
 	p.ticketParamsDur.Observe(d.Seconds())
 }
-func (p *Prometheus) SetSenderSessions(n int)        { p.senderSessions.Set(float64(n)) }
+func (p *Prometheus) SetSenderSessions(n int)         { p.senderSessions.Set(float64(n)) }
 func (p *Prometheus) SetSenderDepositWei(wei float64) { p.senderDeposit.Set(wei) }
 func (p *Prometheus) SetSenderReserveWei(wei float64) { p.senderReserve.Set(wei) }
 

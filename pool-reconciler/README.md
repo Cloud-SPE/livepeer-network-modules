@@ -11,6 +11,9 @@ Current scope:
 - query round timing from `protocol-daemon` over its unix-socket gRPC surface,
 - query confirmed round revenue from `payment-daemon`,
 - query final work receipts from `pool-controller`,
+- in regional mode (`pool_controller.pool_id` set), collect per-source revenue
+  and work proofs from the configured `revenue_sources` over scoped HTTPS
+  instead of reading `payment-daemon`,
 - load a round-close request from JSON,
 - submit it to `pool-controller /admin/v1/round-close`,
 - persist durable round-close attempt state in BoltDB,
@@ -37,32 +40,37 @@ docker compose -f compose/docker-compose.yml up -d
 Round-source inspection:
 
 ```bash
-./bin/livepeer-pool-reconciler close-round \
+go run ./cmd/livepeer-pool-reconciler close-round \
   --config examples/pool-reconciler-config.example.yaml
 
-./bin/livepeer-pool-reconciler watch-rounds \
+go run ./cmd/livepeer-pool-reconciler watch-rounds \
   --config examples/pool-reconciler-config.example.yaml
 
-./bin/livepeer-pool-reconciler prepare-round-close \
+go run ./cmd/livepeer-pool-reconciler prepare-round-close \
   --config examples/pool-reconciler-config.example.yaml
 
-./bin/livepeer-pool-reconciler prepare-round-close \
+go run ./cmd/livepeer-pool-reconciler prepare-round-close \
   --config examples/pool-reconciler-config.example.yaml \
   --output /tmp/round-close.json
 
-./bin/livepeer-pool-reconciler prepare-round-close \
+go run ./cmd/livepeer-pool-reconciler prepare-round-close \
   --config examples/pool-reconciler-config.example.yaml \
   --round-id 124
 
-./bin/livepeer-pool-reconciler get-round-revenue \
+go run ./cmd/livepeer-pool-reconciler get-round-revenue \
   --config examples/pool-reconciler-config.example.yaml \
   --round-id 124
 
-./bin/livepeer-pool-reconciler get-round-status \
+go run ./cmd/livepeer-pool-reconciler get-round-status \
   --config examples/pool-reconciler-config.example.yaml
 
-./bin/livepeer-pool-reconciler stream-round-events \
+go run ./cmd/livepeer-pool-reconciler stream-round-events \
   --config examples/pool-reconciler-config.example.yaml
+
+go run ./cmd/livepeer-pool-reconciler validate-config \
+  --config examples/pool-reconciler-config.example.yaml
+
+go run ./cmd/livepeer-pool-reconciler version
 ```
 
 Manual submit:
@@ -103,3 +111,17 @@ round transition.
 While the watcher is running, a retry ticker driven by
 `reconcile.retry_interval_ms` re-attempts pending failed rounds from the local
 state store without waiting for the next round transition.
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.
+
+Regional accounting uses [complete source collection](docs/regional-collection.md),
+including the durable source registry, scoped HTTPS proofs and snapshot-bound
+receipt pagination. Regional mode is selected by `pool_controller.pool_id`
+(with `token_file`, optional `ca_file` and an HTTPS `url`; it cannot be combined
+with `bearer_token_ref`). A regional close sums revenue across `revenue_sources`,
+always submits `pool_cut_wei: "0"` — commission is applied at regional window
+close, not from `pool.commission_bps` — and persists the prepared request in
+the state store before submission.

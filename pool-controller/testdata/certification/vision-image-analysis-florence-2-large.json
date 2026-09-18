@@ -1,0 +1,45 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 5,
+      "interval_ms": 3000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "config": {
+      "assert": [
+        "$.results[0].response",
+        "$.usage.images"
+      ],
+      "body": {
+        "image": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAASElEQVR42mNg4BCQUNAwsHDwCIhIyCioaOiYMGPBig07Dpy4cOPBiw8/KJYftWDUglELRi0YtWDUglELRi0YtWDUglELhooFACLx0Ez8llH7AAAAAElFTkSuQmCC",
+        "model": "{{identity.model}}",
+        "task": "caption"
+      },
+      "transport": "unary"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 1
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "p50_max_ms": 5000,
+      "samples": 3
+    }
+  }
+]

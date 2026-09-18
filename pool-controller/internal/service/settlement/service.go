@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math/big"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,6 +47,21 @@ func NewWithClock(stateRepo *repo.StateRepo, now func() time.Time) *Service {
 }
 
 func (s *Service) CloseWindow(req CloseRequest) (types.SettlementWindow, types.PayoutBatch, error) {
+	sources, err := s.repo.RevenueSources(nil)
+	if err != nil {
+		return types.SettlementWindow{}, types.PayoutBatch{}, err
+	}
+	if len(sources) > 0 {
+		if req.ConfirmedRevenueWei != "" || req.DefaultCommissionBPS != 0 || len(req.OfferingCommissionBPS) > 0 || req.OperatorAdjustmentReason != "" || len(req.RoundIDs) > 0 || len(req.IncludedRoundReceiptIDs) > 0 || req.WindowID != "" || req.EndRoundID != "" {
+			return types.SettlementWindow{}, types.PayoutBatch{}, fmt.Errorf("regional close accepts only start_round_id; financial inputs derive from immutable rounds and terms")
+		}
+		start, err := strconv.ParseUint(req.StartRoundID, 10, 64)
+		if err != nil || strconv.FormatUint(start, 10) != req.StartRoundID {
+			return types.SettlementWindow{}, types.PayoutBatch{}, fmt.Errorf("canonical start_round_id required")
+		}
+		return s.repo.CloseRegionalWindow(start)
+	}
+
 	if strings.TrimSpace(req.WindowID) == "" {
 		return types.SettlementWindow{}, types.PayoutBatch{}, fmt.Errorf("window_id is required")
 	}

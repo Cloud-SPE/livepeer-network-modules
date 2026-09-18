@@ -56,3 +56,5 @@ livepeer_payment_chain_writes_total{method="redeem_winning_ticket",result="error
 		t.Fatalf("chain metrics mismatch: %v", err)
 	}
 }
+
+func (b *stubBroker) TicketValidityPeriod(_ context.Context) (int64, error) { return 2, nil }

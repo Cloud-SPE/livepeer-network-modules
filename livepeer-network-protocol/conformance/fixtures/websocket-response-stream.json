@@ -1,0 +1,12 @@
+{
+  "response_mode": "chunks-v1",
+  "chunk_bytes_max": 32768,
+  "window_chunks": 8,
+  "status": 200,
+  "headers": {"Content-Type": ["text/event-stream"]},
+  "chunks": [
+    "data: {\"choices\":[{\"delta\":{\"content\":\"first\"}}]}\n\n",
+    "data: {\"usage\":{\"total_tokens\":21}}\n\ndata: [DONE]\n\n"
+  ],
+  "expected_work_units": "21"
+}

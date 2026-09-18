@@ -15,8 +15,8 @@ audience: secure-orch operators, orch-coordinator maintainers, trust-model revie
 
 # Plan 0042 — automated manifest sign cycle (secure-orch agent)
 
-**Status:** active — implementation complete on `feat/manifest-sign-agent`
-(work items 1–8 ✅); remaining: phase-1 burn-in (§10) and the phase-2
+**Status:** active — implementation complete and merged (built on
+`feat/manifest-sign-agent`; work items 1–8 ✅); remaining: phase-1 burn-in (§10) and the phase-2
 dial decision. Automates the manifest sign cycle between the
 firewalled secure-orch host and the public orch-coordinator, replacing
 the hand-carry loop (download candidate → SSH tunnel → upload → diff →
@@ -126,7 +126,7 @@ sequenceDiagram
     participant OP as operator (console UI)
 
     loop poll (If-None-Match: <etag>)
-        AG->>OC: GET /admin/candidate/latest
+        AG->>OC: GET /candidate.tar.gz
         OC-->>AG: 304 (unchanged) — ~zero bytes
     end
     OC-->>AG: 200 + candidate tarball + ETag
@@ -274,10 +274,10 @@ single change hits — one critical change holds the whole candidate.
 
 | Class | Triggers | Phase-1 disposition | Phase-2 disposition |
 |---|---|---|---|
-| `renewal` | content identical; window/seq advance; remaining validity < threshold | **auto-sign** | auto-sign |
+| `renewal` | content identical (tuples and `settlement_keys`); window/seq advance; remaining validity < threshold | **auto-sign** | auto-sign |
 | `benign` | tuple removed; `price_per_unit_wei` decrease; price change within ±`price_delta_max_pct`; `worker_url` change within `worker_url_domain_allowlist` | hold **+ `would_auto_sign` shadow audit** | **auto-sign** |
-| `critical` | new `(capability_id, offering_id)` tuple; price increase beyond bound; `worker_url` outside allowlist; any `extra`/`constraints` change; `interaction_mode` or `work_unit` change | hold + alert | hold + alert |
-| `forbidden` | `orch.eth_address` change; `spec_version` change | refuse + alert (never held as signable; the candidate is rejected outright) | same |
+| `critical` | new `(capability_id, offering_id)` tuple; price increase beyond bound; `worker_url` outside allowlist; any `extra`/`constraints` change; `protocol`/axes or `work_unit` change; `spec_version` change (moved from forbidden, plan 0043 §3.7); any `settlement_keys` add/remove/window change | hold + alert | hold + alert |
+| `forbidden` | `orch.eth_address` change | refuse + alert (never held as signable; the candidate is rejected outright) | same |
 
 Policy file (`/etc/secure-orch/sign-policy.json`, strict JSON, schema
 shipped in-repo, hash recorded in audit on every load):
@@ -298,10 +298,14 @@ shipped in-repo, hash recorded in audit on every load):
     "max_auto_signs_per_hour": 4,
     "on_breach": "pause"
   },
-  "stability_window_seconds": 300,
-  "renewal_threshold_fraction": 0.3333
+  "stability_window_seconds": 300
 }
 ```
+
+(`renewal_threshold_fraction` was removed by plan 0043 §3.7 and is now
+rejected as an unknown field; the agent reads the threshold the
+coordinator publishes as `renewal_threshold_seconds` in each candidate's
+`metadata.json`.)
 
 Rules:
 
@@ -431,7 +435,9 @@ new trust-model amendment, not a config change.
    last-signed manifest's own issued_at→expires_at span (no agent
    TTL flag); a published seq *ahead* of last-signed is logged loudly
    and never pushed over; the rate-limit latch clears on process
-   restart (operator Clear gesture lands with the item-5 UI).
+   restart or via the operator Clear gesture
+   (`POST /agent/rate-limit/clear`, audited as `agent_resumed`; shipped
+   with plan 0043 §3.7).
 5. ✅ **Console: held queue UI + agent push-after-approve** (§8) —
    manifests page gains a "Pending changes held by the agent" card
    (class, findings, shadow would_auto_sign note) with a

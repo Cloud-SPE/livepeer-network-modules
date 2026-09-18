@@ -11,20 +11,17 @@ Code shipping today (current retained components):
 
 ### Protocol + infrastructure layer
 
-- `livepeer-network-protocol/` — spec subfolder. 6 interaction-modes + 7
-  extractors + payment proto + sessionrunner proto + manifest schema with
-  `publication_seq` + JCS verifier package + conformance runner with
-  fixtures across all modes (happy-path / end-to-end / backpressure /
-  reconnect-window / runner-crash / interim-debit / balance-exhausted /
-  per-mode gateway-target).
-- `capability-broker/` — Go reference impl. 6 modes registered; 7
-  extractors. Plan 0011-followup added the production RTMP pipeline
-  (yutopp/go-rtmp + 4 encoder profiles passthrough/nvenc/qsv/vaapi/libx264
-  + LL-HLS muxer + 4-trigger lifetime watchdog). Plan 0012-followup added
-  control-WS + reconnect-30s + pion/webrtc relay + session-runner
-  subprocess. Plan 0015 wired the broker-side interim-debit ticker.
-- `payment-daemon/` — sender + receiver modes; gRPC over unix socket;
-  BoltDB session ledger. Plan 0016 lit up Arbitrum One chain integration
+- `livepeer-network-protocol/` — `paid-job/v1` and `paid-session/v1`,
+  workload extractors, payment/sessionrunner protobufs, manifest schema with
+  publication rollback protection, JCS verification, and the executable
+  authorization-only conformance matrix.
+- `capability-broker/` — Go reference broker for connected runners. It
+  performs authorization-backed wholesale-account admission, cumulative
+  session advances, terminal settlement, durable recovery, and signed
+  evidence; capability-specific media execution belongs to runners.
+- `payment-daemon/` — sender + receiver modes; gRPC over Unix socket;
+  durable stable wholesale accounts and spend authorizations plus the
+  probabilistic-ticket funding/redemption rail. Plan 0016 lit up Arbitrum One chain integration
   (keccak256-flatten ticket hashing, V3 keystore signing, on-chain
   TicketBroker + RoundsManager + BondingManager providers, eth_gasPrice
   polling, ECDSA recovery + 600-nonce ledger, MaxFloat with 3:1

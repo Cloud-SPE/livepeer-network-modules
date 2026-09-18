@@ -1,0 +1,104 @@
+# Document reranking — zerank-2.
+#
+# New 2026-09-02 (decision 1 of the 2026-09-02 walkthrough on lnm-of6): the
+# rerank-runner in livepeer-modules-openai-runners had no template. It is not
+# an OpenAI capability — OpenAI has no rerank endpoint — so the id takes the
+# product domain (`text:`) and the identity is under the plain key, per the
+# vocabulary rule in runner-attach.md §3.2. No operator rig has run this;
+# every number here is the catalog's recommendation.
+
+id: text-rerank-zerank-2
+capability: text:rerank
+offering_id: zerank-2
+protocol: paid-job/v1
+display_name: Document reranking (zerank-2)
+description: >-
+  Cross-encoder reranking: a query and a list of documents in, a relevance
+  score per document out. Metered per document scored, so a caller sizes the
+  bill by the list it sends.
+
+# Derived in docs/references/2026-09-02-rerank-and-audio-translations-
+# pricing.md against Cohere Rerank 3.5 ($2 per 1,000 searches of up to 100
+# documents): $0.02 per 1,000 documents, 30% under is $0.014 — 8118577625 wei
+# per 1000 documents at the June ETH basis, inherited for comparability.
+price_default: { amount_wei: "8118577625", per_units: 1000 }
+
+# One request is one batched forward pass over every (query, document) pair,
+# so a request with 100 documents is 100 pairs of work; the runner caps the
+# list. Two in flight keeps the card busy without two large batches
+# contending.
+capacity: { max_in_flight: 2, queue_limit: 4 }
+
+extra:
+  provider: rerank-runner
+  backend_model: zeroentropy/zerank-2
+  rerank:
+    # The runner's own request cap (MAX_BATCH_SIZE), a fact a caller needs
+    # before it chunks a candidate list.
+    max_documents: 100
+
+constraints:
+  tier: standard
+
+# Not an OpenAI capability, so not the OpenAI identity key (decision 2's
+# reasoning applied here): the runner declares `identity.model`.
+match:
+  identity.model: zerank-2
+
+certification:
+  - { name: ready, type: readiness, required: true, config: { attempts: 5, interval_ms: 3000 } }
+  - name: smoke
+    type: request
+    required: true
+    config:
+      transport: unary
+      # The runner's request shape: no `model` field — the container serves
+      # one model and the selector above already chose it.
+      body:
+        query: "a probe"
+        documents: ["a probe document", "an unrelated document"]
+        top_n: 2
+      # Two documents in, two scored results out, and the first result's
+      # index is a valid position. Scores are not asserted: a cross-encoder's
+      # calibration is a quality question this catalog does not grade.
+      assert:
+        - { path: "$.results[0].index", min: 0 }
+        - { path: "$.results[1].index", min: 0 }
+  # As published the rerank runner emits NO usage count at all — no header,
+  # no usage block — so this step fails until the runner declares an
+  # extractor (a request-formula over the document count is the natural one;
+  # runner-attach.md §3.2 puts that choice with the runner). That is the
+  # design: the failure names the runner, and the packet for its repo names
+  # the fix.
+  - { name: usage, type: usage, required: true, config: { min_units: 2 } }
+  - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 2000 } }
+
+# A cross-encoder of a few billion parameters: fits any 24 GB card with room
+# to batch and an 11 GB 2080 would swap. Same list as embeddings for the same
+# reason.
+requirements:
+  gpu_classes: [rtx-3090, rtx-4090, rtx-5090]
+
+# Just under embeddings (14): the two are the pool's retrieval pair, both
+# land on 3090s, and embeddings is the one that gets called for every
+# document while rerank gets called per query.
+priority: 13
+
+# Small enough to ride: a rerank request is one short batch and the weights
+# leave most of a 24 GB card free, so it takes a secondary slot next to a
+# primary on the newer classes the way whisper and kokoro do. Not on 3090,
+# whose stance is one template (placement.DefaultStances).
+stacking:
+  primary: true
+  secondary_on: [rtx-4090, rtx-5090]
+
+# runner_compose omitted: the rerank-runner image serves no runner contract
+# and declares `rerank` as its capability name as published. The tag that
+# ships the contract and `text:rerank` is the tag that belongs here
+# (lnm-v12).
+
+probation: { share_ppm: 20000, max_in_flight: 1, min_jobs: 20 }
+
+active: { share_cap_ppm: 150000 }
+
+commission_bps: 1000

@@ -29,18 +29,18 @@ import (
 // goroutine per intent). Daemons construct it once at startup and pass to
 // txintent.New.
 type DefaultProcessor struct {
-	cfg       config.TxIntentPolicy
-	chainID   chain.ChainID
-	confs     uint64
-	gasLimit  uint64
+	cfg      config.TxIntentPolicy
+	chainID  chain.ChainID
+	confs    uint64
+	gasLimit uint64
 
-	rpc       rpc.RPC
-	keystore  keystore.Keystore
-	gas       gasoracle.GasOracle
-	receipts  receipts.Receipts
-	clock     clock.Clock
-	logger    logger.Logger
-	metrics   metrics.Recorder
+	rpc      rpc.RPC
+	keystore keystore.Keystore
+	gas      gasoracle.GasOracle
+	receipts receipts.Receipts
+	clock    clock.Clock
+	logger   logger.Logger
+	metrics  metrics.Recorder
 
 	// nonceMu serializes the fetch-nonce→sign→broadcast critical section of
 	// first broadcasts across concurrent intents. Without it, two intents
@@ -399,10 +399,28 @@ func (p *DefaultProcessor) replace(ctx context.Context, m *Manager, intent TxInt
 	bump := big.NewInt(int64(100 + p.cfg.ReplacementGasBump))
 	denom := big.NewInt(100)
 
-	newFeeCap := new(big.Int).Mul(prev.GasFeeCap, bump)
+	// An adopted attempt (Manager.Adopt) may not know the caps the original
+	// tx was signed with — persisted as nil or zero, since the msgpack
+	// codec does not distinguish the two — so bump from the oracle's
+	// current view instead.
+	baseFee, baseTip := prev.GasFeeCap, prev.GasTipCap
+	if unknownWei(baseFee) || unknownWei(baseTip) {
+		est, err := p.gas.Suggest(ctx)
+		if err != nil {
+			return cerrors.Wrap(cerrors.ClassTransient, "rpc.gas_suggest_failed", "failed to suggest gas for replacement", err)
+		}
+		if unknownWei(baseFee) {
+			baseFee = est.FeeCap
+		}
+		if unknownWei(baseTip) {
+			baseTip = est.TipCap
+		}
+	}
+
+	newFeeCap := new(big.Int).Mul(baseFee, bump)
 	newFeeCap.Quo(newFeeCap, denom)
 
-	newTipCap := new(big.Int).Mul(prev.GasTipCap, bump)
+	newTipCap := new(big.Int).Mul(baseTip, bump)
 	newTipCap.Quo(newTipCap, denom)
 
 	tx, err := p.signTx(intent, prev.Nonce, newFeeCap, newTipCap)
@@ -506,6 +524,10 @@ func (p *DefaultProcessor) metricsCounter(name string, labels metrics.Labels) {
 	}
 	p.metrics.CounterAdd(name, labels, 1)
 }
+
+// unknownWei reports a gas cap that was never recorded (nil) or that
+// round-tripped through persistence as zero.
+func unknownWei(b *big.Int) bool { return b == nil || b.Sign() == 0 }
 
 func copyBig(b *big.Int) *big.Int {
 	if b == nil {

@@ -1,0 +1,22 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Payout automation</p>
+  <h1>Payouts</h1>
+  <p class="muted">Approval stays human by default. A policy can take the decision within bounds an operator wrote down; shadow mode records what it <em>would</em> have decided without approving anything, so the bounds are earned rather than guessed; and a pause file stops it without a deploy.</p>
+</section>
+
+<section>
+  <h2>Policy in force</h2>
+  <div id="payoutPolicyBanner" class="card message-card message-card-info">
+    <h2>Loading policy…</h2>
+    <p>Reading the policy file the controller has in force.</p>
+  </div>
+  <div id="payoutPolicyDetail" class="card-list"></div>
+</section>
+
+<section>
+  <h2>Payout batches</h2>
+  <p class="muted">Policy review evaluates a batch against the policy above and records the verdict in the audit trail whether or not it approves — a refusal is evidence too, and shadow mode is worthless if its verdicts are not durable. In shadow mode a review records and refuses; the manual approve button is unaffected either way.</p>
+  <div id="payoutBatches" class="card-list"></div>
+</section>
+{{end}}

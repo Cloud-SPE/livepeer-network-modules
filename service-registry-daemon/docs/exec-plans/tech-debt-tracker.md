@@ -131,3 +131,10 @@ Append-only list of known debt. Strike through when resolved; include the PR or 
   `BuildAndSign` to optionally probe entries that supply only a URL.
   Tracked for the follow-up plan once worker conventions stabilize.
 - Resolved: —
+
+## 2026-09-14 contract review
+
+Earlier entries are historical. The daemon has no hot reload, automatic cache
+eviction or audit retention, and Publisher no longer builds or signs manifests.
+Current work and status live in beads: lnm-735 (contract sweep), lnm-dnh
+(temporal/replay validation), lnm-cuh (provider diagnostics), lnm-gpd (coverage).

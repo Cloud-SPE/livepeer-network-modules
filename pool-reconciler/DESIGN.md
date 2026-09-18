@@ -20,15 +20,22 @@ Current implementation scope:
    resuming the live round-event stream.
 9. While running, retry pending failed rounds on a local ticker using the
    persisted attempt timestamps in the state store.
+10. In regional mode (`pool_controller.pool_id`), resolve the controller's
+    revenue-source registry for the round, collect revenue and work proofs from
+    each configured source over scoped HTTPS, and persist the prepared request
+    before submission so a lost acknowledgement is replayed rather than
+    recollected. See [`docs/regional-collection.md`](./docs/regional-collection.md).
 
 The current round-close producer contract is:
 
 1. `protocol-daemon` provides round timing.
-2. `payment-daemon` provides confirmed round revenue.
+2. `payment-daemon` provides confirmed round revenue (regional mode: the
+   configured `revenue_sources` do, and `payment-daemon` is not read).
 3. `pool-controller` provides persisted final work receipts by `round_id`.
 4. `pool-reconciler` computes the canonical close payload and submits it back
    to `pool-controller`.
 
 The reconciler's BoltDB state is intentionally narrow: it stores per-round
-attempt counts, last error, and closed checkpoints. It is a local job
+attempt counts, last error, closed checkpoints, and the last prepared close
+request. It is a local job
 checkpoint, not a source of accounting truth.

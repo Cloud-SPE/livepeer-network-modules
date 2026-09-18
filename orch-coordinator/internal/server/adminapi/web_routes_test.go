@@ -117,8 +117,10 @@ func TestWebRoutes_RosterRenders(t *testing.T) {
 	if !strings.Contains(string(body), "Roster") {
 		t.Fatalf("expected Roster heading, got %s", body)
 	}
-	if !strings.Contains(string(body), "meta=stale") || !strings.Contains(string(body), "models_probe_failed") {
-		t.Fatalf("expected metadata state in roster, got %s", body)
+	// The roster's job is one row per tuple with a cell per broker, so
+	// what has to render is each broker's live view of it.
+	if !strings.Contains(string(body), "live=") {
+		t.Fatalf("expected per-broker live status in roster, got %s", body)
 	}
 }
 

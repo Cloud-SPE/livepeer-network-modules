@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/diagnostics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
@@ -20,6 +21,7 @@ import (
 // optional Resolver and Publisher handlers; presence is determined by
 // daemon mode at construction.
 type Server struct {
+	diagnostics  func() diagnostics.Snapshot
 	resolverSvc  *resolver.Service
 	publisherSvc *publisher.Service
 	cache        manifestcache.Repo
@@ -29,11 +31,12 @@ type Server struct {
 
 // Config wires the server.
 type Config struct {
-	Resolver  *resolver.Service  // nil in publisher mode
-	Publisher *publisher.Service // nil in resolver mode
-	Cache     manifestcache.Repo
-	Audit     audit.Repo
-	Logger    logger.Logger
+	Diagnostics func() diagnostics.Snapshot
+	Resolver    *resolver.Service  // nil in publisher mode
+	Publisher   *publisher.Service // nil in resolver mode
+	Cache       manifestcache.Repo
+	Audit       audit.Repo
+	Logger      logger.Logger
 }
 
 // NewServer constructs a Server. Returns an error if neither service
@@ -46,6 +49,7 @@ func NewServer(c Config) (*Server, error) {
 		c.Logger = logger.Discard()
 	}
 	return &Server{
+		diagnostics:  c.Diagnostics,
 		resolverSvc:  c.Resolver,
 		publisherSvc: c.Publisher,
 		cache:        c.Cache,
@@ -106,7 +110,7 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 	if req.Offering == "" {
 		return nil, types.NewValidation(types.ErrParse, "select.offering", "required")
 	}
-	addrs, err := s.cache.List()
+	addrs, err := s.resolverSvc.CandidateAddresses()
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +131,7 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 			Offering:            req.Offering,
 			Address:             addr,
 			AllowLegacyFallback: true,
-			AllowUnsigned:       true, // Select trusts caller; signature filtering done server-side via overlay
+			AllowUnsigned:       false, // Selection honors daemon/overlay unsigned policy.
 		})
 		if err != nil {
 			skippedAddressCount++
@@ -267,7 +271,13 @@ func summarizeSelectedRoutes(routes []*SelectedRoute, max int) []string {
 // ListKnown returns all eth addresses currently in the cache, with
 // freshness status.
 func (s *Server) ListKnown(_ context.Context) ([]KnownEntry, error) {
-	addrs, err := s.cache.List()
+	var addrs []types.EthAddress
+	var err error
+	if s.resolverSvc != nil {
+		addrs, err = s.resolverSvc.CandidateAddresses()
+	} else {
+		addrs, err = s.cache.List()
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -292,7 +302,7 @@ func (s *Server) Refresh(ctx context.Context, req RefreshRequest) error {
 		return errors.New("grpc: resolver not mounted")
 	}
 	if req.EthAddress == "*" {
-		addrs, err := s.cache.List()
+		addrs, err := s.resolverSvc.CandidateAddresses()
 		if err != nil {
 			return err
 		}
@@ -323,48 +333,12 @@ func (s *Server) GetAuditLog(_ context.Context, req GetAuditLogRequest) ([]types
 
 // ----- Publisher-side RPCs -----
 
-// BuildManifest constructs an unsigned manifest from spec.
-func (s *Server) BuildManifest(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildManifest(spec)
-}
-
 // GetIdentity returns the loaded publisher cold-key identity.
 func (s *Server) GetIdentity(_ context.Context) (types.EthAddress, error) {
 	if s.publisherSvc == nil {
 		return "", errors.New("grpc: publisher not mounted")
 	}
 	return s.publisherSvc.Identity()
-}
-
-// SignManifest signs an in-memory manifest produced by BuildManifest.
-//
-// Note: we accept the typed *types.Manifest struct here rather than
-// a JSON-bytes wire form because DecodeManifest requires a full
-// signature for validation, and BuildManifest output is intentionally
-// unsigned. The gRPC adapter (added under `make proto`) is responsible
-// for translating the wire form to/from this struct. See
-// docs/exec-plans/active/0001-repo-scaffold.md for the wiring plan.
-func (s *Server) SignManifest(_ context.Context, m *types.Manifest) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	if m == nil {
-		return nil, errors.New("grpc: nil manifest")
-	}
-	return s.publisherSvc.SignManifest(m)
-}
-
-// BuildAndSign is the one-shot Build+Sign path used by
-// livepeer-registry-refresh. Output is byte-identical to BuildManifest
-// followed by SignManifest.
-func (s *Server) BuildAndSign(_ context.Context, spec publisher.BuildSpec) (*types.Manifest, error) {
-	if s.publisherSvc == nil {
-		return nil, errors.New("grpc: publisher not mounted")
-	}
-	return s.publisherSvc.BuildAndSign(spec)
 }
 
 // Health returns a coarse aliveness status.
@@ -379,12 +353,16 @@ func (s *Server) Health(_ context.Context) HealthResult {
 			cacheSize = len(list)
 		}
 	}
+	observed := diagnostics.Snapshot{}
+	if s.diagnostics != nil {
+		observed = s.diagnostics()
+	}
 	return HealthResult{
 		Mode:              mode,
-		ChainOK:           true, // placeholder; v1 doesn't actively probe
-		ManifestFetcherOK: true,
+		ChainOK:           observed.ChainOK,
+		ManifestFetcherOK: observed.ManifestFetcherOK,
 		CacheSize:         cacheSize,
-		LastChainSuccess:  time.Now().UTC(),
+		LastChainSuccess:  observed.LastChainSuccess,
 	}
 }
 
@@ -410,9 +388,13 @@ type SelectRequest struct {
 // narrower than ResolvedNode on purpose: gateways get only the route
 // fields they need for dispatch, pricing, and payment.
 type SelectedRoute struct {
-	WorkerURL             string
-	EthAddress            string
-	Capability            string
+	SettlementDomainID string
+	WorkerURL          string
+	EthAddress         string
+	Capability         string
+	// Protocol is the signed tuple's protocol tag. Typed, not a key in
+	// Extra, because consumers gate their open path on it.
+	Protocol              string
 	Offering              string
 	PricePerWorkUnitWei   string
 	WorkUnit              string
@@ -423,6 +405,37 @@ type SelectedRoute struct {
 	ConstraintFingerprint []byte
 	RouteFingerprint      []byte
 	UnitsPerPrice         uint64
+	// SettlementKeys are the orch's delegated settlement-signing keys,
+	// carried with the route so a consumer verifies a broker signature
+	// against a set it already trusts.
+	SettlementKeys []SettlementKey
+	// WorkUnitEstimator is how a client computes a funding ceiling for
+	// this route before the work runs, when it can.
+	//
+	// Nil for the routes whose ceiling a caller derives from its own
+	// request, which is most of them. Present for the ones where it
+	// cannot — a multipart upload has no ceiling in its parameters —
+	// and a consumer that reserves funds against a route carrying one
+	// MUST use it rather than guess, or its reservation and the
+	// seller's bill are two different numbers.
+	WorkUnitEstimator *Estimator
+}
+
+// Estimator mirrors the manifest's work_unit.estimator block.
+type Estimator struct {
+	ID        string
+	Rounding  string
+	Exactness string
+	Package   string
+	Fixtures  string
+}
+
+// SettlementKey mirrors the proto message.
+type SettlementKey struct {
+	PublicKey                  string
+	NotBefore                  string
+	ExpiresAt                  string
+	IntroducedInPublicationSeq uint64
 }
 
 // KnownEntry mirrors the proto message.

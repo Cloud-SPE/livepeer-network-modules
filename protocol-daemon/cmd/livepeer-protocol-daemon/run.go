@@ -68,11 +68,11 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	fs := flag.NewFlagSet("livepeer-protocol-daemon", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 
-	mode := fs.String("mode", "both", "round-init | reward | both")
+	mode := fs.String("mode", "both", "round-init | reward | both | read-only")
 	socketPath := fs.String("socket", "", "unix socket path for the gRPC listener; required in non-dev mode")
 	storePath := fs.String("store-path", "", "BoltDB file path; required in non-dev mode")
 
-	ethURLs := fs.String("eth-urls", "", "comma-separated Ethereum RPC URLs (primary first)")
+	chainRPCURLs := fs.String("chain-rpc-urls", "", "comma-separated Ethereum JSON-RPC URLs, primary first; every chain read and write fails over across the list (required in non-dev mode)")
 	chainID := fs.Uint64("chain-id", 42161, "expected chain ID; default Arbitrum One")
 	controllerAddr := fs.String("controller-address", "0xD8E8328501E9645d16Cf49539efC04f734606ee4", "Livepeer Controller contract address; default Arbitrum One")
 	aiServiceRegistryAddr := fs.String("ai-service-registry-address", "0x04C0b249740175999E5BF5c9ac1dA92431EF34C5", "AI service registry contract address; default supplied deployment")
@@ -125,9 +125,12 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	cfg.Chain = chaincfg.Default()
 	cfg.Chain.ChainID = chain.ChainID(*chainID)
 	cfg.Chain.GasLimit = *gasLimit
-	if *ethURLs != "" {
-		cfg.Chain.EthURLs = splitCSV(*ethURLs)
+	urls, err := chaincfg.ParseRPCURLs(*chainRPCURLs)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
 	}
+	cfg.Chain.EthURLs = urls
 	if *controllerAddr != "" {
 		cfg.Chain.ControllerAddr = common.HexToAddress(*controllerAddr)
 	}
@@ -146,7 +149,7 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 	slog.SetDefault(log)
 	clog := newSlogLogger(log)
 
-	if !cfg.Dev {
+	if !cfg.Dev && cfg.Mode != types.ModeReadOnly {
 		// Read keystore password from env or file.
 		pw, code := readKeystorePassword(*keystorePasswordFile, stderr)
 		if code != 0 {
@@ -199,6 +202,10 @@ func run(ctx context.Context, args []string, stderr io.Writer) int {
 
 	// TxIntent + Processor wiring. The Manager needs a Processor that
 	// signs/broadcasts/tracks; Resume runs once at startup.
+	if cfg.Mode == types.ModeReadOnly {
+		return runObserver(ctx, cfg, deps, clog)
+	}
+
 	processor, err := txintent.NewDefaultProcessor(txintent.ProcessorConfig{
 		Policy:             cfg.Chain.TxIntent,
 		ChainID:            cfg.Chain.ChainID,
@@ -573,27 +580,37 @@ func buildProviders(ctx context.Context, cfg config.Config, log logger.Logger) (
 		return nil, cleanup, fmt.Errorf("controller resolve: %w", err)
 	}
 
-	ks, err := v3json.Open(cfg.Chain.KeystorePath, cfg.Chain.KeystorePassword, cfg.Chain.AccountAddress)
-	if err != nil {
-		return nil, cleanup, fmt.Errorf("keystore open: %w", err)
+	if closer, ok := ctrl.(interface{ Close() error }); ok {
+		cleanups = append(cleanups, func() { _ = closer.Close() })
 	}
 
-	gas, err := gasttl.New(gasttl.Options{
-		RPC: rpcClient,
-		TTL: cfg.Chain.GasPriceCacheTTL,
-		Min: cfg.Chain.GasPriceMin,
-		Max: cfg.Chain.GasPriceMax,
-	})
-	if err != nil {
-		return nil, cleanup, fmt.Errorf("gas oracle: %w", err)
-	}
+	var ks keystore.Keystore
+	var gas gasoracle.GasOracle
+	var rec receipts.Receipts
+	if cfg.Mode != types.ModeReadOnly {
+		ks, err = v3json.Open(cfg.Chain.KeystorePath, cfg.Chain.KeystorePassword, cfg.Chain.AccountAddress)
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("keystore open: %w", err)
+		}
 
-	rec, err := receiptsreorg.New(receiptsreorg.Options{
-		RPC:  rpcClient,
-		Poll: cfg.Chain.BlockPollInterval,
-	})
-	if err != nil {
-		return nil, cleanup, fmt.Errorf("receipts: %w", err)
+		gas, err = gasttl.New(gasttl.Options{
+			RPC: rpcClient,
+			TTL: cfg.Chain.GasPriceCacheTTL,
+			Min: cfg.Chain.GasPriceMin,
+			Max: cfg.Chain.GasPriceMax,
+		})
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("gas oracle: %w", err)
+		}
+
+		rec, err = receiptsreorg.New(receiptsreorg.Options{
+			RPC:  rpcClient,
+			Poll: cfg.Chain.BlockPollInterval,
+		})
+		if err != nil {
+			return nil, cleanup, fmt.Errorf("receipts: %w", err)
+		}
+
 	}
 
 	ts, err := timesrcpoller.New(timesrcpoller.Options{
@@ -604,6 +621,10 @@ func buildProviders(ctx context.Context, cfg config.Config, log logger.Logger) (
 	})
 	if err != nil {
 		return nil, cleanup, fmt.Errorf("timesource: %w", err)
+	}
+
+	if closer, ok := ts.(interface{ Close() error }); ok {
+		cleanups = append(cleanups, func() { _ = closer.Close() })
 	}
 
 	st, err := storebolt.Open(cfg.Chain.StorePath, storebolt.Default())
@@ -636,7 +657,10 @@ func buildDevProviders(_ context.Context, cfg config.Config, _ logger.Logger) (*
 	}
 	rpcFake.DefaultBalance = new(big.Int).SetUint64(1e18)
 
-	ks := chaintesting.NewFakeKeystore("dev-mode-protocol-daemon-seed")
+	var ks keystore.Keystore
+	if cfg.Mode != types.ModeReadOnly {
+		ks = chaintesting.NewFakeKeystore("dev-mode-protocol-daemon-seed")
+	}
 	rmAddr := common.HexToAddress("0x000000000000000000000000000000000000FA01")
 	bmAddr := common.HexToAddress("0x000000000000000000000000000000000000FB01")
 
@@ -759,18 +783,6 @@ func (s *slogAdapter) Warn(msg string, fields ...logger.Field)  { s.l.Warn(msg, 
 func (s *slogAdapter) Error(msg string, fields ...logger.Field) { s.l.Error(msg, s.toAttrs(fields)...) }
 func (s *slogAdapter) With(fields ...logger.Field) logger.Logger {
 	return &slogAdapter{l: s.l.With(s.toAttrs(fields)...)}
-}
-
-func splitCSV(s string) []string {
-	parts := strings.Split(s, ",")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		p = strings.TrimSpace(p)
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out
 }
 
 // shutdownTimeout caps how long lifecycle Run waits for services to drain.

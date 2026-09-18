@@ -1,10 +1,11 @@
 // Package settlement drives the on-chain redemption loop: pop the oldest
-// pending winner, run gas pre-checks, submit the redemption tx via the
+// pending winner, run gas pre-checks, submit the redemption via the
 // Broker, mark redeemed on success / drain locally on terminal failure.
 //
-// Per plan 0016 §11.Q1 we deliberately do NOT port the prior impl's
-// chain-commons.txintent layer — settlement here is single-threaded,
-// one tx per loop tick.
+// The loop is single-threaded, one ticket per tick. The transaction
+// itself — nonce, gas, replacement, confirmations, restart resume — is
+// the Broker's concern, on chain-commons's durable intent machine (plan
+// 0048 stage 4b); settlement only classifies what comes back.
 package settlement
 
 import (
@@ -16,10 +17,13 @@ import (
 	"strings"
 	"time"
 
+	cerrors "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/errors"
+
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/escrow"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 )
 
 // Sentinels.
@@ -43,10 +47,26 @@ var (
 	ErrInsufficientFunds = errors.New("settlement: insufficient sender funds")
 )
 
-const defaultValidityWindow = 2
+// ChainValidityWindowRounds is how many rounds behind the current one a
+// ticket's creation round may be and still be redeemable.
+//
+// This is the CHAIN's rule, not a local policy: the TicketBroker needs
+// the creation round's block hash to verify a winning ticket, and that
+// hash stops being available beyond the window, so redemption reverts.
+// A daemon can configure a shorter window — it only stops trying sooner
+// — but it cannot extend one.
+//
+// It is exported because it is also the answer to "when does an issued
+// but never-admitted payment envelope become unspendable", which is the
+// only unconditional release for an encumbrance held against one.
+const ChainValidityWindowRounds = 2
+
+const defaultValidityWindow = ChainValidityWindowRounds
 
 // Config holds the settlement service's tunable state.
 type Config struct {
+	// Inclusion recovers prior confirmed intents and qualifies their accounting.
+	Inclusion func(context.Context, []byte) (*types.RedemptionInclusion, error)
 	// RedeemGas is the gas limit used for redeemWinningTicket. Same
 	// value as the broker's Config.RedeemGas; passed here so the gas-
 	// cost preflight doesn't need a back-reference.
@@ -190,6 +210,19 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 	)
 	logCtx.Info("attempt redemption", "creation_round", t.CreationRound)
 
+	if s.cfg.Inclusion != nil {
+		evidence, err := s.cfg.Inclusion(ctx, p.Hash)
+		if err != nil {
+			return fmt.Errorf("recover redemption inclusion: %w", err)
+		}
+		if evidence != nil {
+			if err := s.store.MarkRedeemedWithInclusion(p.Hash, t, evidence); err != nil {
+				return fmt.Errorf("mark redeemed with inclusion: %w", err)
+			}
+			s.metrics.IncRedemptionTx(metrics.TxConfirmed)
+			return nil
+		}
+	}
 	if s.expired(t) {
 		logCtx.Info("skip: ticket expired",
 			"creation_round", t.CreationRound,
@@ -260,6 +293,14 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 	s.metrics.IncRedemptionTx(metrics.TxSubmitted)
 	txHash, err := s.broker.RedeemWinningTicket(ctx, bt, t.Sig, t.RecipientRand)
 	if err != nil {
+		// The broker's own pre-check found the ticket already redeemed
+		// (by an earlier attempt, or by the implementation this daemon
+		// replaced). Nothing was sent; drain like the local pre-check.
+		if errors.Is(err, providers.ErrTicketAlreadyUsed) {
+			logCtx.Info("skip: broker reports ticket already redeemed on-chain")
+			_ = s.drain(p.Hash, "used")
+			return ErrTicketUsed
+		}
 		s.metrics.IncRedemptionTx(metrics.TxFailed)
 		// Tx revert / contract refusal classified as "creationRound
 		// does not have a block hash" maps to expired.
@@ -268,7 +309,31 @@ func (s *Settlement) attempt(ctx context.Context, p store.PendingRedemption) err
 			_ = s.drain(p.Hash, "expired")
 			return ErrTicketExpired
 		}
+		// A revert is final for this ticket: the intent machine will not
+		// send it again, so leaving it queued would only re-report the
+		// same failure every tick. Drain it and surface the reason.
+		if IsNonRetryable(err) {
+			logCtx.Warn("redemption reverted; draining ticket", "err", err)
+			_ = s.drain(p.Hash, "reverted")
+			return fmt.Errorf("redeem: %w", err)
+		}
+		// Transient, not-found, circuit-open, cancelled tick: the ticket
+		// stays queued and the same intent is waited on next tick.
 		return fmt.Errorf("redeem: %w", err)
+	}
+	if s.cfg.Inclusion != nil {
+		evidence, err := s.cfg.Inclusion(ctx, p.Hash)
+		if err != nil {
+			return fmt.Errorf("confirm redemption inclusion: %w", err)
+		}
+		if evidence == nil {
+			return fmt.Errorf("confirmed transaction has no inclusion evidence")
+		}
+		if err := s.store.MarkRedeemedWithInclusion(p.Hash, t, evidence); err != nil {
+			return fmt.Errorf("mark redeemed with inclusion: %w", err)
+		}
+		s.metrics.IncRedemptionTx(metrics.TxConfirmed)
+		return nil
 	}
 	s.metrics.IncRedemptionTx(metrics.TxConfirmed)
 	if err := s.store.MarkRedeemed(p.Hash, txHash, t, s.clock.LastInitializedRound()); err != nil {
@@ -287,7 +352,6 @@ func (s *Settlement) expired(t *store.SignedTicket) bool {
 }
 
 func (s *Settlement) drain(ticketHash []byte, reason string) error {
-	zero := make([]byte, 32)
 	pend, err := s.store.PendingRedemptions()
 	if err != nil {
 		s.log.Warn("drain lookup failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
@@ -304,7 +368,7 @@ func (s *Settlement) drain(ticketHash []byte, reason string) error {
 		s.log.Warn("drain missing pending ticket", "ticket_hash", hex(ticketHash), "reason", reason)
 		return fmt.Errorf("pending ticket not found")
 	}
-	if err := s.store.MarkRedeemed(ticketHash, zero, ticket, s.clock.LastInitializedRound()); err != nil {
+	if err := s.store.MarkDrained(ticketHash, ticket, s.clock.LastInitializedRound(), reason); err != nil {
 		s.log.Warn("drain failed", "ticket_hash", hex(ticketHash), "reason", reason, "err", err)
 		return err
 	}
@@ -314,27 +378,34 @@ func (s *Settlement) drain(ticketHash []byte, reason string) error {
 // IsNonRetryable reports whether an error from RedeemNext is terminal —
 // the ticket has been (or should be) drained from the queue and not
 // retried.
+//
+// Terminal: the settlement sentinels (used, expired, face value too
+// low), the broker's sentinels (already used, reverted), and anything
+// chain-commons classifies as a revert. Everything else is worth
+// another tick: transient transport failures, a not-yet-mined receipt,
+// an open circuit, a cancelled tick, and even a "permanent" signing or
+// wallet-funds failure, which an operator fixes without losing the
+// ticket. ErrInsufficientFunds (the sender's escrow, not our wallet)
+// is retryable for the same reason.
 func IsNonRetryable(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, ErrTicketUsed) {
+	switch {
+	case errors.Is(err, ErrTicketUsed),
+		errors.Is(err, ErrTicketExpired),
+		errors.Is(err, ErrFaceValueTooLow),
+		errors.Is(err, providers.ErrTicketAlreadyUsed),
+		errors.Is(err, providers.ErrRedemptionReverted):
 		return true
 	}
-	if errors.Is(err, ErrTicketExpired) {
+	if strings.Contains(err.Error(), "creationRound does not have a block hash") {
 		return true
 	}
-	if errors.Is(err, ErrFaceValueTooLow) {
-		return true
-	}
-	msg := err.Error()
-	if strings.Contains(msg, "transaction failed") {
-		return true
-	}
-	if strings.Contains(msg, "creationRound does not have a block hash") {
-		return true
-	}
-	return false
+	// Classify returns the wrapped *cerrors.Error when there is one and
+	// ClassTransient for anything it does not recognise, so a plain
+	// error stays retryable.
+	return cerrors.Classify(err).Class == cerrors.ClassReverted
 }
 
 // hex encodes bytes for log fields, with a leading 0x.

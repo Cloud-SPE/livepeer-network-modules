@@ -1,7 +1,7 @@
 ---
 plan: 0028
 title: Broker health contract
-status: completed
+status: superseded
 phase: shipped
 opened: 2026-05-14
 owner: harness
@@ -10,6 +10,13 @@ related:
   - "completed plan 0018 — orch-coordinator design"
   - "completed plan 0027 — layered route health and check placement"
 ---
+
+> **Superseded by plan 0043** ([0043-connected-runners-and-offer-manifest.md](../active/0043-connected-runners-and-offer-manifest.md)).
+> Backend health polling is gone. A runner is reachable exactly when its attach tunnel is up and fit exactly when certification says so, so the prober and the probe vocabulary this plan defines no longer exist.
+>
+> Kept as provenance: this is what was decided and shipped at the time,
+> and the reasoning is still worth reading. It is not a description of
+> the system today. Nothing below has been edited.
 
 # Plan 0028 — Broker health contract
 

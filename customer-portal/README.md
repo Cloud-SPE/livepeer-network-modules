@@ -2,7 +2,7 @@
 
 Shared SaaS-shell library for Livepeer rewrite consumers. Provides
 API-key auth, customer ledger, Stripe top-ups, operator admin engine,
-Fastify pre-handlers, and a Lit + RxJS widget catalog. Historical
+Fastify pre-handlers, and a light-DOM custom-element widget catalog. Historical
 consumers can embed the same package and supply their own Postgres,
 Redis, Stripe credentials, and API-key pepper.
 
@@ -22,6 +22,7 @@ runtime. See
 | `@livepeer-network-modules/customer-portal/admin` | Operator admin engine |
 | `@livepeer-network-modules/customer-portal/db` | drizzle pgSchema, migration utilities |
 | `@livepeer-network-modules/customer-portal/registry` | Service-registry hooks (placeholder) |
+| `@livepeer-network-modules/customer-portal/routes` | Customer self-service Fastify routes |
 
 ## Build
 
@@ -32,5 +33,6 @@ pnpm -F @livepeer-network-modules/customer-portal test
 
 ## Frontend sub-workspace
 
-`frontend/` is its own pnpm workspace with shared widgets + portal/admin
-SPA scaffolds. See [`frontend/README.md`](./frontend/README.md).
+`frontend/` is a pnpm sub-workspace (its packages are registered in the
+root `pnpm-workspace.yaml`) with shared widgets + portal/admin SPA
+scaffolds. See [`frontend/README.md`](./frontend/README.md).

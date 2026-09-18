@@ -8,8 +8,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/ethereum/go-ethereum/common"
 	"gopkg.in/yaml.v3"
+
+	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 )
+
+// RPCURLsEnv is the environment variable that overrides executor.rpc_urls.
+// It is the same name and comma-separated shape every other daemon reads.
+const RPCURLsEnv = "CHAIN_RPC_URLS"
 
 func LoadFile(path string) (*Config, error) {
 	raw, err := os.ReadFile(path)
@@ -30,6 +37,7 @@ func LoadFile(path string) (*Config, error) {
 	cfg.Executor.KeystorePath = resolvePath(cfg.Executor.KeystorePath)
 	cfg.Executor.KeystorePasswordPath = resolvePath(cfg.Executor.KeystorePasswordPath)
 	cfg.Executor.StatePath = resolvePath(cfg.Executor.StatePath)
+	cfg.Executor.IntentStorePath = resolvePath(cfg.Executor.IntentStorePath)
 	return cfg, nil
 }
 
@@ -43,9 +51,13 @@ func Load(raw []byte) (*Config, error) {
 	if err := validate(&cfg); err != nil {
 		return nil, err
 	}
+	if err := applyEnvOverrides(&cfg); err != nil {
+		return nil, err
+	}
 	if cfg.PoolController.TimeoutMS == 0 {
 		cfg.PoolController.TimeoutMS = 1500
 	}
+	cfg.Executor.PoolID = cfg.PoolController.PoolID
 	if cfg.Executor.BatchSize == 0 {
 		cfg.Executor.BatchSize = 25
 	}
@@ -100,6 +112,17 @@ func validate(cfg *Config) error {
 	if cfg.PoolController.BearerTokenRef != "" && !strings.HasPrefix(cfg.PoolController.BearerTokenRef, "env://") {
 		return fmt.Errorf("pool_controller.bearer_token_ref must use env://")
 	}
+	if cfg.PoolController.PoolID != "" || cfg.PoolController.TokenFile != "" || cfg.PoolController.CAFile != "" {
+		if cfg.PoolController.PoolID == "" || cfg.PoolController.TokenFile == "" || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("regional pool_controller requires pool_id, token_file and an HTTPS origin")
+		}
+		if !common.IsHexAddress(cfg.Executor.ExpectedWalletAddress) || common.HexToAddress(cfg.Executor.ExpectedWalletAddress) == (common.Address{}) || strings.TrimSpace(cfg.Executor.StatePath) == "" {
+			return fmt.Errorf("regional executor requires expected_wallet_address and persistent state_path")
+		}
+		if cfg.PoolController.BearerTokenRef != "" || cfg.PoolController.BearerToken != "" {
+			return fmt.Errorf("scoped token_file cannot be combined with legacy bearer credentials")
+		}
+	}
 	if cfg.PoolController.TimeoutMS < 0 {
 		return fmt.Errorf("pool_controller.timeout_ms must be >= 0")
 	}
@@ -127,6 +150,15 @@ func validate(cfg *Config) error {
 	if cfg.Executor.RequeueCooldownSeconds < 0 {
 		return fmt.Errorf("executor.requeue_cooldown_seconds must be >= 0")
 	}
+	if cfg.Executor.ConfirmWaitMS < 0 {
+		return fmt.Errorf("executor.confirm_wait_ms must be >= 0")
+	}
+	if cfg.Executor.ReplaceAfterSeconds < 0 {
+		return fmt.Errorf("executor.replace_after_seconds must be >= 0")
+	}
+	if cfg.Executor.MaxReplacements < 0 {
+		return fmt.Errorf("executor.max_replacements must be >= 0")
+	}
 	if cfg.Executor.PrivateKeyRef != "" && !strings.HasPrefix(cfg.Executor.PrivateKeyRef, "env://") {
 		return fmt.Errorf("executor.private_key_ref must use env://")
 	}
@@ -136,5 +168,24 @@ func validate(cfg *Config) error {
 	if cfg.Executor.KeystorePasswordPath != "" && cfg.Executor.KeystorePath == "" {
 		return fmt.Errorf("executor.keystore_path is required when executor.keystore_password_path is set")
 	}
+	return nil
+}
+
+// applyEnvOverrides lets the environment win over the file for the
+// values a compose host shares between services. Today that is only the
+// RPC list: CHAIN_RPC_URLS, when set to a non-blank value, replaces
+// executor.rpc_urls; blank or unset leaves the file's list alone; a
+// malformed value (a blank entry between commas) is an error rather than
+// a silent fallback to the file.
+func applyEnvOverrides(cfg *Config) error {
+	raw, ok := os.LookupEnv(RPCURLsEnv)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	urls, err := ccconfig.ParseRPCURLs(raw)
+	if err != nil {
+		return fmt.Errorf("%s: %w", RPCURLsEnv, err)
+	}
+	cfg.Executor.RPCURLs = urls
 	return nil
 }

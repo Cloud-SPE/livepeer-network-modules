@@ -39,13 +39,13 @@ work_unit:
 
 1. As bytes flow through the broker (in the chosen direction), accumulate a
    running counter.
-2. At end-of-request (or end-of-stream / end-of-session), divide by
-   `granularity` and floor to integer.
+2. At end-of-request (or end-of-stream), divide by `granularity` and floor to
+   integer.
 3. That is `actualUnits`.
 
-For streaming and session modes, the counter accumulates over the full
-session; reported via the cadence pattern (interim debits at `cadence_seconds`
-emit incremental units).
+For the `stream` transport the counter accumulates over the full exchange and
+is claimed once, at the terminal accounting point (`paid-job/v1` §6). There are
+no interim debits, and — extractors being `paid-job/v1` only — no session mode.
 
 ## Direction semantics
 
@@ -57,10 +57,8 @@ emit incremental units).
 
 ## What's counted vs. not
 
-- **Counted by default**: HTTP body bytes, WebSocket frame payload bytes,
-  RTMP/HLS payload bytes.
-- **Not counted by default**: HTTP headers, WebSocket control frames
-  (ping/pong), RTMP control packets, TLS record overhead.
+- **Counted by default**: HTTP body bytes.
+- **Not counted by default**: HTTP headers, TLS record overhead.
 - Set `headers: true` to include HTTP headers (request line + headers block,
   per RFC 7230).
 
@@ -94,6 +92,5 @@ If the response body is 4096 bytes: `actualUnits = 4`.
 - Counter accumulates correctly across all body bytes.
 - HTTP headers excluded by default; included when `headers: true`.
 - Compression: on-wire bytes are counted, not decompressed.
-- Streaming: per-tick interim debit values match the bytes seen in that tick.
-- WebSocket control frames (ping/pong/close) are not counted.
+- Streaming: the single terminal claim covers every body byte of the stream.
 - `direction: "both"` correctly sums both sides.

@@ -2,21 +2,28 @@
 
 Canonical Protobuf definitions for the Livepeer-Network protocol.
 
-These files are the source of truth for the bytes on the wire. Generated
-language bindings live next to their consumers (e.g. Go bindings under
-`payment-daemon/internal/proto/`; TypeScript encoders historically lived
-in an OpenAI-protocol gateway that is out-of-repo as of 2026-05-19); the
-`.proto` files in this folder are what those bindings track.
+These files are the source of truth for the bytes on the wire. The generated
+Go bindings are committed alongside them in
+[`../proto-go/`](../proto-go/), importable as its own Go module (TypeScript
+encoders historically lived in an OpenAI-protocol gateway that is out-of-repo
+as of 2026-05-19); the `.proto` files in this folder are what those bindings
+track.
 
 ## Layout
 
 ```
 proto/
 └── livepeer/
-    └── payments/
+    ├── payments/
+    │   └── v1/
+    │       ├── types.proto          — Livepeer-Payment envelope + shared types
+    │       ├── payer_daemon.proto   — Sender-side gRPC service
+    │       ├── payee_daemon.proto   — Receiver-side gRPC service
+    │       └── payee_admin.proto    — Receiver admin gRPC service
+    └── sessionrunner/
         └── v1/
-            ├── payment.proto         — Livepeer-Payment envelope
-            └── payee_daemon.proto    — Receiver-side gRPC service
+            ├── control.proto        — session-runner control plane
+            └── media.proto          — session-runner media plane
 ```
 
 ## Versioning

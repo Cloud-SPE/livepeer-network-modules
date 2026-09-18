@@ -1,42 +1,29 @@
-# Design docs index
+# Design documentation
 
-A catalog of every design-doc in this repo, with verification status and core beliefs.
+Active documents describe current behavior and explicitly identify gaps between
+protocol requirements and implementation. `status` is proposed, accepted,
+verified or deprecated; `last-reviewed` records a human/agent review date. The
+linter checks frontmatter dates and file links, not semantic correctness,
+anchors, Mermaid rendering or whether code changed after a review.
 
-## Verification status
+- [Core beliefs](core-beliefs.md): invariants and current enforcement limits.
+- [Architecture](architecture.md): ownership and information flow.
+- [Discovery modes](serviceuri-modes.md): chain pointers, coordinator URLs, CSV and static pins.
+- [Static overlay](static-overlay.md): parsing, trust policy and configuration.
+- [Cache](resolver-cache.md): synchronous refresh and bounded failure fallback.
+- [gRPC design](grpc-surface.md) and [consumer contract](../product-specs/grpc-surface.md).
+- [Manifest contract](../product-specs/manifest-contract.md): implementation checks and expiry and durable replay enforcement.
+- [Protocol manifest](../../../livepeer-network-protocol/manifest/README.md) and [schema](../../../livepeer-network-protocol/manifest/schema.json): signed wire format.
+- [Observability](observability.md): metrics and operational limits.
+- [Identifiers](workload-agnostic-strings.md): workload-agnostic matching.
+- [Broker offerings](worker-offerings-endpoint.md): runner/broker/coordinator ownership.
+- [Adding a workload](adding-a-new-workload.md): integration path.
 
-Each doc carries a `status:` field in its frontmatter. Values:
+`docs/references/` and `docs/exec-plans/completed/` are immutable historical
+provenance. Their relative links may reflect old repository layouts and are
+excluded from active-document validation. They are not current API references.
+The old manifest/signature docs under `references/archived/` have been
+superseded by the protocol manifest linked above.
 
-| Status | Meaning |
-|---|---|
-| `proposed` | Written, not yet reviewed or implemented |
-| `accepted` | Reviewed, intended direction, not yet fully implemented |
-| `verified` | Implemented and matches code; covered by tests |
-| `deprecated` | Superseded or abandoned; kept for history |
-
-A doc-gardening lint in CI flags docs with stale status, broken cross-links, or no recent touch after linked code last changed.
-
-## Core beliefs
-
-Non-negotiables that shape every decision in this repo.
-
-- [core-beliefs.md](core-beliefs.md) — `accepted`
-
-## Architectural decisions
-
-- [architecture.md](architecture.md) — `verified` — layer stack, domains, providers (boundaries enforced by golangci-lint depguard in `.golangci.yml`)
-- [manifest-schema.md](manifest-schema.md) — `accepted` — the JSON schema served at the exact manifest URL published on-chain, including canonical-bytes definition for signing (covered by `internal/types/decoder_test.go`)
-- [signature-scheme.md](signature-scheme.md) — `verified` — Ethereum personal-sign over canonical bytes; recover-then-compare against the chain-claimed eth address (covered by `internal/providers/{signer,verifier}/`)
-- [serviceuri-modes.md](serviceuri-modes.md) — `accepted` — resolver interpretation of full manifest URLs, CSV-fallback (read-only), and chainless static-overlay synth (covered by `internal/service/resolver/`)
-- [static-overlay.md](static-overlay.md) — `verified` — operator-curated `nodes.yaml` overlay rules and merge precedence (covered by `internal/config/overlay_test.go` + resolver overlay tests)
-- [resolver-cache.md](resolver-cache.md) — `verified` — TTL, last-good fallback, audit-event log (covered by `internal/repo/{manifestcache,audit}/`)
-- [grpc-surface.md](grpc-surface.md) — `verified` — gRPC contract bound to a unix-socket *grpc.Server (covered by `internal/runtime/grpc/wire_test.go`)
-- [observability.md](observability.md) — `verified` — Prometheus metric catalog, label enums, cardinality philosophy, sample queries (covered by `internal/providers/metrics/` + `internal/runtime/metrics/`)
-- [workload-agnostic-strings.md](workload-agnostic-strings.md) — `accepted` — why capability strings are opaque, naming conventions for known workloads
-- [worker-offerings-endpoint.md](worker-offerings-endpoint.md) — `verified` — uniform `/registry/offerings` HTTP convention every worker exposes for orch-coordinator scrape; body shape + optional bearer auth
-- [adding-a-new-workload.md](adding-a-new-workload.md) — `verified` — onramp recipe for new workload authors; capability naming, work_unit choice, pricing pattern, worker template, archetype-A integration
-
-## Conventions
-
-- Every design-doc has frontmatter: `title`, `status`, `last-reviewed`, optional `supersedes` and `superseded-by`.
-- Docs may link to other docs; they may not link into `exec-plans/` (plans are transient; docs are durable).
-- When implementation diverges from a doc, either the code changes to match or the doc is updated — never both out of sync.
+Beads tracks work. Execution-plan documents explain design decisions; current
+product documentation links to durable contracts rather than plans.

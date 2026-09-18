@@ -1,7 +1,7 @@
 ---
 title: Backend health
 status: active
-last-reviewed: 2026-05-11
+last-reviewed: 2026-09-17
 ---
 
 # Backend health
@@ -54,10 +54,10 @@ flowchart TD
 
 **Question:** does the orch publicly claim this capability exists right now?
 
-**Source of truth:** the signed manifest hosted at the orch's on-chain
-`serviceURI`. The capability is healthy at this layer iff a valid signed
+**Source of truth:** the coordinator's signed manifest, discovered through
+on-chain `serviceURI` or an overlay `manifest_url`. The capability is healthy at this layer iff a valid signed
 manifest currently lists `(capability_id, offering_id, worker_url)` with a
-non-zero price.
+nonnegative declared price.
 
 **Freshness budget:** minutes to hours. Manifest changes go through the
 operator-driven sign cycle (see [`trust-model.md`](./trust-model.md)) —
@@ -65,14 +65,15 @@ they're never instantaneous and they shouldn't be.
 
 **Who consumes it:**
 
-- the resolver (`service-registry-daemon`) on its per-round refresh
+- the resolver (`service-registry-daemon`) on fetch, cache reuse and round refresh
 - the orch-coordinator when building / verifying candidates
 - third-party scrapers building market-data feeds
 
 **Failure modes:**
 
 - manifest signature invalid → resolver refuses, route disappears
-- on-chain `serviceURI` points at a 404 → resolver refuses, route disappears
+- manifest retrieval fails → only a source-matching last-good publication within
+  max-stale and signed expiry can continue serving signed routes
 - manifest doesn't list the requested capability → not a "failure," just
   "not offered"
 
@@ -82,33 +83,56 @@ broker or backend say.
 
 ## Layer 2 — Live health
 
-**Question:** is the broker process up, and can it reach its declared
-backends right now?
+**Question:** is the broker process up, and does each advertised tuple have
+a certified runner attached right now?
 
 **Source of truth:** the broker's own health endpoints.
 
 | Endpoint | Scope | Used by |
 |---|---|---|
 | `GET /healthz` | the broker process itself | watchdogs, container orchestrators |
-| `GET /registry/health` | per-capability backend reachability | gateways, coordinators |
+| `GET /registry/health` | per-tuple runner readiness (certification + attach tunnel) | resolvers, gateways, coordinators |
 
 `/registry/health` returns a per-capability health snapshot. Example shape:
 
 ```json
 {
+  "broker_status": "ready",
+  "generated_at": "2026-09-08T12:00:00Z",
   "capabilities": [
     {
       "id": "openai:chat-completions",
       "offering_id": "tier-a",
       "status": "ready",
-      "last_probe_ms": 1450,
-      "backend": "reachable"
+      "reason": "certified",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z",
+      "last_dispatched_at": "2026-09-08T11:41:07Z",
+      "backends": [
+        {
+          "backend_id": "ai2-rig|qwen-chat",
+          "status": "ready",
+          "reason": "certified",
+          "probe_type": "attach",
+          "probed_at": "2026-09-08T12:00:00Z",
+          "stale_after": "2026-09-08T12:00:30Z",
+          "consecutive_successes": 1,
+          "last_dispatched_at": "2026-09-08T11:41:07Z",
+          "selection_eligible": true,
+          "selection_weight": 110,
+          "selection_reason": "eligible"
+        }
+      ]
     },
     {
-      "id": "video:live.rtmp",
+      "id": "video:transcode.live",
       "offering_id": "default",
-      "status": "draining",
-      "reason": "operator_marked_drain"
+      "status": "unreachable",
+      "reason": "no_eligible_runner",
+      "probe_type": "attach",
+      "probed_at": "2026-09-08T12:00:00Z",
+      "stale_after": "2026-09-08T12:00:30Z"
     }
   ]
 }
@@ -121,8 +145,12 @@ health surface."
 
 In practice:
 
-- each tuple in `host-config.yaml` may choose a broker-side probe recipe
-- the probe recipe may be shallow or specialized depending on workload
+- the **runner declares its own readiness recipe** in its attach document
+  (`readiness{type, path, config}`), because the runner is the only party
+  that knows what ready means for it — model loaded, GPU free, queue
+  depth. An operator-authored HTTP-status recipe approximates a fact the
+  runner has exactly.
+- the recipe may be shallow or specialized depending on workload
 - the broker maps the result onto generic outward states:
   `ready`, `draining`, `degraded`, `unreachable`, `stale`
 
@@ -138,8 +166,16 @@ Examples of legitimate specialized checks:
 The coordinator, resolver, and gateways should not need to understand
 those semantics. They consume only the broker's normalized result.
 
-**Freshness budget:** seconds. Backend reachability is probed on cadence
-(periodic + on-demand) and cached briefly.
+**Freshness budget:** seconds — but not because anything is polled. A
+runner's reachability is whether its attach tunnel is up, and its fitness
+for an offer is what certification decided; both are read live on every
+request to `/registry/health`. The freshness budget is a statement about
+how long a *reader* may cache the answer, not about a probe interval.
+Concretely: `probed_at` is always the time of the read and `stale_after` is
+always `probed_at` + 30 s. A reader MUST NOT age the verdict against
+anything else — in particular not against `last_dispatched_at`, which
+reports when the runner last did work and is informational only. An idle
+runner is not a failing one; the tunnel being up is the current evidence.
 
 **Who consumes it:**
 
@@ -150,8 +186,9 @@ those semantics. They consume only the broker's normalized result.
 
 **Failure modes:**
 
-- broker process is dead → `/healthz` is unreachable; the orch-coordinator
-  stops scraping and falls back to last-known manifest fragment
+- broker process is dead → `/healthz` and the registry endpoints are
+  unreachable; the orch-coordinator's scrape fails and it falls back to the
+  last-known manifest fragment
 - broker is up but a backend has gone dark → `/registry/health` reports the
   affected capabilities as `degraded` or `unreachable`; gateways should
   route elsewhere
@@ -167,10 +204,16 @@ a green `/healthz`.
 This stack is expected to serve capabilities with different definitions
 of "ready". The extensibility point belongs in the broker:
 
-- **operator-facing choice:** `host-config.yaml` selects the probe recipe
-  and thresholds per tuple
+- **runner-facing declaration:** the attach document names the probe
+  recipe (`http-status`, `http-jsonpath`, `http-openai-model-ready`,
+  `tcp-connect`) and its parameters
+  ([`runner-attach.md`](../../livepeer-network-protocol/protocols/runner-attach.md) §3.2)
+- **operator-facing choice:** the offer's `certification` steps decide
+  how much readiness is *enough* — attempts, interval, consecutive
+  successes — without restating the recipe
 - **core-module implementation:** capability-broker ships the probe
-  recipe library and executes probes on cadence
+  recipe library and runs a recipe when it certifies a runner — never on a
+  background cadence against a configured URL
 - **cross-stack contract:** `/registry/health` exposes only normalized
   status, freshness, and reason
 
@@ -194,9 +237,9 @@ sequenceDiagram
     SRD-->>GW: route candidate from cached manifest<br/>(layer 1 healthy)
 
     Note over GW,Backend: Optional pre-flight (per gateway policy)
-    GW->>Broker: GET /registry/health?capability=…
+    GW->>Broker: GET /registry/health
     alt healthy
-        Broker->>Backend: probe (cached recently)
+        Broker->>Broker: read certification +<br/>attach-tunnel state (no probe)
         Broker-->>GW: { status: ready }
         GW->>Broker: paid request
     else degraded / draining / unreachable
@@ -214,10 +257,12 @@ both sides of the wire.
 
 **Where the data lives:**
 
-- gateway-side: `livepeer_routes_total{capability, offering, outcome="…"}` —
-  per-route success / 4xx / 5xx / timeout outcomes
-- broker-side: `livepeer_routes_total` with the same label schema, exposed
-  on the broker's `/metrics`
+- gateway-side: a per-route outcome counter labelled
+  `{capability, offering, outcome}` — success / 4xx / 5xx / timeout
+  (gateways live outside this repo; the label schema is the contract)
+- broker-side: `livepeer_paid_requests_total{capability, offering, outcome}`
+  (plus `livepeer_paid_request_duration_seconds`), exposed on the broker's
+  `/metrics`
 - third-party scrapers aggregate both sides into independent market data
 
 **Freshness budget:** minutes. Failure-rate is a moving average — too
@@ -234,10 +279,10 @@ short a window is noisy, too long a window is stale.
 **Failure modes:**
 
 - a specific capability is failing inside an otherwise-healthy broker —
-  e.g., backend started returning 500s for one model but the
-  `/registry/health` probe to that backend is cosmetic enough to still pass
-- intermittent timeouts that exceed the gateway's request budget but
-  pass the broker's probe
+  e.g., a runner started returning 500s for one model while it is still
+  certified and its attach tunnel is up, so `/registry/health` stays `ready`
+- intermittent timeouts that exceed the gateway's request budget while the
+  runner stays attached
 - correlated failures across multiple orchs (chain RPC outage, common
   cloud-provider incident) — visible only at this layer
 
@@ -250,7 +295,7 @@ on purpose (Layer 8 of the architecture overview).
 flowchart LR
     subgraph supply["Per-orch metrics"]
         direction TB
-        B1["broker A /metrics<br/>routes_total, latency, errors"]
+        B1["broker A /metrics<br/>paid_requests_total, latency, errors"]
         B2["broker B /metrics"]
         B3["broker C /metrics"]
     end
@@ -300,7 +345,7 @@ Each layer corresponds to a different operator surface:
 | Layer | Operator action | Surface |
 |---|---|---|
 | 1 | update broker-facing offer/runtime state + sign cycle | standalone broker YAML or `pool-controller`, plus secure-orch-console |
-| 2 | restart broker, mark drain, fix backend | broker `/admin` + container orchestration |
+| 2 | restart broker, disable an offer or drain, fix the runner | broker `/admin/v1/*` + container orchestration |
 | 3 | inspect dashboards, declare incident | metrics / alerting stack |
 
 ## Execution placement
@@ -320,7 +365,7 @@ Anything else tends to smear trust and liveness together.
 | Check | Source of truth | Implemented in | Cached by | Consumed by | Must not do |
 |---|---|---|---|---|---|
 | "Did the operator declare this tuple?" | cold-signed manifest | `orch-coordinator` hosts; `service-registry-daemon` verifies | `service-registry-daemon` | gateways, scrapers, operators | infer live health |
-| "Is the broker process alive?" | `GET /healthz` | capability broker | orch-coordinator, `service-registry-daemon`, watchdogs | coordinator UX, resolver, ops | create or remove manifest entries |
+| "Is the broker process alive?" | `GET /healthz` | capability broker | watchdogs, container orchestrators | ops | create or remove manifest entries |
 | "Is this `(capability, offering)` backend ready right now?" | `GET /registry/health` | capability broker | orch-coordinator, `service-registry-daemon` | gateway route selection, coordinator UX | override signed manifest |
 | "Has this route been failing under real traffic?" | request outcomes over time | gateway + broker metrics | gateway-local policy, third-party scrapers | gateway retry / weighting, dashboards | become a signed market claim |
 
@@ -333,7 +378,7 @@ The coordinator has two separate jobs and they must stay separate:
    - build candidate manifest bytes
    - host the signed manifest after upload
 2. **Operational visibility**
-   - poll `GET /healthz` and `GET /registry/health`
+   - poll `GET /registry/health`
    - show per-broker / per-capability freshness and readiness in the UI
    - expose metrics and alerts for stale or unreachable brokers
 
@@ -346,7 +391,8 @@ are Layer 1.
 
 The resolver is where Layer 1 and Layer 2 get composed for routing:
 
-1. verify and cache signed manifests from the orch `serviceURI`
+1. verify and cache signed manifests from chain `serviceURI` or configured
+   coordinator `manifest_url`
 2. maintain a short-TTL cache of broker live health
 3. return only tuples that pass both checks:
    - present in a valid signed manifest
@@ -435,3 +481,15 @@ symptom.
 - [`./trust-model.md`](./trust-model.md) — the sign-cycle that gates Layer 1
 - [`../../capability-broker/`](../../capability-broker/) — where `/healthz`
   and `/registry/health` are implemented
+
+## Registry discovery implementation (2026-09-14)
+
+The registry can locate the coordinator through on-chain serviceURI or a static
+overlay manifest_url. Both paths verify the signed publication against the
+expected orchestrator address; the URL host is not the trust anchor. Overlay-only
+discovery does not disable payment or ticket chain requirements. See the
+[current manifest contract](../../service-registry-daemon/docs/product-specs/manifest-contract.md)
+and [overlay contract](../../service-registry-daemon/docs/design-docs/static-overlay.md)
+for enforced validation and policy. Targeted route selection requires fresh
+broker tuple readiness when live-health fetching is configured; inventory
+resolution can retain signed inventory when live-health data is unavailable.

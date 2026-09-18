@@ -20,7 +20,7 @@ For a typical orchestrator deployment:
 On every box that runs Traefik:
 
 - The Traefik stack is identical (this scenario). Each Traefik gets its
-  own certs and its own `acme.json`.
+  own certs and its own ACME store (`acme-cloudflare.json`).
 - Each host's DNS A/AAAA record must point at that host's public IP.
 - The Cloudflare DNS API token (or HTTP-01 alternative) must be able to
   issue certs for whichever hostname is configured on that box.

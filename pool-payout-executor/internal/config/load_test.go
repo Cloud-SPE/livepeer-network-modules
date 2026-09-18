@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -181,5 +182,76 @@ executor:
 `))
 	if err == nil {
 		t.Fatal("Load() error = nil, want invalid requeue_cooldown_seconds error")
+	}
+}
+
+func TestLoadEnvRPCURLsOverridesFile(t *testing.T) {
+	t.Setenv(RPCURLsEnv, " https://env-a , https://env-b ")
+	cfg, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+executor:
+  rpc_urls: [https://file-a]
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Executor.RPCURLs) != 2 || cfg.Executor.RPCURLs[0] != "https://env-a" || cfg.Executor.RPCURLs[1] != "https://env-b" {
+		t.Fatalf("RPCURLs = %v, want the env list", cfg.Executor.RPCURLs)
+	}
+}
+
+func TestLoadBlankEnvRPCURLsKeepsFile(t *testing.T) {
+	t.Setenv(RPCURLsEnv, "   ")
+	cfg, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+executor:
+  rpc_urls: [https://file-a]
+`))
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if len(cfg.Executor.RPCURLs) != 1 || cfg.Executor.RPCURLs[0] != "https://file-a" {
+		t.Fatalf("RPCURLs = %v, want the file list", cfg.Executor.RPCURLs)
+	}
+}
+
+func TestLoadInvalidEnvRPCURLsIsAnError(t *testing.T) {
+	t.Setenv(RPCURLsEnv, "https://a,,https://b")
+	_, err := Load([]byte(`
+pool_controller:
+  url: http://pool-controller:8080
+`))
+	if err == nil || !strings.Contains(err.Error(), "CHAIN_RPC_URLS") || !strings.Contains(err.Error(), "entry 2 is empty") {
+		t.Fatalf("Load() error = %v, want CHAIN_RPC_URLS parse error", err)
+	}
+}
+
+func TestRegionalControllerCredentialsFailClosed(t *testing.T) {
+	for _, body := range []string{
+		"pool_controller: {url: 'http://controller.example', pool_id: pool_us, token_file: /token}",
+		"pool_controller: {url: 'https://controller.example', pool_id: pool_us}",
+		"pool_controller: {url: 'https://controller.example', pool_id: pool_us, token_file: /token, bearer_token: old}",
+	} {
+		if _, err := Load([]byte(body)); err == nil {
+			t.Fatalf("accepted unsafe config: %s", body)
+		}
+	}
+	if _, err := Load([]byte("pool_controller: {url: 'https://controller.example', pool_id: pool_us, token_file: /token}\nexecutor: {expected_wallet_address: '0x1111111111111111111111111111111111111111', state_path: /data/state.db}")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRegionalWalletAndPersistenceAreRequired(t *testing.T) {
+	prefix := "pool_controller: {url: 'https://controller.example', pool_id: pool_us, token_file: /token}\n"
+	for _, executor := range []string{"{}", "{state_path: /data/state.db}", "{state_path: /data/state.db, expected_wallet_address: invalid}", "{state_path: /data/state.db, expected_wallet_address: '0x0000000000000000000000000000000000000000'}", "{expected_wallet_address: '0x1111111111111111111111111111111111111111'}"} {
+		if _, err := Load([]byte(prefix + "executor: " + executor)); err == nil {
+			t.Fatalf("accepted %s", executor)
+		}
+	}
+	cfg, err := Load([]byte(prefix + "executor: {state_path: /data/state.db, expected_wallet_address: '0x1111111111111111111111111111111111111111'}"))
+	if err != nil || cfg.Executor.PoolID != "pool_us" {
+		t.Fatalf("pool authority not propagated %+v %v", cfg, err)
 	}
 }

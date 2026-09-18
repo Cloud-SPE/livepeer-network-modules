@@ -499,7 +499,7 @@
   }
 
   .badge.drift-price_changed,
-  .badge.drift-mode_changed,
+  .badge.drift-protocol_changed,
   .badge.drift-extra_changed,
   .badge.drift-worker_changed,
   .badge.audit-rollback_rejected,
@@ -513,6 +513,34 @@
   .badge.audit-candidate_downloaded {
     background: var(--accent-tint);
     color: var(--accent);
+    border-color: transparent;
+  }
+
+  /* Step and offer status badges (certification.html, offers.html). These
+     classes were referenced without a rule, so every status rendered in
+     the neutral badge; a failed step looked like a skipped one. */
+  .badge.audit-success {
+    background: var(--ok-tint);
+    color: var(--ok);
+    border-color: transparent;
+  }
+
+  .badge.audit-info {
+    background: var(--accent-tint);
+    color: var(--accent);
+    border-color: transparent;
+  }
+
+  .badge.audit-failure {
+    background: var(--danger-tint);
+    color: var(--danger);
+    border-color: transparent;
+  }
+
+  /* A failed step the recipe marks optional: worth seeing, not the verdict. */
+  .badge.audit-optional {
+    background: var(--warn-tint);
+    color: var(--warn);
     border-color: transparent;
   }
 
@@ -682,7 +710,7 @@
   }
 
   tbody tr.drift-price_changed,
-  tbody tr.drift-mode_changed,
+  tbody tr.drift-protocol_changed,
   tbody tr.drift-extra_changed,
   tbody tr.drift-worker_changed {
     background: rgba(251, 191, 36, 0.08);
@@ -997,3 +1025,21 @@
     padding: 1rem;
   }
 }
+
+/* Hot-zone console: the agent-environment block on Enroll host is the
+   one place an operator copies several lines verbatim, so it gets real
+   pre formatting rather than inheriting inline-code styling. */
+.code-block {
+  background: var(--surface-sunken, rgba(127, 127, 127, 0.12));
+  border: 1px solid var(--border, rgba(127, 127, 127, 0.3));
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  overflow-x: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+/* Offer and runner sections stack several tables; keep them apart. */
+.roster + .roster { margin-top: 2rem; }

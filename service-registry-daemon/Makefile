@@ -7,7 +7,6 @@ GO_LDFLAGS := -s -w -X main.version=$(VERSION)
 
 build:
 	go build -trimpath -ldflags '$(GO_LDFLAGS)' -o bin/livepeer-service-registry-daemon ./cmd/livepeer-service-registry-daemon
-	go build -o bin/livepeer-registry-refresh ./cmd/livepeer-registry-refresh
 
 test:
 	go test -race ./...
@@ -17,30 +16,25 @@ lint:
 	$(MAKE) lint-custom
 
 lint-custom:
+	go run ./tools/manifest-doc --check
 	go run ./lint/doc-gardener --root .
 	go run ./lint/no-unverified-manifest --root .
 
 doc-lint:
+	go run ./tools/manifest-doc --check
 	go run ./lint/doc-gardener --root .
 
 coverage:
-	@# Limit the coverage run to packages that actually have tests. This
-	@# skips generated/example/doc-only packages, which add no signal to
-	@# the local gate and can trip missing `covdata` lookups.
-	go test -coverprofile=coverage.out -covermode=atomic \
-		$$(go list -f '{{if or (gt (len .TestGoFiles) 0) (gt (len .XTestGoFiles) 0)}}{{.ImportPath}}{{end}}' ./... | sed '/^$$/d')
+	go test -coverprofile=coverage.out -covermode=atomic ./cmd/... ./internal/...
 
 coverage-check: coverage
 	go run ./lint/coverage-gate --root .
 
-# ship-check is the pre-tag gate. Run before cutting a release tag.
-# Catches everything CI catches: golangci-lint, race-detector tests,
-# per-package coverage floor, and proto wire-compat breaking-change check.
-# See protocol-daemon/Makefile for why coverage-check + proto-check
-# are not part of the local ship-check gate (env tooling flakes).
+# ship-check enforces lint, race tests and per-package coverage before publication.
 ship-check:
 	$(MAKE) lint
 	$(MAKE) test
+	$(MAKE) coverage-check
 
 tidy:
 	go mod tidy
@@ -64,3 +58,7 @@ docker-push:
 
 clean:
 	rm -rf bin/
+
+.PHONY: docs-generate
+docs-generate:
+	go run ./tools/manifest-doc

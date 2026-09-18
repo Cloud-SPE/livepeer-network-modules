@@ -13,8 +13,11 @@ One coordinator process per orch operator. Inputs:
 - LAN broker `/registry/offerings` endpoints — HTTP GET, JSON. Shape pinned
   by [`../capability-broker/internal/server/registry/offerings.go`](../capability-broker/internal/server/registry/offerings.go).
 - LAN broker `/registry/health` endpoints — HTTP GET, JSON. Used for tuple
-  liveness plus broker metadata-discovery status such as `last_result`,
-  `consecutive_failures`, and freshness age.
+  liveness.
+- LAN broker `/registry/settlement-keys` endpoints — HTTP GET, JSON. Each
+  broker's self-signed announcement of its delegated settlement key; the
+  proof is verified on scrape and proven keys are merged into the
+  candidate's `settlement_keys[]`.
 - Static config file `coordinator-config.yaml` — broker list, orch identity,
   tunables.
 
@@ -23,9 +26,11 @@ Outputs:
 - The candidate manifest — packaged as a `tar.gz` (`manifest.json` JCS
   bytes + `metadata.json` operator-only sidecar). Operator downloads via
   the web UI.
-  The sidecar now includes broker metadata thresholds, per-broker metadata
-  summaries, and per-tuple metadata warnings so the operator can evaluate
-  degraded discovery state before hand-carrying the candidate for signing.
+  The sidecar carries the scrape window, per-broker freshness and errors,
+  the effective sign policy (`manifest_ttl_seconds`,
+  `renewal_threshold_seconds`), `ha_endpoints`, and settlement-key
+  provenance so the operator can evaluate degraded scrape state before
+  hand-carrying the candidate for signing.
 - The currently-published signed manifest — served on the resolver-facing
   listener at `/.well-known/livepeer-registry.json`.
 
@@ -103,8 +108,9 @@ Same broker offerings + same scrape window → byte-identical manifest.
 ## Aggregation rules
 
 The uniqueness key for tuple identity is the canonicalized
-`(capability_id, offering_id, extra, constraints)` quadruple. `worker_url`
-is **not** part of identity.
+`(capability_id, offering_id, settlement_domain_id, extra, constraints)`
+tuple. `worker_url` is **not** part of identity, but one `worker_url`
+reporting two different `settlement_domain_id` values hard-fails the build.
 
 Three cases when scraping multiple brokers:
 
@@ -128,9 +134,9 @@ Five steps, run synchronously when an upload arrives:
    verifier in
    [`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/).
 3. `manifest.orch.eth_address` matches the configured operator identity.
-4. **Schema-version drift check** — reject if the signed manifest's
-   `spec_version` differs from the candidate the coordinator most
-   recently produced.
+4. **Drift check** — reject if the signed manifest's `spec_version`
+   differs from the coordinator's, or its canonical bytes are not the
+   candidate the coordinator most recently produced.
 5. `issued_at` and `expires_at` well-formed and in the future, plus
    `publication_seq` strictly greater than the currently-published
    manifest's value (rollback defense).
@@ -142,21 +148,25 @@ the currently-published manifest stays live.
 
 Old manifest stays live until the new one verifies. The publish is
 write-tempfile-fsync-rename(2). Single-writer guaranteed by `flock(2)`
-over the publish dir; concurrent uploaders block on the lock.
+over the publish dir; a concurrent uploader fails fast with `ErrLocked`
+rather than queueing.
 
 ## Persistence
 
 - **In-memory.** Scrape cache (latest broker offerings + per-broker
   status). Recoverable on restart by re-scraping.
-  The per-broker status now includes broker `/registry/health` tuple metadata
-  so the roster can classify metadata state as `ok`, `degraded`, `stale`, or
-  `never_succeeded`.
+  The per-broker status carries the broker's live tuple health and its
+  settlement-key announcement with the proof verdict.
 - **On disk.**
   - `<data-dir>/published/manifest.json` — the live signed manifest.
   - `<data-dir>/candidates/<timestamp>/{manifest.json,metadata.json}` —
     history snapshots; pruned by count.
   - `<data-dir>/audit.db` — BoltDB log of every publish event (uploader,
     timestamp, signature hash, accepted/rejected with reason).
+  - `<data-dir>/settlement-keys.json` — when each broker-announced
+    settlement key was first seen, from which its published window is
+    derived. Deleting it re-anchors every unbounded key to a new window,
+    which is a manifest change the cold key has to review.
 
 ## Observability
 
@@ -167,4 +177,5 @@ over the publish dir; concurrent uploaders block on the lock.
 - Structured slog audit event on every publish (stable error-code
   strings).
 
-See [`AGENTS.md`](./AGENTS.md) for the runtime configuration surface.
+See [`docs/operator-runbook.md`](./docs/operator-runbook.md) for the
+runtime configuration surface.

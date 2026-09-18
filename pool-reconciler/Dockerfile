@@ -2,6 +2,7 @@ ARG GO_VERSION=1.25.7
 
 FROM golang:${GO_VERSION} AS base
 WORKDIR /src
+COPY pool-commons/ ./pool-commons/
 
 COPY proto-contracts/go.mod ./proto-contracts/
 COPY livepeer-network-protocol/proto-go/go.mod ./livepeer-network-protocol/proto-go/

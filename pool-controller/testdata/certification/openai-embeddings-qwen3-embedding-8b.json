@@ -1,0 +1,47 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 10,
+      "interval_ms": 3000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "config": {
+      "assert": [
+        "$.data[0].embedding",
+        {
+          "min": 1,
+          "path": "$.usage.total_tokens"
+        }
+      ],
+      "body": {
+        "input": "a probe",
+        "model": "{{identity.openai.model}}"
+      },
+      "transport": "unary"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 1
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "p50_max_ms": 2000,
+      "samples": 3
+    }
+  }
+]

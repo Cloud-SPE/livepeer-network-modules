@@ -1,21 +1,12 @@
 package types
 
-import "time"
-
+// MemberStatus is the pool's verdict on a member as a whole, separate
+// from the state of anything they run. It survived the legacy member
+// model because PoolMember carries it (connected_pool.go) and existing
+// pool_members_v2 rows already persist these strings.
 type MemberStatus string
 
 const (
 	MemberStatusActive    MemberStatus = "active"
 	MemberStatusSuspended MemberStatus = "suspended"
 )
-
-type MemberRecord struct {
-	ID                  string       `json:"id"`
-	EthAddress          string       `json:"eth_address"`
-	DisplayName         string       `json:"display_name,omitempty"`
-	PayoutMode          string       `json:"payout_mode"`
-	Status              MemberStatus `json:"status"`
-	SourceJoinRequestID string       `json:"source_join_request_id,omitempty"`
-	CreatedAt           time.Time    `json:"created_at"`
-	UpdatedAt           time.Time    `json:"updated_at"`
-}

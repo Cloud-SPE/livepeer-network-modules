@@ -60,7 +60,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			return
 		}
 		out := map[string]any{
-			"ticket_params": map[string]any{
+			"settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
 				"win_prob":            new(big.Int).SetBytes(resp.GetTicketParams().GetWinProb()).String(),
@@ -88,7 +88,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher(), nil)
+	svc := sender.New(keystore, devbroker.New(), devclock.New(), nil, sender.NewHTTPTicketParamsFetcher(), nil, mintStore(t), sender.Limits{})
 
 	lis, err := net.Listen("unix", sockPath)
 	if err != nil {
@@ -112,6 +112,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	createResp, err := payer.CreatePayment(ctx, &pb.CreatePaymentRequest{
 		Recipient:           recipient,
 		TicketParamsBaseUrl: proxy.URL,
+		MintRequestId:       "e2e-mint-1",
 		AcceptedPrice: &pb.AcceptedPrice{
 			PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			UnitsPerPrice:   1,
@@ -130,6 +131,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
+		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
@@ -142,10 +144,14 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	workID := hex.EncodeToString(pay.GetTicketParams().GetRecipientRandHash())
 
 	openResp, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{
-		WorkId:              workID,
-		Capability:          "openai:chat-completions",
-		Offering:            "model-a",
-		PricePerWorkUnitWei: []byte{0x01},
+		WorkId:     workID,
+		Capability: "openai:chat-completions",
+		Offering:   "model-a",
+		// Must equal the price the sender signed into the payment
+		// above. The two used to differ — 1 here against an accepted
+		// 1000 — and nothing compared them, so the payee billed at a
+		// rate the sender never agreed to.
+		PricePerWorkUnitWei: big.NewInt(1000).Bytes(),
 		WorkUnit:            "tokens",
 	})
 	if err != nil {
@@ -188,7 +194,7 @@ func receiverStand(t *testing.T, recipient []byte) (pb.PayeeDaemonClient, *store
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient:        recipient,
 		DefaultFaceValue: big.NewInt(1000),
 		DefaultWinProb:   types.MaxWinProb,

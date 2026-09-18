@@ -146,11 +146,13 @@ func TestConsolePagesRenderWithActiveNav(t *testing.T) {
 
 	pages := []struct{ path, href, marker string }{
 		{"/admin", "/admin", `id="ovOffers"`},
-		{"/admin/offers", "/admin/offers", `id="offerId"`},
-		{"/admin/join-requests", "/admin/join-requests", `id="joinRequests"`},
-		{"/admin/members", "/admin/members", `id="members"`},
-		{"/admin/assignments", "/admin/assignments", `id="assignmentCandidates"`},
-		{"/admin/broker-runtime", "/admin/broker-runtime", `id="runtimeYaml"`},
+		// The offers page no longer authors an offer, so there is no
+		// offer-id field to find. What it must show is the two panels
+		// the derived model replaced it with: the templates a pool
+		// adopts, and the offer set that falls out of them.
+		{"/admin/offers", "/admin/offers", `id="templateCatalog"`},
+		{"/admin/offers", "/admin/offers", `id="offers"`},
+		{"/admin/pool", "/admin/pool", `id="poolMembers"`},
 		{"/admin/audit", "/admin/audit", `id="auditEvents"`},
 	}
 	for _, p := range pages {

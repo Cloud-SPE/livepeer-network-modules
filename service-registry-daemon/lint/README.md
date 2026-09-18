@@ -1,28 +1,46 @@
-# Custom lints
+# Custom lints and documentation generation
 
-Beyond `golangci-lint`, this repo ships small custom analyzers for invariants depguard / staticcheck don't cleanly express. They're plain Go programs runnable with `go run`.
+`make lint` runs golangci-lint, generated-document checks, doc-gardener and
+no-unverified-manifest. `make doc-lint` runs the generated-document and current
+document checks. Use `make docs-generate` to regenerate the manifest example.
 
 ## doc-gardener
 
-Checks the `docs/` directory:
-- Every design-doc has frontmatter (`title`, `status`, `last-reviewed`).
-- `status` is one of `proposed | accepted | verified | deprecated`.
-- `last-reviewed` is RFC3339 and at most 365 days old.
-- Cross-links between docs resolve to existing files.
-- Every link from `AGENTS.md` / `DESIGN.md` / `README.md` resolves.
+The checker requires title, status and YYYY-MM-DD last-reviewed frontmatter on
+design docs other than the index. Review dates older than 365 days fail.
+Allowed statuses are proposed, accepted, verified and deprecated.
 
-Run: `go run ./lint/doc-gardener --root .`
+It checks relative file links in current Markdown across the component,
+including examples and lint instructions. It skips HTTP(S)/mailto links and
+does not validate anchors or Mermaid syntax. It cannot establish whether prose
+matches code. Missing docs or filesystem traversal failures are errors.
+
+Immutable `docs/references/` and `docs/exec-plans/completed/` trees retain their
+original historical links and are excluded. Links from current docs **to**
+those files must still resolve. Tests cover both the exclusion and detection of
+broken current example/lint links.
+
+## Manifest example
+
+`tools/manifest-doc` reads the protocol module's minimal envelope fixture,
+validates it with `types.DecodeCoordinatorEnvelope`, and renders
+`docs/generated/manifest-example.md`. The fixture has a placeholder signature;
+this check establishes shape, not cryptographic deployability. `--check` fails
+when the generated document differs. Do not edit the output by hand.
 
 ## no-unverified-manifest
 
-Checks Go source: any function that produces or returns a `*types.Manifest` from a wire-bytes input must reach the manifest through `internal/types.DecodeManifest` (the only boundary-validating decoder). Code paths that JSON-unmarshal directly into a `*types.Manifest` are flagged with a remediation message pointing at `DecodeManifest`.
+This is a deliberately limited source-text heuristic: outside tests and the
+boundary decoder, it flags `json.Unmarshal` followed within 200 characters by
+`Manifest`. It is not dataflow analysis and cannot prove a signature was
+verified. Its diagnostic points to `types.DecodeCoordinatorEnvelope`; signature
+recovery remains the resolver's responsibility.
 
-Run: `go run ./lint/no-unverified-manifest --root .`
+## Other gates
 
-## layer-check (planned)
-
-Status: stub. golangci-lint's `depguard` covers v1; the richer analyzer is planned in a follow-up exec-plan. See `docs/exec-plans/tech-debt-tracker.md`.
-
-## coverage-gate (planned)
-
-Status: stub. CI runs `go test -race -coverprofile=coverage.out` and emits a coverage file; gate enforcement (≥75% per package) is planned. See `docs/exec-plans/tech-debt-tracker.md`.
+`layer-check` is a stub; golangci-lint depguard enforces configured import
+boundaries. `make coverage-check` enforces 75% statement coverage per executable
+cmd/internal package. Package inventory catches missing tests and profile records.
+Examples and development tooling are excluded from the daemon coverage boundary;
+they have separate tests. `make ship-check` includes the coverage gate.
+Tracked in beads `lnm-gpd`. No current CI contract should claim otherwise.

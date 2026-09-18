@@ -36,7 +36,8 @@ work_unit:
 |---|---|---|---|
 | `type` | yes | — | `"request-formula"` |
 | `expression` | yes | — | Safe arithmetic expression — operators only; field references by name |
-| `fields` | yes | — | Map of identifier → JSONPath into the request body |
+| `fields` | yes* | — | Map of identifier → JSONPath into the request body. Numeric only: a path that resolves to anything but a number is missing, and falls to `default`. |
+| `text_fields` | no* | — | Map of identifier → JSONPath into the request body, evaluated as the **code-point count** of the string found there (so `text_fields: { chars: "$.input" }` with `expression: chars` is a TTS character count). A path that resolves to anything but a string is missing. An identifier may appear in `fields` or `text_fields`, never both. *At least one of the two is required; `text_fields` alone is a complete configuration. |
 | `default` | no | `0` | Used when any field is missing or evaluates to non-numeric |
 
 ## Safe expression language
@@ -45,7 +46,7 @@ The expression is **NOT** a general-purpose eval. Implementations MUST restrict
 to:
 
 - Numeric literals: integers and floats.
-- Field references: identifiers declared in `fields`.
+- Field references: identifiers declared in `fields` or `text_fields`.
 - Operators: `+`, `-`, `*`, `/`, `%`, parentheses.
 - Functions (optional, implementations MAY support a small allowlist):
   `min(a, b)`, `max(a, b)`, `floor(x)`, `ceil(x)`, `round(x)`.
@@ -60,7 +61,8 @@ outside the allowed grammar at config-load time, not at runtime.
 ## Recipe
 
 1. Parse the request body as JSON.
-2. For each `fields` entry, evaluate the JSONPath; coerce to number.
+2. For each `fields` entry, evaluate the JSONPath; coerce to number. For each
+   `text_fields` entry, take the code-point count of the string at the path.
 3. Substitute into `expression`.
 4. Evaluate the expression.
 5. Floor to non-negative integer; that is `actualUnits`.

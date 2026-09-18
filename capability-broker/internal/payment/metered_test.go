@@ -20,25 +20,25 @@ func TestWithMetricsNilPassthrough(t *testing.T) {
 }
 
 func TestMeteredRecordsSuccessAndErrorResults(t *testing.T) {
-	okBefore := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("process_payment", "ok"))
+	okBefore := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("get_ticket_params", "ok"))
 	errBefore := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("open_session", codes.Unavailable.String()))
 
 	client := WithMetrics(&stubClient{
 		openErr: status.Error(codes.Unavailable, "daemon down"),
 	})
 
-	if _, err := client.ProcessPayment(context.Background(), ProcessPaymentRequest{}); err != nil {
-		t.Fatalf("ProcessPayment: unexpected error %v", err)
+	if _, err := client.GetTicketParams(context.Background(), GetTicketParamsRequest{}); err != nil {
+		t.Fatalf("GetTicketParams: unexpected error %v", err)
 	}
 	if _, err := client.OpenSession(context.Background(), OpenSessionRequest{}); err == nil {
 		t.Fatal("OpenSession: expected error")
 	}
 
-	okAfter := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("process_payment", "ok"))
+	okAfter := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("get_ticket_params", "ok"))
 	errAfter := testutil.ToFloat64(observability.TestPaymentClientRequestsCounter("open_session", codes.Unavailable.String()))
 
 	if okAfter-okBefore != 1 {
-		t.Fatalf("process_payment ok counter: want +1, got %v", okAfter-okBefore)
+		t.Fatalf("get_ticket_params ok counter: want +1, got %v", okAfter-okBefore)
 	}
 	if errAfter-errBefore != 1 {
 		t.Fatalf("open_session Unavailable counter: want +1, got %v", errAfter-errBefore)
@@ -63,8 +63,8 @@ type stubClient struct {
 	openErr error
 }
 
-func (s *stubClient) ProcessPayment(context.Context, ProcessPaymentRequest) (*ProcessPaymentResult, error) {
-	return &ProcessPaymentResult{}, nil
+func (s *stubClient) GetTicketParams(context.Context, GetTicketParamsRequest) (*TicketParams, error) {
+	return &TicketParams{}, nil
 }
 
 func (s *stubClient) OpenSession(context.Context, OpenSessionRequest) (*OpenSessionResult, error) {

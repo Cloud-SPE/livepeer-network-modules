@@ -122,35 +122,6 @@ func TestRecordBackendOutcomeIngest(t *testing.T) {
 	}
 }
 
-func TestRecordSyntheticProbeRunSummary(t *testing.T) {
-	beforeRun := testutil.ToFloat64(syntheticProbeRunsTotal.WithLabelValues("partial"))
-	beforeResult := testutil.ToFloat64(syntheticProbeResultsTotal.WithLabelValues(
-		"openai:chat-completions",
-		"default",
-		"succeeded",
-		"probe_ok",
-	))
-
-	RecordSyntheticProbeRunSummary([]ProbeResultMetric{
-		NewProbeResultMetric("openai:chat-completions", "default", "succeeded", "probe_ok"),
-		NewProbeResultMetric("openai:embeddings", "default", "skipped", "capability_out_of_scope"),
-	}, 2*time.Second, "partial")
-
-	afterRun := testutil.ToFloat64(syntheticProbeRunsTotal.WithLabelValues("partial"))
-	if afterRun != beforeRun+1 {
-		t.Fatalf("synthetic probe run delta = %v; want 1", afterRun-beforeRun)
-	}
-	afterResult := testutil.ToFloat64(syntheticProbeResultsTotal.WithLabelValues(
-		"openai:chat-completions",
-		"default",
-		"succeeded",
-		"probe_ok",
-	))
-	if afterResult != beforeResult+1 {
-		t.Fatalf("synthetic probe result delta = %v; want 1", afterResult-beforeResult)
-	}
-}
-
 func TestUpdateAccountingSnapshot(t *testing.T) {
 	UpdateAccountingSnapshot(
 		[]types.WorkReceipt{

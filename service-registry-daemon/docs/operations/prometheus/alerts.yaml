@@ -38,13 +38,13 @@ groups:
           summary: "Manifests are failing signature verification at >0.05/s for 5m"
           description: |
             One or more orchestrator manifests are returning signatures that
-            do not recover to the chain-claimed eth address. This is either
+            do not recover to the configured or chain-discovered eth address. This is either
             an MITM / DNS hijack on a manifest URL, or an operator
             misconfiguration (e.g. signing with the wrong key after a
             rotation).
 
             The daemon refuses to cache or return these manifests, so
-            consumers see `manifest_unavailable` errors.
+            ResolveByAddress returns `signature_mismatch`; Select skips rejected candidates.
 
             Use `Resolver.GetAuditLog(eth_address, since, limit)` to
             identify which orchestrator(s) are affected.
@@ -53,7 +53,9 @@ groups:
 
       - alert: RegistryChainRPCStale
         expr: |
-          (time() - max(livepeer_registry_chain_last_success_timestamp_seconds)) > 300
+          (time() - livepeer_registry_chain_last_success_timestamp_seconds > 300)
+          and on (job, instance)
+          (sum by (job, instance) (increase(livepeer_registry_chain_reads_total{outcome="unavailable"}[5m])) > 0)
         for: 1m
         labels:
           severity: page
@@ -63,10 +65,11 @@ groups:
           description: |
             The daemon's chain provider has not succeeded in 5+ minutes.
             New ResolveByAddress calls hit the cache; cached entries past
-            --max-stale (default 1h) start returning `cache_stale_failing`.
+            --max-stale (default 1h) cannot mask chain failures.
+            Idle and overlay-only instances do not satisfy the failed-read condition.
 
             Likely causes: chain RPC endpoint down, network partition,
-            wrong --chain-rpc URL, rate-limit exhaustion at the RPC
+            wrong --chain-rpc-urls URL, rate-limit exhaustion at the RPC
             provider.
 
       - alert: RegistryDaemonDown
@@ -129,7 +132,7 @@ groups:
             ServiceRegistry.getServiceURI calls are slow at the tail. The
             daemon's cache absorbs steady-state load, but new /
             cache-miss resolves block on this. Investigate the configured
-            --chain-rpc endpoint.
+            --chain-rpc-urls endpoint.
 
       - alert: RegistryResolveLatencyHigh
         expr: |
@@ -151,9 +154,9 @@ groups:
 
       - alert: RegistryManifestFetcherStale
         expr: |
-          (time() - max(livepeer_registry_manifest_fetcher_last_success_timestamp_seconds)) > 600
-          and
-          rate(livepeer_registry_manifest_fetches_total[10m]) > 0
+          (time() - livepeer_registry_manifest_fetcher_last_success_timestamp_seconds > 600)
+          and on (job, instance)
+          (sum by (job, instance) (increase(livepeer_registry_manifest_fetches_total[10m])) > 0)
         for: 5m
         labels:
           severity: ticket
@@ -229,12 +232,7 @@ groups:
     rules:
       - alert: RegistryCardinalityCapHit
         expr: |
-          increase(livepeer_registry_grpc_requests_total[1h]) > 0
-          and
-          (
-            count(count by (service, method, code, registry_code) (livepeer_registry_grpc_requests_total))
-            >= 9000
-          )
+          count by (job, instance) (livepeer_registry_grpc_requests_total) >= 9000
         for: 10m
         labels:
           severity: info
@@ -267,12 +265,12 @@ groups:
           severity: info
           service: livepeer-service-registry
         annotations:
-          summary: "Static-overlay reload failed in the last 15 minutes"
+          summary: "Static-overlay startup load failure observed"
           description: |
-            A nodes.yaml reload failed (parse_error or io_error). The
-            previous valid overlay remains active — no traffic impact —
-            but the change the operator wanted to apply was rejected.
-            Check the daemon log around the timestamp.
+            A nodes.yaml startup load failed (parse_error or io_error).
+            Invalid configuration is fatal; there is no hot reload. This
+            process may exit before Prometheus can scrape this counter.
+            Use RegistryDaemonDown and startup logs as the primary signals.
 
       - alert: RegistryMixedDaemonVersions
         expr: count(count by (version) (livepeer_registry_build_info)) > 1

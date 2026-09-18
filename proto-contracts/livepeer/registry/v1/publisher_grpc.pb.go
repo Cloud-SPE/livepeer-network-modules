@@ -20,23 +20,26 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	Publisher_GetIdentity_FullMethodName   = "/livepeer.registry.v1.Publisher/GetIdentity"
-	Publisher_BuildManifest_FullMethodName = "/livepeer.registry.v1.Publisher/BuildManifest"
-	Publisher_SignManifest_FullMethodName  = "/livepeer.registry.v1.Publisher/SignManifest"
-	Publisher_BuildAndSign_FullMethodName  = "/livepeer.registry.v1.Publisher/BuildAndSign"
-	Publisher_ProbeWorker_FullMethodName   = "/livepeer.registry.v1.Publisher/ProbeWorker"
-	Publisher_Health_FullMethodName        = "/livepeer.registry.v1.Publisher/Health"
+	Publisher_GetIdentity_FullMethodName = "/livepeer.registry.v1.Publisher/GetIdentity"
+	Publisher_Health_FullMethodName      = "/livepeer.registry.v1.Publisher/Health"
 )
 
 // PublisherClient is the client API for Publisher service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+//
+// Publisher is what remains of the daemon's write surface after the
+// manifest pipeline moved to the offer-only model (plan 0043 §3.8).
+//
+// Building and signing manifests here was a second signing path beside
+// the cold key on secure-orch, and a second manifest shape beside the
+// protocol module's envelope. The cold key is now the only thing that
+// signs a manifest, and orch-coordinator is the only thing that builds
+// one, so BuildManifest, SignManifest, BuildAndSign and ProbeWorker are
+// gone. Identity and health remain: they answer questions about this
+// daemon, not about a manifest.
 type PublisherClient interface {
 	GetIdentity(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*IdentityResult, error)
-	BuildManifest(ctx context.Context, in *BuildManifestRequest, opts ...grpc.CallOption) (*BuildResult, error)
-	SignManifest(ctx context.Context, in *SignManifestRequest, opts ...grpc.CallOption) (*SignedManifest, error)
-	BuildAndSign(ctx context.Context, in *BuildAndSignRequest, opts ...grpc.CallOption) (*SignedManifest, error)
-	ProbeWorker(ctx context.Context, in *ProbeWorkerRequest, opts ...grpc.CallOption) (*ProbeResult, error)
 	Health(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthResult, error)
 }
 
@@ -58,46 +61,6 @@ func (c *publisherClient) GetIdentity(ctx context.Context, in *emptypb.Empty, op
 	return out, nil
 }
 
-func (c *publisherClient) BuildManifest(ctx context.Context, in *BuildManifestRequest, opts ...grpc.CallOption) (*BuildResult, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(BuildResult)
-	err := c.cc.Invoke(ctx, Publisher_BuildManifest_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *publisherClient) SignManifest(ctx context.Context, in *SignManifestRequest, opts ...grpc.CallOption) (*SignedManifest, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SignedManifest)
-	err := c.cc.Invoke(ctx, Publisher_SignManifest_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *publisherClient) BuildAndSign(ctx context.Context, in *BuildAndSignRequest, opts ...grpc.CallOption) (*SignedManifest, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(SignedManifest)
-	err := c.cc.Invoke(ctx, Publisher_BuildAndSign_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (c *publisherClient) ProbeWorker(ctx context.Context, in *ProbeWorkerRequest, opts ...grpc.CallOption) (*ProbeResult, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(ProbeResult)
-	err := c.cc.Invoke(ctx, Publisher_ProbeWorker_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *publisherClient) Health(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthResult, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResult)
@@ -111,12 +74,19 @@ func (c *publisherClient) Health(ctx context.Context, in *emptypb.Empty, opts ..
 // PublisherServer is the server API for Publisher service.
 // All implementations should embed UnimplementedPublisherServer
 // for forward compatibility.
+//
+// Publisher is what remains of the daemon's write surface after the
+// manifest pipeline moved to the offer-only model (plan 0043 §3.8).
+//
+// Building and signing manifests here was a second signing path beside
+// the cold key on secure-orch, and a second manifest shape beside the
+// protocol module's envelope. The cold key is now the only thing that
+// signs a manifest, and orch-coordinator is the only thing that builds
+// one, so BuildManifest, SignManifest, BuildAndSign and ProbeWorker are
+// gone. Identity and health remain: they answer questions about this
+// daemon, not about a manifest.
 type PublisherServer interface {
 	GetIdentity(context.Context, *emptypb.Empty) (*IdentityResult, error)
-	BuildManifest(context.Context, *BuildManifestRequest) (*BuildResult, error)
-	SignManifest(context.Context, *SignManifestRequest) (*SignedManifest, error)
-	BuildAndSign(context.Context, *BuildAndSignRequest) (*SignedManifest, error)
-	ProbeWorker(context.Context, *ProbeWorkerRequest) (*ProbeResult, error)
 	Health(context.Context, *emptypb.Empty) (*HealthResult, error)
 }
 
@@ -129,18 +99,6 @@ type UnimplementedPublisherServer struct{}
 
 func (UnimplementedPublisherServer) GetIdentity(context.Context, *emptypb.Empty) (*IdentityResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetIdentity not implemented")
-}
-func (UnimplementedPublisherServer) BuildManifest(context.Context, *BuildManifestRequest) (*BuildResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method BuildManifest not implemented")
-}
-func (UnimplementedPublisherServer) SignManifest(context.Context, *SignManifestRequest) (*SignedManifest, error) {
-	return nil, status.Error(codes.Unimplemented, "method SignManifest not implemented")
-}
-func (UnimplementedPublisherServer) BuildAndSign(context.Context, *BuildAndSignRequest) (*SignedManifest, error) {
-	return nil, status.Error(codes.Unimplemented, "method BuildAndSign not implemented")
-}
-func (UnimplementedPublisherServer) ProbeWorker(context.Context, *ProbeWorkerRequest) (*ProbeResult, error) {
-	return nil, status.Error(codes.Unimplemented, "method ProbeWorker not implemented")
 }
 func (UnimplementedPublisherServer) Health(context.Context, *emptypb.Empty) (*HealthResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -183,78 +141,6 @@ func _Publisher_GetIdentity_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Publisher_BuildManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BuildManifestRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PublisherServer).BuildManifest(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Publisher_BuildManifest_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PublisherServer).BuildManifest(ctx, req.(*BuildManifestRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Publisher_SignManifest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SignManifestRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PublisherServer).SignManifest(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Publisher_SignManifest_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PublisherServer).SignManifest(ctx, req.(*SignManifestRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Publisher_BuildAndSign_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(BuildAndSignRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PublisherServer).BuildAndSign(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Publisher_BuildAndSign_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PublisherServer).BuildAndSign(ctx, req.(*BuildAndSignRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Publisher_ProbeWorker_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(ProbeWorkerRequest)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(PublisherServer).ProbeWorker(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Publisher_ProbeWorker_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(PublisherServer).ProbeWorker(ctx, req.(*ProbeWorkerRequest))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Publisher_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(emptypb.Empty)
 	if err := dec(in); err != nil {
@@ -283,22 +169,6 @@ var Publisher_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetIdentity",
 			Handler:    _Publisher_GetIdentity_Handler,
-		},
-		{
-			MethodName: "BuildManifest",
-			Handler:    _Publisher_BuildManifest_Handler,
-		},
-		{
-			MethodName: "SignManifest",
-			Handler:    _Publisher_SignManifest_Handler,
-		},
-		{
-			MethodName: "BuildAndSign",
-			Handler:    _Publisher_BuildAndSign_Handler,
-		},
-		{
-			MethodName: "ProbeWorker",
-			Handler:    _Publisher_ProbeWorker_Handler,
 		},
 		{
 			MethodName: "Health",

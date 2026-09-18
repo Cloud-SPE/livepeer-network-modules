@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	ccbm "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/bondingmanager"
@@ -107,24 +108,6 @@ func (Disabled) ActiveOrchs(_ context.Context) ([]types.EthAddress, error) { ret
 // ethToTypes converts a chain-commons Address (go-ethereum common.Address)
 // to the resolver's EthAddress (lower-cased 0x-prefixed string).
 func ethToTypes(a chain.Address) types.EthAddress {
-	// Address.Hex() returns the EIP-55 mixed-case form; the resolver's
-	// EthAddress is the lower-cased canonical form. Use the type's
-	// constructor to get the consistent transformation.
-	parsed, err := types.ParseEthAddress(a.Hex())
-	if err != nil {
-		// Should be impossible for a valid 20-byte address; fall back
-		// to raw lower-case bytes-to-hex.
-		return types.EthAddress("0x" + lowerHex(a[:]))
-	}
-	return parsed
-}
-
-func lowerHex(b []byte) string {
-	const digits = "0123456789abcdef"
-	out := make([]byte, len(b)*2)
-	for i, c := range b {
-		out[i*2] = digits[c>>4]
-		out[i*2+1] = digits[c&0x0f]
-	}
-	return string(out)
+	// common.Address always contains exactly 20 bytes; no parsing can fail.
+	return types.EthAddress(strings.ToLower(a.Hex()))
 }

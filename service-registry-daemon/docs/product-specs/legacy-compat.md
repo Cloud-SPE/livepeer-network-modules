@@ -1,56 +1,30 @@
----
-title: Legacy compatibility
-stability: v1-stable
-last-reviewed: 2026-04-25
----
+# Legacy and CSV compatibility
 
-# Legacy compatibility
+A legacy `go-livepeer` client reads a chain `serviceURI` and dials it directly.
+This daemon does not change that client or implement its OrchestratorInfo API.
+Operators must publish a dialable workload URL if they expect direct legacy
+clients to work. A full coordinator manifest URL is not automatically such an
+endpoint. Publisher mode does not write chain pointers or host a sibling HTTP
+endpoint.
 
-Guarantees for `go-livepeer` clients that predate this daemon.
+For resolver-aware clients, explicit `allow_legacy_fallback=true` permits an
+endpoint-only result when chain-URL manifest fetching is unavailable or too
+large. The result has source/status `legacy`, original pointer URL, no
+capabilities and no settlement keys. Invalid manifest verification does not
+permit downgrade. An explicit overlay `manifest_url` never downgrades.
 
-## What "legacy client" means here
+CSV pointers are a read-only compatibility format. The resolver extracts URLs
+from decoded `nodes[]` and marks them unsigned. It does not fetch
+`capabilitiesUrl` or derive prices/capabilities. Bad base64 or JSON returns an
+error. Unsigned static/CSV results require daemon, overlay or explicit request
+allowance; see [gRPC policy](grpc-surface.md#signature-policy).
 
-A `go-livepeer`-style consumer that:
-1. Reads an orchestrator's eth address from the chain.
-2. Calls `ServiceRegistry.getServiceURI(address)`.
-3. Treats the returned string as a URL and dials it.
+Neither legacy nor CSV endpoint-only nodes satisfy Select's required
+capability/offering filter. Explicit static pins can carry those fields, but
+remain unsigned and cannot establish settlement delegation. Use signed
+coordinator discovery for the normal paid route contract.
 
-These clients do not parse a manifest. They do not verify signatures. They do not understand the `/.well-known/...` path.
-
-## What we promise legacy clients
-
-- The on-chain `serviceURI` will continue to be a plain URL for any orchestrator that uses this daemon's publisher mode. No CSV, no base64 — just a URL.
-- The URL the orchestrator publishes is the same URL the legacy client dials. Transcoding RPC behavior is unchanged on the orchestrator side.
-- The publisher will never write a `serviceURI` whose first character is not a valid URL prefix (`http://` or `https://`).
-- The publisher's `/.well-known/livepeer-registry.json` is at a known sub-path; legacy clients that don't request it are unaffected.
-
-## What we do NOT promise legacy clients
-
-- That capability advertisement via `OrchestratorInfo` gRPC continues to work. That is `go-livepeer`'s problem; this daemon does not modify it. Existing `OrchestratorInfo`-based discovery in `go-livepeer` is unchanged.
-- That every orchestrator will have a manifest. Some operators may opt out and stay legacy-only. Consumers using THIS daemon's resolver get a single legacy-synthesized node for those orchestrators, with `source: "legacy"` and `capabilities: nil`.
-
-## What we promise CSV-format orchestrators (rejected proposal compat)
-
-A few operators may have shipped the rejected on-chain CSV format (`<url>,<version>,<base64_json>`). The resolver:
-- Parses these read-only.
-- Returns the structured nodes with `signature_status: "unsigned"` (CSV manifests are not signed).
-- Refuses to return them unless the caller passes `allow_unsigned=true` OR the static overlay marks the eth address as `unsigned_allowed`.
-
-This daemon's publisher will NEVER emit the CSV format.
-
-## go-livepeer interop matrix
-
-| go-livepeer client | This daemon's publisher | Result |
-|---|---|---|
-| Reads `serviceURI` for transcoding | Wrote a plain URL | Works (legacy mode) |
-| Reads `serviceURI` for transcoding | Wrote a CSV (we won't) | go-livepeer probably treats first segment as URL; works incidentally. We recommend against CSV. |
-| Calls `OrchestratorInfo` gRPC | Daemon doesn't run this | Untouched — go-livepeer's existing path |
-
-## Sunset considerations
-
-Legacy compat is committed for v1, indefinitely. Deprecation would require:
-- A core-belief amendment (currently §4 protects it forever).
-- A migration path with adoption metrics.
-- Minimum 24-month sunset window with logged deprecation warnings on every legacy resolution.
-
-We do not anticipate deprecating legacy compat.
+Historical compatibility proposals and migration plans are retained in
+`docs/references/` and completed plans. Their release-specific promises are not
+current guarantees of this implementation. The present modes are documented
+in [discovery modes](../design-docs/serviceuri-modes.md).

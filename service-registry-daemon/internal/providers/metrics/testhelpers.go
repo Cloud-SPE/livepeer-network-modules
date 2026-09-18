@@ -16,29 +16,26 @@ import (
 // Not exported as part of the production API surface — file is
 // _testhelpers.go-style but kept buildable so go vet runs against it.
 type Counter struct {
-	GRPCReqs          atomic.Int64
-	GRPCObserves      atomic.Int64
-	GRPCInFlight      atomic.Int64
-	Resolutions       atomic.Int64
-	ResolveDurations  atomic.Int64
-	LegacyFallbacks   atomic.Int64
+	GRPCReqs            atomic.Int64
+	GRPCObserves        atomic.Int64
+	GRPCInFlight        atomic.Int64
+	Resolutions         atomic.Int64
+	ResolveDurations    atomic.Int64
+	LegacyFallbacks     atomic.Int64
 	LiveHealthDecisions atomic.Int64
-	ManifestFetches   atomic.Int64
-	ManifestFetchObs  atomic.Int64
-	ManifestVerifies  atomic.Int64
-	SignatureVerifies atomic.Int64
-	CacheLookups      atomic.Int64
-	CacheWrites       atomic.Int64
-	CacheEvictions    atomic.Int64
-	AuditEvents       atomic.Int64
-	OverlayReloads    atomic.Int64
-	OverlayDrops      atomic.Int64
-	ChainReads        atomic.Int64
-	ChainWrites       atomic.Int64
-	ChainObserves     atomic.Int64
-	PublisherBuilds   atomic.Int64
-	PublisherSigns    atomic.Int64
-	PublisherProbes   atomic.Int64
+	ManifestFetches     atomic.Int64
+	ManifestFetchObs    atomic.Int64
+	ManifestVerifies    atomic.Int64
+	SignatureVerifies   atomic.Int64
+	CacheLookups        atomic.Int64
+	CacheWrites         atomic.Int64
+	CacheEvictions      atomic.Int64
+	AuditEvents         atomic.Int64
+	OverlayReloads      atomic.Int64
+	OverlayDrops        atomic.Int64
+	ChainReads          atomic.Int64
+	ChainWrites         atomic.Int64
+	ChainObserves       atomic.Int64
 
 	CacheEntriesV   atomic.Int64
 	OverlayEntriesV atomic.Int64
@@ -95,10 +92,6 @@ func (c *Counter) IncChainWrite(_ string)                    { c.ChainWrites.Add
 func (c *Counter) ObserveChainRead(_ time.Duration)          { c.ChainObserves.Add(1) }
 func (c *Counter) SetChainLastSuccess(_ time.Time)           {}
 func (c *Counter) SetManifestFetcherLastSuccess(_ time.Time) {}
-
-func (c *Counter) IncPublisherBuild()         { c.PublisherBuilds.Add(1) }
-func (c *Counter) IncPublisherSign(_ string)  { c.PublisherSigns.Add(1) }
-func (c *Counter) IncPublisherProbe(_ string) { c.PublisherProbes.Add(1) }
 
 func (c *Counter) SetUptimeSeconds(_ float64)                {}
 func (c *Counter) SetBuildInfo(_ string, _ string, _ string) {}

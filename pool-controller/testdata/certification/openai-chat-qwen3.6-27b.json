@@ -1,0 +1,76 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 10,
+      "interval_ms": 3000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "config": {
+      "assert": [
+        "$.choices[0].message.content",
+        {
+          "min": 1,
+          "path": "$.usage.total_tokens"
+        }
+      ],
+      "body": {
+        "max_tokens": 8,
+        "messages": [
+          {
+            "content": "ping",
+            "role": "user"
+          }
+        ],
+        "model": "{{identity.openai.model}}"
+      },
+      "transport": "unary"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 1
+    }
+  },
+  {
+    "name": "stream",
+    "type": "request",
+    "required": false,
+    "config": {
+      "assert": [
+        "$[0].choices[0].delta"
+      ],
+      "body": {
+        "max_tokens": 8,
+        "messages": [
+          {
+            "content": "ping",
+            "role": "user"
+          }
+        ],
+        "model": "{{identity.openai.model}}",
+        "stream": true
+      },
+      "transport": "stream"
+    }
+  },
+  {
+    "name": "latency",
+    "type": "latency",
+    "required": false,
+    "config": {
+      "measure": "first_byte",
+      "p50_max_ms": 4000,
+      "samples": 3
+    }
+  }
+]

@@ -8,7 +8,9 @@ operator drives the sign cycle:
 2. Operator opens the secure-orch console over `ssh -L`-tunneled
    port-forward and uploads the candidate via the web form.
 3. Operator reviews a structural diff against the last-signed
-   manifest, types the last 4 hex chars of the signer eth address to
+   manifest — tuples plus the `settlement_keys` delegation block, which
+   the console holds critical when it changes and shows how to verify
+   per broker — types the last 4 hex chars of the signer eth address to
    confirm, and signs.
 4. Console returns the signed envelope as a download attachment and
    atomically updates `last-signed.json`.
@@ -36,9 +38,21 @@ v0.1 ships:
 - [`internal/audit/`](./internal/audit/) — append-only JSONL audit
   log with size-based rotation.
 - [`internal/diff/`](./internal/diff/) — structural diff against
-  last-signed (header + per-tuple keyed on `(capability_id, offering_id)`).
+  last-signed (header incl. before/after `settlement_keys`, plus
+  per-tuple keyed on `(capability_id, offering_id)`).
 - [`internal/config/`](./internal/config/) — operator config +
   explicit-listen-address validation.
+- [`internal/lastsigned/`](./internal/lastsigned/) — atomic
+  `last-signed.json` read/write.
+- [`internal/policy/`](./internal/policy/) +
+  [`internal/agent/`](./internal/agent/) — the plan 0042 automated sign
+  cycle (`--agent`): sign-policy parsing, candidate classification
+  (`renewal` / `benign` / `critical` / `forbidden`), rate limit, and the
+  outbound-only pull → classify → auto-sign-or-hold → push loop. The
+  hand-carry cycle above stays available as the fallback; see the
+  [runbook](./docs/operator-runbook.md).
+- [`internal/protocol/`](./internal/protocol/) — gRPC client to the local
+  `protocol-daemon` unix socket.
 - [`web/`](./web/) — HTTP server with embedded HTML/CSS templates for
   login, diff renderer, and tap-to-sign confirm.
 - [`cmd/secure-orch-console/`](./cmd/secure-orch-console/) — main
@@ -50,7 +64,8 @@ Cross-cutting verifier (used by resolver / coordinator / gateway)
 lives at
 [`../livepeer-network-protocol/verify/`](../livepeer-network-protocol/verify/).
 
-Manifest transport is HTTP-only via the web UI: no inbox or outbox
+Manifest transport is HTTP-only — the web UI in the hand-carry flow,
+outbound HTTP to the coordinator under `--agent`: no inbox or outbox
 spool dirs, no filesystem watcher, no USB. Hardware-backed signers
 (YubiHSM 2, Ledger, PKCS#11) are explicitly out of scope for v0.1
 (plan 0019 §13 Q1 + §14).

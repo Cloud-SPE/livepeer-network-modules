@@ -1,0 +1,156 @@
+# Clearinghouse integration
+
+A clearinghouse is the wholesale payer and settlement consumer while an end
+user may invoke the broker directly. The clearinghouse owns account funding,
+route selection, spend authorization, and reconciliation; it does not need to
+proxy workload bytes.
+
+## 1. Fund aggregate wholesale float
+
+Maintain a bounded target balance for each stable
+`(chain, payer, payee, settlement_domain_id, denomination)` account. Query the selected broker's
+TLS-bound account view, calculate:
+
+```text
+shortfall = max(0, target_available - observed_available)
+```
+
+and mint only that shortfall. Fund through
+`POST /v1/payment/account/fund`, or attach the shortfall payment to a valid
+authorization. Tickets are account-funding instruments. They are not tied to
+one end user, request maximum, capability, or session, and they never authorize
+work.
+
+The target float is an operating policy based on expected aggregate burn,
+replenishment latency, concurrency, route-exit tolerance, and acceptable
+service interruption. It should not grow with the maximum token or media
+duration declared by every request.
+
+## 2. Authorize one invocation
+
+After route and quote selection, mint a single-purpose
+`SpendAuthorization`. For a job, bind the caller-selected
+`Livepeer-Request-Id` and exact request digest. For a session, bind the
+globally unique `gateway_session_id`, exact open digest, cumulative maximum,
+and optional delegated caller key.
+
+The user receives the broker URL and authorization. If the authorization has a
+`caller_public_key`, the user proves possession on each invocation with
+`Livepeer-Caller-Proof`. A raw HTTP implementation is allowed; the SDK only
+constructs and reports the same protocol messages.
+
+Every successor session authorization names its predecessor. A payment alone,
+an old authorization, or a generic bearer credential cannot start unrelated
+work.
+
+## 3. Bind settlement to clearinghouse state
+
+Verify the broker's signed `SettlementRecord` using the delegated settlement
+key from the signed registry manifest. Verify the received canonical payload;
+do not repair or re-serialize it before signature verification.
+
+| Path | Clearinghouse binding |
+|---|---|
+| paid job | `request_id` and `authorization_id` |
+| paid session | `gateway_session_id` and current authorization chain |
+
+`job_id` and `session_id` are broker identifiers useful for lookup.
+`work_id` carries the authorization ID in authorization-only settlements; it
+is not a shared ticket-session account.
+
+Also require the pinned `accepted_quote_ref`, route fingerprint, capability,
+offering, work unit, payer, payee, chain, denomination, and account version to
+match the clearinghouse record.
+
+## 4. Reconcile wholesale and retail independently
+
+The broker's `billed_value_wei` and `debited_units` describe wholesale
+settlement against the stable payer-payee account. Verify billed value using
+the pinned cumulative price curve. Funding, reservation, debit, and release
+are separate quantities; neither a large authorization maximum nor a funding
+ticket is customer usage.
+
+Retail USD billing is a separate clearinghouse ledger. Apply the product's
+retail rate, minimum, discounts, and customer balance to the independently
+recorded retail usage. Reconcile that customer record to the wholesale
+`request_id` or `gateway_session_id`; never make the orchestrator's account
+key customer-specific.
+
+## 5. Reconcile without trusting callback delivery
+
+```text
+GET /v1/exchange/{request_id}
+GET /v1/settlement/{job_id-or-session-id}
+POST /v1/non-admission/{request_id}
+POST /v1/payment/account
+```
+
+Response trailers, SDK callbacks, and user reports are latency optimizations.
+The clearinghouse can query the locked broker directly using identifiers it
+issued.
+
+- A valid terminal settlement releases the authorization encumbrance and is
+  booked exactly once.
+- `accounting_pending` remains encumbered and is polled; absence is not zero
+  usage.
+- A signed `expired_unused`/non-admission outcome for the same authorization
+  permits release of that unused authorization hold.
+- A missing or unverifiable outcome remains unresolved under clearinghouse
+  policy; it must not be silently rewritten as settled.
+
+Ticket expiry is relevant only to funding-intent reconciliation. It does not
+decide whether a workload authorization was admitted or settled.
+
+## 6. Restart and route change
+
+Persist selected quote bindings, authorization bytes and predecessor chain,
+request/session IDs, account observations, and the highest accepted settlement
+version before handing authority to a user.
+
+After restart, recover by querying the broker and payer daemon. Do not mint a
+second authorization for uncertain work until the first authorization's state
+is known. Stop funding a route before deselection, drain admitted work, and
+consume its bounded residual float where practical; v1 does not promise
+cross-payee transfer or automatic cash refund.
+
+The payer sender and registry resolver are trusted sidecars intended for
+co-location over Unix sockets, not public network exposure.
+
+## 7. Capacity refusal and retail holds
+
+Treat `503` plus `Livepeer-Error: capacity_exhausted` as a retryable routing
+outcome, never as retail usage. When it includes `Livepeer-Settlement`, the
+authorization was admitted: verify that signed record, require zero debited
+units, and release the retail hold immediately. For session open, the response
+also carries `session_id`, `gateway_session_id`, `work_id`, and a settlement
+URL so reconciliation does not depend on the invoking user's SDK.
+
+When no settlement exists, do not infer non-admission from the `503`. Ask
+`POST /v1/non-admission/{request_id}` and release the hold only after verifying
+the signed `NOT_ADMITTED` record. A broker must never issue both forms for one
+request.
+
+A retry on another orchestrator is new economic intent: resolve a new route,
+pin its quote and fingerprints, mint a new single-purpose authorization and
+request ID, then invoke that payee. Never carry the first payee's authorization
+or payment envelope across the route boundary. Honoring the exact
+`Livepeer-Backoff` is an optional efficiency optimization; correctness comes
+from fresh route binding and verified terminal/non-admission evidence.
+
+## Settlement-domain upgrade (protocol major 4)
+
+Independent financial ledgers under one payee now have distinct persistent
+`settlement_domain_id` values. Read the
+[identity and migration contract](../../docs/design-docs/settlement-domain-identity.md)
+before upgrading. Drain old authorizations, back up the complete ledger, initialize
+the payment daemon, upgrade the broker/coordinator, cold-sign the new routes and
+update registry and payer/LOC clients together. An ID is generated once by the
+receiver; `--settlement-domain-id` is optional bootstrap import on payment-daemon,
+and a configured/stored mismatch refuses startup. Broker configuration does not
+own this value.
+
+Clients must retain the ID from `SelectedRoute.settlement_domain_id`, compare it
+with `/v1/payment/account` and the ticket-parameter response, include it in funding
+intents and spend authorizations, and compare it again on settlement. Account
+versions are independent across domains. URL changes do not transfer balances.
+The chain probe requires `--settlement-domain-id` from the signed route.

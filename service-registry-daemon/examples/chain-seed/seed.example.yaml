@@ -1,0 +1,24 @@
+# Example --chain-seed file.
+#
+# Maps an orchestrator address to the serviceURI it would carry on chain,
+# so a chain-free run resolves through the SIGNED manifest path: fetch,
+# canonicalize, verify the signature, project settlement_keys. Only the
+# origin of the serviceURI is stubbed.
+#
+#   livepeer-service-registry-daemon --mode=resolver --dev \
+#     --chain-seed ./seed.yaml --socket /tmp/registry.sock
+#
+# Requires --dev (it seeds the in-memory chain) and is refused alongside
+# --discovery=overlay-only, which never reads the chain and whose pins
+# are unsigned by construction.
+#
+# CI harnesses typically generate this file rather than check it in,
+# because ports and manifest URLs are assigned at run time. This example
+# is the shape, not a fixture to copy verbatim.
+seed:
+  - eth_address: "0xabc0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9099/.well-known/livepeer-registry.json"
+
+  # One entry per orchestrator the run needs to resolve.
+  - eth_address: "0xdef0000000000000000000000000000000000000"
+    service_uri: "http://127.0.0.1:9100/.well-known/livepeer-registry.json"

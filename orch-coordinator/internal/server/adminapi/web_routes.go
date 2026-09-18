@@ -11,10 +11,12 @@ import (
 	"net/http"
 	"net/url"
 	"path"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/providers/brokeradmin"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/repo/published"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/server/adminapi/web"
@@ -23,6 +25,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/receive"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/roster"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/scrape"
+	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/service/settlementkeys"
 	"github.com/Cloud-SPE/livepeer-network-modules/orch-coordinator/internal/types"
 )
 
@@ -36,6 +39,25 @@ type WebDeps struct {
 	OrchEthAddress string
 	SecureOrchURL  string
 	Version        string
+	// Hotzone wires the operator pages that manage runners and offers
+	// over the broker admin API (plan 0043 §3.6). Absent means the
+	// broker admin surface is not configured and those pages are not
+	// registered at all.
+	Hotzone *HotzoneDeps
+}
+
+// HotzoneDeps is the broker-admin half of the console.
+type HotzoneDeps struct {
+	Admin   brokeradmin.Client
+	Brokers []HotzoneBroker
+	Timeout time.Duration
+}
+
+// HotzoneBroker is one broker the console can manage.
+type HotzoneBroker struct {
+	Name          string
+	BaseURL       string
+	Administrable bool
 }
 
 // WebRoutes wires the operator-facing web UI onto the admin mux.
@@ -110,6 +132,16 @@ func (s *Server) WebRoutes(deps WebDeps) error {
 	s.mux.HandleFunc("GET /audit", s.requireAuth(func(w http.ResponseWriter, r *http.Request) {
 		renderPage(w, pages["audit"], buildAuditPage(deps, r))
 	}))
+	if deps.Hotzone != nil {
+		hz := hotzoneDeps{Admin: deps.Hotzone.Admin, Timeout: deps.Hotzone.Timeout}
+		if hz.Timeout <= 0 {
+			hz.Timeout = 10 * time.Second
+		}
+		for _, b := range deps.Hotzone.Brokers {
+			hz.Brokers = append(hz.Brokers, brokerTarget(b))
+		}
+		s.registerHotzoneRoutes(pages, deps, hz)
+	}
 	s.mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -148,6 +180,42 @@ func loadTemplates() (map[string]*template.Template, error) {
 		return nil, fmt.Errorf("read layout: %w", err)
 	}
 	funcs := template.FuncMap{
+		// gib renders a byte count the way an operator reads a GPU spec.
+		"gib": func(b uint64) string {
+			if b == 0 {
+				return "—"
+			}
+			return fmt.Sprintf("%.0f GiB", float64(b)/(1<<30))
+		},
+		// kv renders a declared value compactly: the runner facts these
+		// pages show are strings, string lists, and small objects.
+		"kv": func(v any) string {
+			switch t := v.(type) {
+			case nil:
+				return "—"
+			case string:
+				return t
+			case []any:
+				parts := make([]string, 0, len(t))
+				for _, item := range t {
+					parts = append(parts, fmt.Sprint(item))
+				}
+				return strings.Join(parts, ", ")
+			case map[string]any:
+				keys := make([]string, 0, len(t))
+				for k := range t {
+					keys = append(keys, k)
+				}
+				sort.Strings(keys)
+				parts := make([]string, 0, len(keys))
+				for _, k := range keys {
+					parts = append(parts, fmt.Sprintf("%s=%v", k, t[k]))
+				}
+				return strings.Join(parts, " ")
+			default:
+				return fmt.Sprint(t)
+			}
+		},
 		"anchorID": func(parts ...string) string {
 			var b strings.Builder
 			for i, part := range parts {
@@ -166,8 +234,13 @@ func loadTemplates() (map[string]*template.Template, error) {
 			return b.String()
 		},
 	}
+	partial, err := fs.ReadFile(web.FS, "templates/_hotzone.html")
+	if err != nil {
+		return nil, fmt.Errorf("read hotzone partial: %w", err)
+	}
 	out := make(map[string]*template.Template)
-	for _, page := range []string{"overview", "roster", "diff", "audit", "login"} {
+	for _, page := range []string{"overview", "roster", "diff", "audit", "login",
+		"runners", "offers", "enroll", "certification"} {
 		body, err := fs.ReadFile(web.FS, "templates/"+page+".html")
 		if err != nil {
 			return nil, fmt.Errorf("read %s: %w", page, err)
@@ -175,6 +248,9 @@ func loadTemplates() (map[string]*template.Template, error) {
 		t, err := template.New(page).Funcs(funcs).Parse(string(layout))
 		if err != nil {
 			return nil, fmt.Errorf("parse layout for %s: %w", page, err)
+		}
+		if _, err := t.Parse(string(partial)); err != nil {
+			return nil, fmt.Errorf("parse hotzone partial for %s: %w", page, err)
 		}
 		if _, err := t.Parse(string(body)); err != nil {
 			return nil, fmt.Errorf("parse %s: %w", page, err)
@@ -247,11 +323,19 @@ type rosterPage struct {
 	CandidateEthAddress  string
 	CandidateCanonHash   string
 	HasCandidateIdentity bool
+	SettlementKeys       []settlementKeyRow
 	CycleStage           string
-	CycleTitle           string
-	CycleNote            string
-	CycleEvents          []cycleEventView
-	ReconcileSteps       []checkpointStepView
+	// CycleFrame says which manifest the cycle stage and checklist
+	// describe: "candidate" while there is a change to carry, or
+	// "published" when the current candidate is a no-op successor and
+	// the cycle worth showing is the one that produced the live manifest.
+	CycleFrame     string
+	CycleSeq       uint64
+	ChecklistHint  string
+	CycleTitle     string
+	CycleNote      string
+	CycleEvents    []cycleEventView
+	ReconcileSteps []checkpointStepView
 }
 
 type overviewPage struct {
@@ -274,6 +358,9 @@ type overviewPage struct {
 	RiskItems           []alertItem
 	BrokerAlerts        []alertItem
 	CycleStage          string
+	CycleFrame          string
+	CycleSeq            uint64
+	ChecklistHint       string
 	CycleTitle          string
 	CycleNote           string
 	CycleEvents         []cycleEventView
@@ -376,16 +463,20 @@ func buildOverviewPage(deps WebDeps, r *http.Request) overviewPage {
 	out.PublishState, out.PublishTitle, out.PublishNote = assessPublishReadiness(view, out.HasCandidate, out.HasPublished)
 	out.RiskItems = collectDriftAlerts(view.Rows)
 	out.BrokerAlerts = collectBrokerAlerts(view.BrokerStatus)
+	frame := cycleFrame(cand, pub, view)
+	out.CycleFrame, out.CycleSeq = frame.name, frame.seq
 	out.CycleStage, out.CycleTitle, out.CycleNote = assessCoordinatorCycle(
 		out.HasCandidate,
 		out.CandidateSeq,
 		out.HasPublished,
 		out.PublishedSeq,
-		downloadedCandidate(events, out.CandidateCanonHash),
-		signedReturned(events, out.CandidateCanonHash),
+		downloadedCandidate(events, frame.hash),
+		signedReturned(events, frame.hash),
+		frame.name == cycleFramePublished,
 	)
-	out.CycleEvents = cycleTimeline(events, out.CandidateCanonHash)
-	out.ReconcileSteps = coordinatorChecklist(out.CandidateCanonHash, events, out.CycleEvents, deps.SecureOrchURL)
+	out.CycleEvents = cycleTimeline(events, frame.hash)
+	out.ReconcileSteps = coordinatorChecklist(frame.hash, events, out.CycleEvents, deps.SecureOrchURL)
+	out.ChecklistHint = checklistHint(deps.SecureOrchURL)
 	return out
 }
 
@@ -403,14 +494,14 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	q := r.URL.Query()
 	filter := roster.Filter{
 		CapabilitySubstring: strings.TrimSpace(q.Get("q")),
-		Mode:                strings.TrimSpace(q.Get("mode")),
+		Protocol:            strings.TrimSpace(q.Get("protocol")),
 		BrokerName:          strings.TrimSpace(q.Get("broker")),
 		DriftKind:           strings.TrimSpace(q.Get("drift")),
 	}
 	out := view.Apply(filter)
 	driftKinds := []string{
 		diff.DriftNone, diff.DriftAdded, diff.DriftRemoved,
-		diff.DriftPriceChanged, diff.DriftModeChanged,
+		diff.DriftPriceChanged, diff.DriftProtocolChanged,
 		diff.DriftExtraChanged, diff.DriftWorkerChanged,
 	}
 	if len(out.DriftCounts) == 0 {
@@ -438,7 +529,9 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 		RiskItems:            collectDriftAlerts(out.Rows),
 		BrokerAlerts:         collectBrokerAlerts(view.BrokerStatus),
 		HasCandidateIdentity: cand != nil,
+		SettlementKeys:       settlementKeyRows(view.BrokerStatus, cand, pub),
 	}
+	page.BrokerAlerts = append(page.BrokerAlerts, collectSettlementKeyAlerts(page.SettlementKeys)...)
 	if cand != nil {
 		page.CandidateSeq = cand.PublicationSeq
 		page.CandidateEthAddress = cand.Orch.EthAddress
@@ -452,16 +545,20 @@ func buildRosterPage(deps WebDeps, r *http.Request) rosterPage {
 	if pub != nil {
 		publishedSeq = pub.PublicationSeq
 	}
+	frame := cycleFrame(cand, pub, view)
+	page.CycleFrame, page.CycleSeq = frame.name, frame.seq
 	page.CycleStage, page.CycleTitle, page.CycleNote = assessCoordinatorCycle(
 		cand != nil,
 		page.CandidateSeq,
 		pub != nil,
 		publishedSeq,
-		downloadedCandidate(events, page.CandidateCanonHash),
-		signedReturned(events, page.CandidateCanonHash),
+		downloadedCandidate(events, frame.hash),
+		signedReturned(events, frame.hash),
+		frame.name == cycleFramePublished,
 	)
-	page.CycleEvents = cycleTimeline(events, page.CandidateCanonHash)
-	page.ReconcileSteps = coordinatorChecklist(page.CandidateCanonHash, events, page.CycleEvents, deps.SecureOrchURL)
+	page.CycleEvents = cycleTimeline(events, frame.hash)
+	page.ReconcileSteps = coordinatorChecklist(frame.hash, events, page.CycleEvents, deps.SecureOrchURL)
+	page.ChecklistHint = checklistHint(deps.SecureOrchURL)
 	return page
 }
 
@@ -500,8 +597,66 @@ func assessPublishReadiness(view *roster.View, hasCandidate, hasPublished bool) 
 	return "ok", "Ready for secure-orch review", "Candidate and broker state look healthy enough for operator review. Continue with candidate diff inspection, then hand-carry to secure-orch."
 }
 
-func assessCoordinatorCycle(hasCandidate bool, candidateSeq uint64, hasPublished bool, publishedSeq uint64, downloaded, returned bool) (state, title, note string) {
+const (
+	cycleFrameCandidate = "candidate"
+	cycleFramePublished = "published"
+)
+
+// cycleRef is the manifest the cycle stage and checklist are about.
+type cycleRef struct {
+	name string
+	hash string
+	seq  uint64
+}
+
+// cycleFrame picks that manifest. The moment a publish is accepted the
+// builder advances to the next sequence and rebuilds, so the "current
+// candidate" is a successor nobody has carried yet. Keying the checklist
+// on it showed six pending steps right after a cycle completed, which is
+// the opposite of what happened. When the candidate changes nothing
+// against the live manifest, the frame is the live manifest and the
+// checklist shows the cycle that produced it, from the audit events
+// recorded under its hash.
+func cycleFrame(cand, pub *types.ManifestPayload, view *roster.View) cycleRef {
+	if cand != nil && pub != nil && candidateIsNoop(cand, pub, view) {
+		return cycleRef{name: cycleFramePublished, hash: manifestCanonicalHash(pub), seq: pub.PublicationSeq}
+	}
+	ref := cycleRef{name: cycleFrameCandidate}
+	if cand != nil {
+		ref.hash, ref.seq = manifestCanonicalHash(cand), cand.PublicationSeq
+	}
+	return ref
+}
+
+// candidateIsNoop is true when signing the candidate would publish
+// nothing new: same orch, no tuple drift, same delegations.
+func candidateIsNoop(cand, pub *types.ManifestPayload, view *roster.View) bool {
+	if !strings.EqualFold(cand.Orch.EthAddress, pub.Orch.EthAddress) {
+		return false
+	}
+	if view != nil {
+		for kind, n := range view.DriftCounts {
+			if kind != diff.DriftNone && n > 0 {
+				return false
+			}
+		}
+	}
+	if len(cand.SettlementKeys) != len(pub.SettlementKeys) {
+		return false
+	}
+	for i := range cand.SettlementKeys {
+		c, p := cand.SettlementKeys[i], pub.SettlementKeys[i]
+		if c.PublicKey != p.PublicKey || !c.NotBefore.Equal(p.NotBefore) || !c.ExpiresAt.Equal(p.ExpiresAt) {
+			return false
+		}
+	}
+	return true
+}
+
+func assessCoordinatorCycle(hasCandidate bool, candidateSeq uint64, hasPublished bool, publishedSeq uint64, downloaded, returned, upToDate bool) (state, title, note string) {
 	switch {
+	case upToDate && hasPublished:
+		return "ok", "Published, up to date", fmt.Sprintf("Publication %d is live and the current candidate (%d) changes nothing against it. Nothing to carry; the checklist shows the cycle that produced the live manifest.", publishedSeq, candidateSeq)
 	case hasCandidate && !hasPublished:
 		if returned {
 			return "warn", "Signed manifest returned", "A signed manifest came back from secure-orch for this candidate, but no publish is live yet. Review the audit trail for publish acceptance or failure."
@@ -575,18 +730,51 @@ func cycleTimeline(events []audit.Event, manifestHash string) []cycleEventView {
 	return out
 }
 
+// coordinatorChecklist is the hand-carry cycle as the coordinator can
+// see it. Steps 1, 5 and 6 are its own audit events. Steps 2–4 happen
+// on the cold-key host, which the coordinator cannot observe — until a
+// signed manifest comes back: a signature that verifies against the
+// cold key is proof the candidate reached the host, was acted on, and
+// was signed, so from then on those steps are done, inferred. Before
+// that they are "remote": not unknown-and-pending, but recorded
+// somewhere the coordinator cannot read.
 func coordinatorChecklist(manifestHash string, events []audit.Event, timeline []cycleEventView, secureOrchURL string) []checkpointStepView {
 	hasDownload := downloadedCandidate(events, manifestHash)
 	hasReturned := signedReturned(events, manifestHash)
 	hasAccepted := acceptedCandidate(events, manifestHash)
-	return []checkpointStepView{
+	remote := func(happened string) checkpointStepView {
+		step := checkpointStepView{Status: "remote", Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")}
+		if hasReturned {
+			step.Status = "done"
+			step.Note = happened + " Inferred: a manifest signed by the cold key came back for this candidate (step 5)."
+			return step
+		}
+		step.Note = happened + " Recorded on secure-orch's own audit log, which the coordinator cannot read."
+		if secureOrchURL != "" {
+			step.Note += " Match canonical_sha256 on arrival before continuing the hand-carry cycle."
+		}
+		return step
+	}
+	steps := []checkpointStepView{
 		{Label: "1. Candidate downloaded", Status: checkpointStatus(hasDownload), Note: "Recorded in coordinator when candidate.tar.gz is downloaded.", Href: timelineHref(timeline, string(audit.OutcomeCandidateDownloaded))},
-		{Label: "2. Candidate loaded on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch after the upload reaches the cold-key host.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
-		{Label: "3. Diff reviewed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when the operator opens the candidate diff.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
-		{Label: "4. Manifest signed on secure-orch", Status: "remote", Note: remoteChecklistNote("Tracked on secure-orch when sign and write_signed complete.", "--secure-orch-url", secureOrchURL), Href: remoteEvidenceHref(secureOrchURL, "/manifests#review-timeline")},
+		remote("Tracked on secure-orch after the upload reaches the cold-key host."),
+		remote("Tracked on secure-orch when the operator opens the candidate diff."),
+		remote("Tracked on secure-orch when sign and write_signed complete."),
 		{Label: "5. Signed manifest returned", Status: checkpointStatus(hasReturned), Note: "Recorded in coordinator when the signed manifest is uploaded back.", Href: timelineHref(timeline, string(audit.OutcomeSignedReturned))},
 		{Label: "6. Manifest published", Status: checkpointStatus(hasAccepted), Note: "Recorded in coordinator when publish acceptance completes.", Href: timelineHref(timeline, string(audit.OutcomeAccepted))},
 	}
+	steps[1].Label, steps[2].Label, steps[3].Label = "2. Candidate loaded on secure-orch", "3. Diff reviewed on secure-orch", "4. Manifest signed on secure-orch"
+	return steps
+}
+
+// checklistHint is the one line under the checklist heading about the
+// secure-orch cross-link, shown only while the flag is unset. It used to
+// repeat on three steps on two pages for everyone who had not set it.
+func checklistHint(secureOrchURL string) string {
+	if strings.TrimSpace(secureOrchURL) != "" {
+		return ""
+	}
+	return "Steps 2–4 are recorded on the cold-key host. Start the coordinator with --secure-orch-url to link each of them to the secure-orch console's review timeline (the address must be reachable from your browser, e.g. the SSH-tunnelled port)."
 }
 
 func acceptedCandidate(events []audit.Event, manifestHash string) bool {
@@ -626,13 +814,6 @@ func remoteEvidenceHref(baseURL, suffix string) string {
 	return strings.TrimRight(baseURL, "/") + suffix
 }
 
-func remoteChecklistNote(baseNote, flagName, baseURL string) string {
-	if strings.TrimSpace(baseURL) == "" {
-		return baseNote + " Set " + flagName + " to enable a direct jump to the peer console."
-	}
-	return baseNote + " Match canonical_sha256 on arrival before continuing the hand-carry cycle."
-}
-
 func collectDriftAlerts(rows []roster.Row) []alertItem {
 	alerts := make([]alertItem, 0)
 	for _, row := range rows {
@@ -647,9 +828,9 @@ func collectDriftAlerts(rows []roster.Row) []alertItem {
 				Message: row.CapabilityID + " / " + row.OfferingID + " changed price from " + row.OldPriceWei + " to " + row.NewPriceWei + ".",
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
-		case diff.DriftModeChanged:
+		case diff.DriftProtocolChanged:
 			alerts = append(alerts, alertItem{
-				Message: row.CapabilityID + " / " + row.OfferingID + " changed interaction mode.",
+				Message: row.CapabilityID + " / " + row.OfferingID + " changed protocol or declared axes.",
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
 		case diff.DriftWorkerChanged:
@@ -658,6 +839,125 @@ func collectDriftAlerts(rows []roster.Row) []alertItem {
 				Href:    "/diff#diff-row-" + anchorID(row.CapabilityID, row.OfferingID),
 			})
 		}
+		if len(alerts) >= 6 {
+			break
+		}
+	}
+	return alerts
+}
+
+// settlementKeyRow is one delegated (or delegable) settlement key as the
+// roster shows it: who announced it, whether the proof held, and where
+// it stands between candidate and published manifest. This is the
+// column the operator reads instead of comparing 130 hex characters.
+type settlementKeyRow struct {
+	Broker      string
+	BaseURL     string
+	PublicKey   string
+	Fingerprint string
+	Proven      bool
+	Reason      string
+	// State is one of: published (delegated by the live manifest),
+	// pending (in the candidate, not yet signed), unproven, retiring
+	// (published but no broker announces it), unsupported (broker
+	// predates the endpoint), none (broker announces no key: it signs
+	// nothing).
+	State     string
+	NotBefore time.Time
+	ExpiresAt time.Time
+}
+
+func settlementKeyRows(brokers []scrape.BrokerStatus, cand, pub *types.ManifestPayload) []settlementKeyRow {
+	inCand := map[string]types.SettlementKey{}
+	if cand != nil {
+		for _, k := range cand.SettlementKeys {
+			inCand[k.PublicKey] = k
+		}
+	}
+	inPub := map[string]types.SettlementKey{}
+	if pub != nil {
+		for _, k := range pub.SettlementKeys {
+			inPub[k.PublicKey] = k
+		}
+	}
+	rows := make([]settlementKeyRow, 0, len(brokers)+len(inPub))
+	announced := map[string]bool{}
+	for _, b := range brokers {
+		switch {
+		case b.SettlementKeysError != "" && len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "unknown", Reason: b.SettlementKeysError})
+			continue
+		case !b.SettlementKeysSupported && len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "unsupported", Reason: "broker does not serve /registry/settlement-keys; pin the key in coordinator-config"})
+			continue
+		case len(b.SettlementKeys) == 0:
+			rows = append(rows, settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, State: "none", Reason: "broker announces no key: its settlement records go out unsigned"})
+			continue
+		}
+		for _, d := range b.SettlementKeys {
+			announced[d.PublicKey] = true
+			row := settlementKeyRow{Broker: b.Name, BaseURL: b.BaseURL, PublicKey: d.PublicKey, Fingerprint: settlementkeys.Fingerprint(d.PublicKey), Proven: d.Proven, Reason: d.Reason}
+			switch {
+			case !d.Proven:
+				row.State = "unproven"
+			case hasKey(inPub, d.PublicKey):
+				row.State = "published"
+				row.NotBefore, row.ExpiresAt = inPub[d.PublicKey].NotBefore, inPub[d.PublicKey].ExpiresAt
+			case hasKey(inCand, d.PublicKey):
+				row.State = "pending"
+				row.NotBefore, row.ExpiresAt = inCand[d.PublicKey].NotBefore, inCand[d.PublicKey].ExpiresAt
+			default:
+				row.State = "undelegated"
+				row.Reason = "proven but not in the candidate; an unbounded key needs the ledger, or the window has expired"
+			}
+			rows = append(rows, row)
+		}
+	}
+	// Published keys no broker announces any more: retiring through
+	// their window, or pinned in config.
+	for pk, k := range inPub {
+		if announced[pk] {
+			continue
+		}
+		state := "retiring"
+		if hasKey(inCand, pk) {
+			state = "published"
+		}
+		rows = append(rows, settlementKeyRow{PublicKey: pk, Fingerprint: settlementkeys.Fingerprint(pk), Proven: true, State: state, NotBefore: k.NotBefore, ExpiresAt: k.ExpiresAt})
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Broker != rows[j].Broker {
+			return rows[i].Broker < rows[j].Broker
+		}
+		return rows[i].PublicKey < rows[j].PublicKey
+	})
+	return rows
+}
+
+func hasKey(m map[string]types.SettlementKey, pk string) bool {
+	_, ok := m[pk]
+	return ok
+}
+
+func collectSettlementKeyAlerts(rows []settlementKeyRow) []alertItem {
+	alerts := make([]alertItem, 0)
+	for _, r := range rows {
+		var msg string
+		switch r.State {
+		case "unproven":
+			msg = r.Broker + " announced a settlement key it could not prove it holds: " + r.Reason
+		case "none":
+			msg = r.Broker + " signs no settlements: no delegated key configured on the broker."
+		case "unsupported":
+			msg = r.Broker + " cannot announce its settlement key (older broker); pin it in coordinator-config or upgrade."
+		case "unknown":
+			msg = r.Broker + " settlement key check failed: " + r.Reason
+		case "pending":
+			msg = r.Broker + " settlement key " + r.Fingerprint + " is in the candidate but not yet published; sign to delegate it."
+		default:
+			continue
+		}
+		alerts = append(alerts, alertItem{Message: msg, Href: "#settlement-keys"})
 		if len(alerts) >= 6 {
 			break
 		}
@@ -682,16 +982,6 @@ func collectBrokerAlerts(brokers []scrape.BrokerStatus) []alertItem {
 		case broker.LastError != "":
 			alerts = append(alerts, alertItem{
 				Message: broker.Name + " scrape error: " + broker.LastError,
-				Href:    "#broker-" + anchorID(broker.Name),
-			})
-		case broker.MetadataUnhealthyTuples > 0:
-			alerts = append(alerts, alertItem{
-				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataUnhealthyTuples) + " unhealthy tuple(s).",
-				Href:    "#broker-" + anchorID(broker.Name),
-			})
-		case broker.MetadataStaleTuples > 0:
-			alerts = append(alerts, alertItem{
-				Message: broker.Name + " reports " + fmt.Sprintf("%d", broker.MetadataStaleTuples) + " stale tuple(s).",
 				Href:    "#broker-" + anchorID(broker.Name),
 			})
 		}
@@ -784,15 +1074,25 @@ func readPublishedPayload(deps WebDeps) *types.ManifestPayload {
 	return &p
 }
 
+// renderPage buffers the render so a template error becomes a clean
+// 500 instead of a half-written page.
+//
+// html/template writes as it executes, so executing straight into the
+// ResponseWriter meant a failure mid-template shipped 200 OK with the
+// page truncated at the failure point and the Go error text pasted into
+// the body — followed by a superfluous WriteHeader. An operator saw a
+// plausible-looking page missing everything below the fault.
 func renderPage(w http.ResponseWriter, tmpl *template.Template, data any) {
+	var buf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&buf, "layout", data); err != nil {
+		http.Error(w, fmt.Sprintf("render: %s", err), http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store, max-age=0")
 	w.Header().Set("Pragma", "no-cache")
 	w.Header().Set("Vary", "Cookie")
-	if err := tmpl.ExecuteTemplate(w, "layout", data); err != nil {
-		http.Error(w, fmt.Sprintf("render: %s", err), http.StatusInternalServerError)
-		return
-	}
+	_, _ = w.Write(buf.Bytes())
 }
 
 func readUploadFlash(r *http.Request) *uploadFlash {

@@ -1,28 +1,21 @@
-# minimal-e2e
+# In-process signed discovery example
 
-End-to-end demo of the publisher → chain → resolver → consumer pipeline, all in-process. No external services required.
+This example generates a throwaway key, constructs a protocol envelope in the
+example itself, signs it, and seeds an in-memory chain and static fetcher. It
+then resolves broker nodes and calls the Go-native Select API. It does not use
+publisher build/sign RPCs; those RPCs no longer exist.
 
-## What it does
-
-1. Creates an in-memory chain (no real RPC).
-2. Spins up a publisher, builds + signs a manifest with two AI nodes and one transcoding node, "publishes" it (writes the on-chain pointer in-memory + caches the manifest body).
-3. Spins up a resolver pointed at the same in-memory chain + a fetcher that returns the cached manifest.
-4. The consumer asks the resolver to find the orchestrator's nodes and to `Select` one gateway-facing route by capability + offering.
-
-## Run
+From the component directory with the Go development toolchain:
 
 ```sh
-go run ./examples/minimal-e2e/...
+go run ./examples/minimal-e2e
 ```
 
-You should see logs showing:
-- A signed manifest with three nodes (two AI, one transcoding).
-- A resolver call that returns all three with `signature_status: signed-verified`.
-- A `Select(capability="livepeer:transcoder/h264", offering="h264-main")` call returning one explicit selected route.
-- A `Select(capability="openai:chat-completions", offering="gpt-oss-20b")` call returning one explicit selected route.
+The example prints signed-manifest, resolved-node and selected-route summaries.
+Addresses, signatures, byte counts and synthetic node IDs are not fixed output
+contracts. It demonstrates opaque capability matching and signature recovery.
+The static fetcher avoids HTTP hosting, and no live-health provider is wired.
+It does not submit work, validate payment funding, or redeem on-chain tickets.
 
-## What this demonstrates
-
-- Capability strings are opaque — the registry treats AI and transcoding identically.
-- Signature verification works end-to-end against a freshly-generated key.
-- The resolver supports any capability the operator advertises; no daemon code change to add a new workload.
+For production, use the coordinator/cold-console signing cycle and the daemon
+Docker image. See [running the daemon](../../docs/operations/running-the-daemon.md).

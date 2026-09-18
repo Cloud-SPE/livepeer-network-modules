@@ -1,7 +1,9 @@
 package repo
 
 import (
+	"encoding/json"
 	"fmt"
+	bolt "go.etcd.io/bbolt"
 	"strings"
 	"time"
 
@@ -53,12 +55,23 @@ func (r *StateRepo) GetMemberNonce(id string) (types.MemberNonce, error) {
 }
 
 func (r *StateRepo) MarkMemberNonceUsed(id string, usedAt time.Time) error {
-	nonce, err := r.GetMemberNonce(id)
-	if err != nil {
-		return err
-	}
-	nonce.UsedAt = nowIfZero(usedAt)
-	return putJSON(r, memberNoncesBucket, nonce.ID, nonce)
+	return r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(memberNoncesBucket))
+		var nonce types.MemberNonce
+		if err := json.Unmarshal(b.Get([]byte(id)), &nonce); err != nil {
+			return err
+		}
+		at := nowIfZero(usedAt)
+		if !nonce.UsedAt.IsZero() || !at.Before(nonce.ExpiresAt) {
+			return fmt.Errorf("nonce already used or expired")
+		}
+		nonce.UsedAt = at
+		raw, err := json.Marshal(nonce)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(id), raw)
+	})
 }
 
 func (r *StateRepo) PutHostEnrollment(enrollment types.HostEnrollment) error {
@@ -70,7 +83,7 @@ func (r *StateRepo) PutHostEnrollment(enrollment types.HostEnrollment) error {
 	if enrollment.Status == "" {
 		enrollment.Status = types.HostEnrollmentPending
 	}
-	return putJSON(r, hostEnrollmentsBucket, enrollment.ID, enrollment)
+	return r.putEnrollmentPreservingGrants(enrollment)
 }
 
 func (r *StateRepo) GetHostEnrollment(id string) (types.HostEnrollment, error) {
@@ -147,6 +160,16 @@ func (r *StateRepo) ensureGPUUUIDAvailable(unit types.HardwareUnit) error {
 		if strings.TrimSpace(existing.GPUUUID) != gpuUUID {
 			continue
 		}
+		// A retired unit holds nothing. This is what makes releasing a
+		// card possible at all: an operator resolving a contested GPU
+		// as a transfer retires the incumbent's unit so the new owner's
+		// next attach succeeds, and an unproven claim that expires
+		// releases the same way. Without this, retiring was a state
+		// change that changed nothing — the card stayed locked to a
+		// member who no longer had it, forever.
+		if existing.State == types.HardwareUnitRetired {
+			continue
+		}
 		if strings.ToLower(strings.TrimSpace(existing.MemberEthAddress)) != member {
 			return fmt.Errorf("gpu_uuid %q is already bound to member %s", gpuUUID, existing.MemberEthAddress)
 		}
@@ -186,34 +209,134 @@ func (r *StateRepo) ListHardwareUnitsByEnrollment(enrollmentID string) ([]types.
 	return out, nil
 }
 
-func (r *StateRepo) PutTemplateCatalogEntry(entry types.TemplateCatalogEntry) error {
-	now := time.Now().UTC()
-	if entry.CreatedAt.IsZero() {
-		entry.CreatedAt = now
-	}
-	entry.UpdatedAt = now
-	if entry.Status == "" {
-		entry.Status = types.TemplateStatusActive
-	}
-	return putJSON(r, templateCatalogBucket, entry.ID, entry)
+// Template overrides. The catalog itself is files on disk (see
+// internal/templates); the database holds only what a pool decided
+// about each one, so an operator's enable-and-price gesture is the only
+// thing that has to survive a restart.
+func (r *StateRepo) PutTemplateOverride(override types.TemplateOverride) error {
+	override.UpdatedAt = time.Now().UTC()
+	return putJSON(r, templateOverridesBucket, override.TemplateID, override)
 }
 
-func (r *StateRepo) GetTemplateCatalogEntry(id string) (types.TemplateCatalogEntry, error) {
-	var out types.TemplateCatalogEntry
-	err := getJSON(r, templateCatalogBucket, id, &out)
+func (r *StateRepo) GetTemplateOverride(templateID string) (types.TemplateOverride, error) {
+	var out types.TemplateOverride
+	err := getJSON(r, templateOverridesBucket, templateID, &out)
 	return out, err
 }
 
-func (r *StateRepo) ListTemplateCatalogEntries() ([]types.TemplateCatalogEntry, error) {
-	return listJSON(r, templateCatalogBucket, func(left, right types.TemplateCatalogEntry) bool {
-		if left.CapabilityID != right.CapabilityID {
-			return left.CapabilityID < right.CapabilityID
+func (r *StateRepo) ListTemplateOverrides() ([]types.TemplateOverride, error) {
+	return listJSON(r, templateOverridesBucket, func(left, right types.TemplateOverride) bool {
+		return left.TemplateID < right.TemplateID
+	})
+}
+
+// DeleteTemplateOverride returns the pool to the catalog's defaults for
+// this template, which is not the same as disabling it.
+func (r *StateRepo) DeleteTemplateOverride(templateID string) error {
+	return deleteKey(r, templateOverridesBucket, templateID)
+}
+
+// Contested GPUs. The claim was refused; this is the record of it.
+//
+// RecordHardwareClaimConflict upserts on (gpu, challenger): a host that
+// keeps re-attempting is one dispute seen repeatedly, not a queue of
+// disputes, and an operator looking at the queue needs to see the
+// former.
+func (r *StateRepo) RecordHardwareClaimConflict(conflict types.HardwareClaimConflict) (types.HardwareClaimConflict, error) {
+	if strings.TrimSpace(conflict.GPUUUID) == "" || strings.TrimSpace(conflict.ChallengerEthAddress) == "" {
+		return types.HardwareClaimConflict{}, fmt.Errorf("gpu_uuid and challenger_eth_address are required")
+	}
+	conflict.GPUUUID = strings.TrimSpace(conflict.GPUUUID)
+	conflict.ChallengerEthAddress = strings.ToLower(strings.TrimSpace(conflict.ChallengerEthAddress))
+	conflict.IncumbentEthAddress = strings.ToLower(strings.TrimSpace(conflict.IncumbentEthAddress))
+	conflict.ID = HardwareClaimConflictID(conflict.GPUUUID, conflict.ChallengerEthAddress)
+
+	now := conflict.LastSeenAt
+	if now.IsZero() {
+		now = time.Now().UTC()
+		conflict.LastSeenAt = now
+	}
+	if existing, err := r.GetHardwareClaimConflict(conflict.ID); err == nil {
+		// A resolved dispute that recurs is reopened: the operator's
+		// decision was about the claim they saw, and a host still
+		// trying after a rejection is new information.
+		conflict.FirstSeenAt = existing.FirstSeenAt
+		conflict.Attempts = existing.Attempts + 1
+		if !existing.Open() && existing.Resolution == types.ConflictRejected {
+			conflict.Resolution = types.ConflictOpen
+			conflict.Reason = "re-claimed after rejection"
+		} else if !existing.Open() {
+			conflict.Resolution = existing.Resolution
+			conflict.ResolvedBy = existing.ResolvedBy
+			conflict.ResolvedAt = existing.ResolvedAt
+			conflict.Reason = existing.Reason
 		}
-		if left.OfferingID != right.OfferingID {
-			return left.OfferingID < right.OfferingID
-		}
+	} else {
+		conflict.FirstSeenAt = now
+		conflict.Attempts = 1
+	}
+	if conflict.Resolution == "" {
+		conflict.Resolution = types.ConflictOpen
+	}
+	if err := putJSON(r, hardwareConflictsBucket, conflict.ID, conflict); err != nil {
+		return types.HardwareClaimConflict{}, err
+	}
+	return conflict, nil
+}
+
+func HardwareClaimConflictID(gpuUUID, challenger string) string {
+	return strings.TrimSpace(gpuUUID) + "|" + strings.ToLower(strings.TrimSpace(challenger))
+}
+
+func (r *StateRepo) GetHardwareClaimConflict(id string) (types.HardwareClaimConflict, error) {
+	var out types.HardwareClaimConflict
+	err := getJSON(r, hardwareConflictsBucket, id, &out)
+	return out, err
+}
+
+func (r *StateRepo) ListHardwareClaimConflicts() ([]types.HardwareClaimConflict, error) {
+	return listJSON(r, hardwareConflictsBucket, func(left, right types.HardwareClaimConflict) bool {
 		return left.ID < right.ID
 	})
+}
+
+func (r *StateRepo) PutHardwareClaimConflict(conflict types.HardwareClaimConflict) error {
+	return putJSON(r, hardwareConflictsBucket, conflict.ID, conflict)
+}
+
+// Member opt-outs. Only the member writes these, and only ever to
+// decline: there is no opt-in, so an absent record means "the pool's
+// policy applies", not "the member has not chosen yet".
+func (r *StateRepo) PutMemberTemplateOptOut(optOut types.MemberTemplateOptOut) error {
+	if optOut.CreatedAt.IsZero() {
+		optOut.CreatedAt = time.Now().UTC()
+	}
+	return putJSON(r, memberOptOutsBucket, optOut.ID, optOut)
+}
+
+func (r *StateRepo) ListMemberTemplateOptOuts() ([]types.MemberTemplateOptOut, error) {
+	return listJSON(r, memberOptOutsBucket, func(left, right types.MemberTemplateOptOut) bool {
+		return left.ID < right.ID
+	})
+}
+
+func (r *StateRepo) ListMemberTemplateOptOutsFor(memberEthAddress string) ([]types.MemberTemplateOptOut, error) {
+	items, err := r.ListMemberTemplateOptOuts()
+	if err != nil {
+		return nil, err
+	}
+	want := strings.ToLower(strings.TrimSpace(memberEthAddress))
+	out := make([]types.MemberTemplateOptOut, 0, len(items))
+	for _, item := range items {
+		if strings.ToLower(strings.TrimSpace(item.MemberEthAddress)) == want {
+			out = append(out, item)
+		}
+	}
+	return out, nil
+}
+
+func (r *StateRepo) DeleteMemberTemplateOptOut(id string) error {
+	return deleteKey(r, memberOptOutsBucket, id)
 }
 
 func (r *StateRepo) PutTemplateAssignment(assignment types.TemplateAssignment) error {
@@ -333,4 +456,31 @@ func (r *StateRepo) ListPayoutBatches() ([]types.PayoutBatch, error) {
 		}
 		return left.ID < right.ID
 	})
+}
+
+// RecordMemberAuthentication may refresh profile data, never an operator verdict.
+func (r *StateRepo) RecordMemberAuthentication(member types.PoolMember) (types.PoolMember, error) {
+	err := r.db.Update(func(tx *bolt.Tx) error {
+		b := tx.Bucket([]byte(poolMembersBucket))
+		raw := b.Get([]byte(member.ID))
+		if raw != nil {
+			var prior types.PoolMember
+			if err := json.Unmarshal(raw, &prior); err != nil {
+				return err
+			}
+			if !strings.EqualFold(prior.EthAddress, member.EthAddress) {
+				return fmt.Errorf("member identity mismatch")
+			}
+			member.Status = prior.Status
+			member.PayoutMode = prior.PayoutMode
+			member.CreatedAt = prior.CreatedAt
+			member.PoolID = prior.PoolID
+		}
+		raw, err := json.Marshal(member)
+		if err != nil {
+			return err
+		}
+		return b.Put([]byte(member.ID), raw)
+	})
+	return member, err
 }

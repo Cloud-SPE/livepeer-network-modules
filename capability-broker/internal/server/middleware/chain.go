@@ -7,8 +7,8 @@
 //	Recover -> RequestID -> Headers -> Payment -> handler
 //
 // Recover catches panics, RequestID propagates correlation, Headers validates
-// Livepeer-* request headers, Payment manages the OpenSession/Debit/Reconcile
-// /CloseSession lifecycle around the handler.
+// Livepeer-* request headers, and Payment admits then settles a scoped
+// authorization against the stable wholesale account.
 package middleware
 
 import "net/http"

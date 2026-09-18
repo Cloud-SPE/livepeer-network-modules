@@ -3,10 +3,15 @@ package settlement_test
 import (
 	"context"
 	"errors"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/metrics"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"math/big"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/providers/devclock"
@@ -228,5 +233,58 @@ func TestEscrowRebuildAfterRestart(t *testing.T) {
 	got := esc.Pending(make([]byte, 20))
 	if want := big.NewInt(3_000_000); got.Cmp(want) != 0 {
 		t.Errorf("pending after rebuild = %s; want %s", got, want)
+	}
+}
+
+func (b *fakeBroker) TicketValidityPeriod(_ context.Context) (int64, error) { return 2, nil }
+
+func TestConfirmedIntentRecoveryPrecedesExpiryAndUsedChecks(t *testing.T) {
+	st := setupStore(t)
+	hash := newPending(t, st, 1_000_000_000, 100)
+	broker := &fakeBroker{used: map[string]bool{string(hash): true}}
+	clock := devclock.New()
+	clock.AdvanceRounds(500)
+	esc := escrow.New(broker, clock, escrow.Config{})
+	tx := make([]byte, 32)
+	tx[31] = 1
+	blockHash := make([]byte, 32)
+	blockHash[31] = 2
+	unavailable := true
+	recorder := metrics.NewPrometheus()
+	s := settlement.New(st, broker, fakeGas{wei: big.NewInt(1)}, clock, esc, settlement.Config{Recorder: recorder, Inclusion: func(context.Context, []byte) (*types.RedemptionInclusion, error) {
+		if unavailable {
+			return nil, errors.New("archive temporarily unavailable")
+		}
+		return &types.RedemptionInclusion{TxHash: tx, BlockNumber: 1000, BlockHash: blockHash, Round: 101, ObservedHead: 1010, CheckedAt: time.Now().UTC()}, nil
+	}})
+	if _, err := s.RedeemNext(context.Background()); err == nil {
+		t.Fatal("missing evidence did not hold")
+	}
+	pending, err := st.PendingRedemptions()
+	if err != nil || len(pending) != 1 {
+		t.Fatal("uncertain redemption drained")
+	}
+	unavailable = false
+	if _, err := s.RedeemNext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	revenue, count, err := st.RoundRevenue(101)
+	if err != nil || count != 1 || revenue.Int64() != 1_000_000_000 {
+		t.Fatalf("inclusion revenue %s count %d err %v", revenue, count, err)
+	}
+	observed, _, err := st.RoundRevenue(clock.LastInitializedRound())
+	if err != nil || observed.Sign() != 0 {
+		t.Fatal("revenue stamped at observation round")
+	}
+	if len(broker.redeemed) != 0 {
+		t.Fatal("confirmed transaction resubmitted")
+	}
+	if _, err := s.RedeemNext(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	recorder.Handler().ServeHTTP(response, httptest.NewRequest("GET", "/metrics", nil))
+	if !strings.Contains(response.Body.String(), `redemption_tx_total{result="confirmed"} 1`) {
+		t.Fatalf("confirmation metric must count durable transition once: %s", response.Body.String())
 	}
 }

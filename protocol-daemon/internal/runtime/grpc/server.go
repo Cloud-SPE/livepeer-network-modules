@@ -279,6 +279,14 @@ func New(cfg Config) (*Server, error) {
 	if cfg.Mode.HasReward() && cfg.Reward == nil {
 		return nil, errors.New("grpc: Reward service is required for reward mode")
 	}
+	if cfg.Mode == types.ModeReadOnly {
+		if cfg.RC == nil {
+			return nil, errors.New("grpc: read-only mode requires round clock")
+		}
+		if cfg.RoundInit != nil || cfg.Reward != nil || cfg.Registry != nil || cfg.AIRegistry != nil || cfg.Tx != nil || cfg.ConfigStore != nil || cfg.BondingAdmin != nil || cfg.Governor != nil {
+			return nil, errors.New("grpc: read-only mode rejects signing and operational-config dependencies")
+		}
+	}
 	return &Server{
 		mode:       cfg.Mode,
 		version:    cfg.Version,
@@ -311,6 +319,17 @@ func (s *Server) Health(_ context.Context, _ struct{}) (HealthStatus, error) {
 
 // GetRoundStatus implements the round-status RPC.
 func (s *Server) GetRoundStatus(ctx context.Context, _ struct{}) (RoundStatus, error) {
+	if s.mode == types.ModeReadOnly {
+		round, err := s.rc.Current(ctx)
+		if err != nil {
+			return RoundStatus{}, err
+		}
+		out := RoundStatus{LastRound: uint64(round.Number), CurrentRoundInitialized: round.Initialized}
+		if s.lockReader != nil {
+			out.CurrentRoundLocked, err = s.lockReader.CurrentRoundLocked(ctx)
+		}
+		return out, err
+	}
 	if !s.mode.HasRoundInit() {
 		return RoundStatus{}, ErrUnimplemented
 	}

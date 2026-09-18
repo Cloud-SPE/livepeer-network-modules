@@ -6,7 +6,7 @@ phase: implementation
 opened: 2026-05-19
 owner: harness
 related:
-  - "active plan 0024 — quote-free ticket-params flow across gateway, broker, and payment-daemon"
+  - "completed plan 0024 — quote-free ticket-params flow across gateway, broker, and payment-daemon"
   - "completed plan 0005 — payment-daemon component"
   - "completed plan 0014 — wire-compat envelope + sender daemon"
   - "completed plan 0015 — interim debit cadence design"
@@ -17,6 +17,34 @@ related:
 # Plan 0034 — priced funding and final-usage settlement across gateway, broker, and payment-daemon
 
 ## 0. Implementation status (added 2026-05-19)
+
+> **Status review (2026-09-17).** Everything this plan still listed as
+> remaining has either shipped or been overtaken; the plan is a candidate
+> to move to `completed/`. The list below is kept as written, but read it
+> with these corrections:
+>
+> - The `@v0` mode names and the file paths under
+>   `capability-broker/internal/modes/`, `internal/server/rtmp.go` and
+>   `internal/server/middleware/settlement.go` no longer exist. The mode
+>   stack was purged (`lnm-2ji`) in favour of `paid-job/v1` and
+>   `paid-session/v1`. Settlement records are now built in
+>   `capability-broker/internal/server/middleware/payment.go` (jobs) and
+>   `capability-broker/internal/sessionengine/settlement.go` (sessions), and
+>   signed/served by `capability-broker/internal/settlement/`.
+> - `X-Livepeer-Settlement` (bare base64 protobuf) is now `Livepeer-Settlement`:
+>   a signed JCS JSON envelope, always retrievable from
+>   `GET /v1/settlement/{id}` and additionally a trailer on streamed
+>   exchanges (`livepeer-network-protocol/headers/livepeer-headers.md`).
+> - The `ws-realtime@v0` gap is moot — the mode is gone and realtime work is
+>   a `paid-session/v1` session with an explicit end and settlement.
+> - The explicit session model landed (`POST /v1/session/{id}/topup`), and
+>   `TOPPED_UP` is emitted when a settlement included account funding.
+> - Ticket face value no longer authorizes work: completed plans 0049 and
+>   0051 made signed spend authorizations against wholesale accounts the
+>   only paid path; `CreatePayment` funds account shortfall only.
+> - `broker_quote_rejected` no longer exists as an error code in the broker.
+> - Phase 6 shipped in `63cc480` ("pool-reconciler: use canonical payments
+>   proto, retire proto-contracts duplicate").
 
 The contract redesign in this plan is **partially shipped**. Phases 1–3 are
 substantially landed via commit `17dbaf2 registry+pool+gateway: always-on
@@ -662,7 +690,7 @@ For streaming/session modes, settlement metadata must be available via:
 - reject missing/invalid quote metadata in sender mode
 - regenerate committed protobuf bindings
 
-### Phase 4 — broker accounting and settlement ⏳ all paid modes except ws-realtime
+### Phase 4 — broker accounting and settlement ✅ done (see §0 status review; ws-realtime mode since removed)
 
 - add actual-usage settlement surfaces on paid paths
   - ✅ HTTP unary, http-stream, http-multipart (response trailer)
@@ -694,14 +722,14 @@ The four TS gateway clients this phase targeted were removed in commits
 responsibility of whatever gateway code now lives outside this repo and is
 no longer tracked by this plan.
 
-### Phase 6 — narrowed to legacy-proto retirement ⏳
+### Phase 6 — narrowed to legacy-proto retirement ✅ done (`63cc480`)
 
 The original cutover steps (switch all callers to quote-aware `CreatePayment`,
 require broker settlement on paid paths, make reconciliation depend on
 settlement records) are either already in force on the in-repo paid paths
 (Phase 4) or covered by out-of-repo gateway adopters (Phase 5, closed).
 
-Remaining in this repo:
+Remaining in this repo (both landed in `63cc480`):
 
 - migrate `pool-reconciler/internal/paymentdaemon/client.go` (plus the two
   associated tests) off

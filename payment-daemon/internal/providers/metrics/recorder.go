@@ -55,6 +55,9 @@ type Recorder interface {
 	IncDebit(result string)
 	// AddWorkUnitsDebited adds debited work units to the running total.
 	AddWorkUnitsDebited(units float64)
+	// SetWholesaleAccountTotals reports payee-wide stable-account exposure.
+	// It deliberately has no payer label; wallet addresses are unbounded.
+	SetWholesaleAccountTotals(credited, reserved, debited, available float64)
 
 	// ----- Settlement / redemption loop -----
 

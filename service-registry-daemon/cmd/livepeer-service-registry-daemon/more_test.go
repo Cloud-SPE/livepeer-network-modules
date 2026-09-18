@@ -104,3 +104,31 @@ func TestBuild_ResolverWithBadOverlayPath(t *testing.T) {
 		t.Fatal("expected error on missing overlay file")
 	}
 }
+
+func TestBuild_ProductionOverlayOnlyWithoutRPC(t *testing.T) {
+	dir := t.TempDir()
+	overlayPath := filepath.Join(dir, "nodes.yaml")
+	if err := os.WriteFile(overlayPath, []byte("overlay:\n  - eth_address: \"0xabcdef0000000000000000000000000000000000\"\n    manifest_url: \"https://coordinator.example/.well-known/livepeer-registry.json\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, _, err := parseFlags([]string{"--mode=resolver", "--discovery=overlay-only", "--static-overlay=" + overlayPath, "--store-path=" + filepath.Join(dir, "registry.db")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bp, err := build(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = bp.store.Close()
+		for i := len(bp.closers) - 1; i >= 0; i-- {
+			bp.closers[i]()
+		}
+	})
+	if bp.roundClock != nil || len(bp.closers) != 0 {
+		t.Fatal("overlay-only constructed chain dependencies")
+	}
+	if got := bp.overlayAccessor().Entries[0].ManifestURL; got == "" {
+		t.Fatal("manifest discovery pointer lost")
+	}
+}

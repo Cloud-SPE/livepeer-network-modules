@@ -1,15 +1,16 @@
 # Local smoke stack for secure-orch-console.
 #
-# Recommended posture: keep the console loopback-bound and expose it
-# only on host loopback. Operators who need a broader bind can change
-# both the published port and the container's --listen address.
+# The container listens on its interface; Docker publishes only to host
+# loopback. Reach it through an SSH tunnel.
 #
-# Run with `make run` once you've populated ./run/keystore.json and
-# ./run/password.
+# Set SECURE_ORCH_ADMIN_TOKENS and populate ./run/keystore.json and
+# ./run/password, then run docker compose up.
 
 services:
   secure-orch-console:
-    image: tztcloud/livepeer-secure-orch-console:dev
+    image: ${REGISTRY:-tztcloud}/livepeer-secure-orch-console:${TAG:-v2.0.0}
+    environment:
+      SECURE_ORCH_ADMIN_TOKENS: ${SECURE_ORCH_ADMIN_TOKENS:?set SECURE_ORCH_ADMIN_TOKENS}
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -19,4 +20,4 @@ services:
       - --keystore-password-file=/srv/password
       - --last-signed=/srv/lib/last-signed.json
       - --audit-log=/srv/log/audit.log.jsonl
-      - --listen=127.0.0.1:8080
+      - --listen=0.0.0.0:8080

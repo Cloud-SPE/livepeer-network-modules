@@ -5,7 +5,7 @@
 // Two production-relevant implementations:
 //
 //   - InMemory: zero-dependency map. Used by --dev mode, tests, and
-//     the static-overlay-only example.
+//     explicit dev chain seeds. Overlay-only does not read chain state.
 //   - Eth: go-ethereum-backed reader. Performs eth_call against the
 //     ServiceRegistry contract using a hand-encoded ABI selector.
 package chain
@@ -46,6 +46,7 @@ func (m *meteredChain) GetServiceURI(ctx context.Context, addr types.EthAddress)
 		m.rec.SetChainLastSuccess(time.Now())
 	case errors.Is(err, types.ErrNotFound):
 		m.rec.IncChainRead(metrics.OutcomeNotFound)
+		m.rec.SetChainLastSuccess(time.Now())
 	default:
 		m.rec.IncChainRead(metrics.OutcomeUnavailable)
 	}

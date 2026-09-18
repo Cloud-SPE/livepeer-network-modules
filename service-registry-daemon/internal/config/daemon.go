@@ -33,13 +33,17 @@ const (
 
 // Daemon is the validated daemon-level configuration. Built by the
 // runtime layer from CLI flags. Fields are immutable once built; a
-// reload (overlay change) creates a new struct.
+// overlay changes require a daemon restart.
 type Daemon struct {
 	Mode       Mode
 	SocketPath string
 	StorePath  string
-	ChainRPC   string
-	ChainID    int64
+	// ChainRPCURLs is the ordered list of JSON-RPC endpoints, primary
+	// first; every chain read fails over across it. Required in
+	// resolver mode outside --dev. There is no default: the operator
+	// names the endpoints, never the binary.
+	ChainRPCURLs []string
+	ChainID      int64
 	// ControllerAddress is the Livepeer Controller address; used to
 	// resolve BondingManager + RoundsManager for resolver chain
 	// discovery and, by default, the ServiceRegistry contract address
@@ -60,6 +64,14 @@ type Daemon struct {
 	MaxStale             time.Duration
 	StaticOverlayPath    string
 	RejectUnsigned       bool
+
+	// ChainSeedPath preloads the in-memory chain (--dev only) with
+	// address → serviceURI pairs, so a chain-free deployment can resolve
+	// through the ordinary SIGNED path against a locally served
+	// manifest. Overlay-only is the other chain-free mode and is
+	// unsigned by construction, so it cannot carry a settlement
+	// delegation; this is the path to use when signatures matter.
+	ChainSeedPath string
 
 	// RoundPollInterval governs how often the chain-commons timesource
 	// polls RoundsManager.currentRound() to detect round transitions
@@ -87,7 +99,6 @@ func DefaultDaemon() *Daemon {
 	return &Daemon{
 		SocketPath:                "/var/run/livepeer-service-registry.sock",
 		StorePath:                 "/var/lib/livepeer/registry-cache.db",
-		ChainRPC:                  "https://arb1.arbitrum.io/rpc",
 		ChainID:                   42161,
 		ControllerAddress:         "0xD8E8328501E9645d16Cf49539efC04f734606ee4", // Livepeer Controller, Arbitrum One
 		ServiceRegistryAddress:    "",                                           // empty means resolve via Controller
@@ -116,8 +127,19 @@ func (d *Daemon) Validate() error {
 	if d.SocketPath == "" {
 		return fmt.Errorf("config: --socket is required")
 	}
-	if d.Dev && d.ChainRPC != "" && d.ChainRPC != "dev" {
-		return fmt.Errorf("config: --dev and --chain-rpc are mutually exclusive")
+	if d.Dev && len(d.ChainRPCURLs) > 0 {
+		return fmt.Errorf("config: --dev and --chain-rpc-urls are mutually exclusive")
+	}
+	// A seed outside --dev would be read, validated, and then ignored,
+	// because a real chain provider replaces the in-memory one. Refusing
+	// beats a hermetic CI run that silently resolves against mainnet.
+	if d.ChainSeedPath != "" && !d.Dev {
+		return fmt.Errorf("config: --chain-seed requires --dev (it seeds the in-memory chain)")
+	}
+	if d.ChainSeedPath != "" && d.Discovery == DiscoveryOverlayOnly {
+		return fmt.Errorf("config: --chain-seed and --discovery=overlay-only are contradictory: " +
+			"overlay-only never reads the chain, so use overlay manifest_url entries instead of a chain seed; static pins " +
+			"are unsigned, which is the reason to use a seed in the first place")
 	}
 	if d.Mode == ModeResolver {
 		switch d.Discovery {
@@ -140,6 +162,11 @@ func (d *Daemon) Validate() error {
 		}
 		if d.ManifestFetchTimeout <= 0 {
 			return fmt.Errorf("config: --manifest-fetch-timeout must be > 0")
+		}
+		// Chain discovery requires an explicit RPC endpoint. Overlay-only
+		// resolves coordinator URLs without constructing chain providers.
+		if !d.Dev && d.Discovery == DiscoveryChain && len(d.ChainRPCURLs) == 0 {
+			return fmt.Errorf("config: --chain-rpc-urls is required in resolver mode (comma-separated, primary first)")
 		}
 	}
 	if d.Mode == ModePublisher && !d.Dev {

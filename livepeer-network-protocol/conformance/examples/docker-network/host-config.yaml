@@ -1,0 +1,137 @@
+# Reference-broker config for the networked conformance run (see
+# ../../README.md), in the offer-only grammar.
+#
+# The operator side is all that is here: which offerings are sold, under
+# which capability, at what price, with which session policy. Everything
+# the runner knows about itself — transports, descriptor schema, work
+# unit, extractor, endpoint paths, readiness — is absent by design. It
+# arrives when a runner attaches (protocols/runner-attach.md) and the
+# first certified runner freezes it into the offer.
+#
+# `match: { identity.variant: <offering_id> }` is how each offer picks
+# exactly one runner entry, which is what keeps the per-offering
+# behaviours the scenarios assert (an always-erroring route, a slow one,
+# a long stream) separable: the RUNNER declares which route it serves,
+# the way a real runner points at its own endpoint.
+#
+# IMPORTANT: this file alone does not serve traffic. A runner must attach
+# and certify before any offer is advertised — that is the whole point of
+# the offer-only grammar. compose.yaml passes --attach-runner, which
+# makes the suite enrol over the admin API below and attach with the
+# `identity.variant` values these offers match on. Auto mode
+# (`livepeer-conformance` with no --broker-url) does the same thing
+# against a broker it starts itself. Point the suite at a broker that
+# already has its own runner by omitting --attach-runner.
+identity:
+  orch_eth_address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd"
+  # Settlement records go out UNSIGNED without this, and a clearinghouse
+  # refuses an unsigned record for anything financially material. The
+  # suite's two settlement-signature scenarios skip when it is absent,
+  # so a stack without it silently tests less than it appears to.
+  settlement_key_file: /cfg/settle.key
+external_base_url: "http://broker:8080"
+listen:
+  paid: "0.0.0.0:8080"
+  metrics: "0.0.0.0:9090"
+  attach_quic: "0.0.0.0:8443"
+payment_daemon:
+  mock: true
+  mock_state_path: /var/lib/livepeer/payment-mock.json
+session_store:
+  path: /var/lib/livepeer/state.db
+  sealing_key_file: /cfg/seal.key
+# The runner enrols over the admin API, then attaches with what it is
+# handed back.
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+credential_store:
+  path: /var/lib/livepeer/credentials.db
+  sealing_key_file: /cfg/seal.key
+offers_state_path: /var/lib/livepeer/offers.db
+offers:
+  - offering_id: all
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: all }
+    price: { amount_wei: "1", per_units: 1 }
+  - offering_id: unary-only
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: unary-only }
+    price: { amount_wei: "1", per_units: 1 }
+  - offering_id: always-error
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: always-error }
+    price: { amount_wei: "1", per_units: 1 }
+  - offering_id: slow
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: slow }
+    price: { amount_wei: "1", per_units: 1 }
+  - offering_id: longstream
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: longstream }
+    price: { amount_wei: "1", per_units: 1 }
+  # Priced per many units, so the paid path is exercised at a denominator
+  # where flooring and ceiling disagree.
+  - offering_id: fractional
+    capability: conformance:job
+    protocol: paid-job/v1
+    match: { identity.variant: fractional }
+    price: { amount_wei: "100", per_units: 1000 }
+  - offering_id: bounded-refill
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: bounded-refill }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
+      refill: bounded
+      lease_policy: fixed
+      lease_max_seconds: 600
+  # Heartbeat far away so lease expiry is the trigger under test.
+  - offering_id: short-lease
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: short-lease }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
+      lease_policy: fixed
+      lease_max_seconds: 1
+      heartbeat: { interval_seconds: 2, missed_threshold: 30 }
+  - offering_id: rtmp-hls
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: rtmp-hls }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  - offering_id: scope-passthrough
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: scope-passthrough }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  - offering_id: trickle-egress
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: trickle-egress }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy: { lease_policy: fixed, lease_max_seconds: 600 }
+  # A fixed lease keeps funding from preempting the heartbeat, so this
+  # offering isolates liveness enforcement.
+  - offering_id: fast-heartbeat
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: fast-heartbeat }
+    price: { amount_wei: "10", per_units: 1 }
+    session_policy:
+      heartbeat: { interval_seconds: 1, missed_threshold: 2 }
+      lease_policy: fixed
+      lease_max_seconds: 600
+  - offering_id: default
+    capability: conformance:session
+    protocol: paid-session/v1
+    match: { identity.variant: default }
+    price: { amount_wei: "10", per_units: 1 }

@@ -57,3 +57,12 @@ help: ## Show this help
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
 .DEFAULT_GOAL := help
+
+# The certification steps this controller pushes onto offers must satisfy
+# the protocol's own schema — a policy the broker would reject is a bug
+# here, not at a member's first attach.
+.PHONY: check-certification-policy
+check-certification-policy:
+	python3 ../livepeer-network-protocol/scripts/validate-doc.py \
+	  --schema protocols/certification-steps/schema.json \
+	  testdata/certification/*.json

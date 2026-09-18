@@ -3,6 +3,7 @@ package grpc
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -144,31 +145,14 @@ func newWireFixture(t *testing.T) *wireFixture {
 	}
 }
 
-// signManifestForFixture builds + hosts a signed manifest at f.uri.
+// signManifestForFixture hosts a signed coordinator envelope at f.uri.
+//
+// Fixtures take the node-shaped input the daemon resolves INTO and
+// flatten it to the envelope's per-tuple worker_url form, which is what
+// a coordinator publishes and the only shape the daemon now reads.
 func (f *wireFixture) signManifestForFixture(nodes []types.Node) {
 	f.t.Helper()
-	m := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(f.addr),
-		IssuedAt:      f.clk.Now(),
-		Nodes:         nodes,
-		Signature:     types.Signature{Alg: types.SignatureAlgEthPersonal},
-	}
-	canonical, err := types.CanonicalBytes(m)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	sig, err := f.signerKey.SignCanonical(canonical)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	m.Signature.Value = "0x" + hexLower(sig)
-	m.Signature.SignedCanonicalBytesSHA256 = types.CanonicalSHA256(canonical)
-	body, err := json.Marshal(m)
-	if err != nil {
-		f.t.Fatal(err)
-	}
-	f.fetcher.Bodies[f.uri] = body
+	f.fetcher.Bodies[f.uri] = signedEnvelopeFor(f.t, f.addr, f.uri, f.clk.Now(), f.signerKey, nodes)
 }
 
 func TestWire_ResolveByAddress_HappyPath(t *testing.T) {
@@ -381,51 +365,6 @@ func TestWire_Health(t *testing.T) {
 	}
 }
 
-func TestWire_Publisher_BuildAndSign(t *testing.T) {
-	f := newWireFixture(t)
-	pcli := registryv1.NewPublisherClient(f.clientConn)
-	ctx := context.Background()
-
-	identity, err := pcli.GetIdentity(ctx, nil)
-	if err != nil {
-		t.Fatalf("GetIdentity: %v", err)
-	}
-	if identity.GetEthAddress() != string(f.addr) {
-		t.Fatalf("identity = %s, want %s", identity.GetEthAddress(), f.addr)
-	}
-
-	build, err := pcli.BuildManifest(ctx, &registryv1.BuildManifestRequest{
-		ProposedEthAddress: string(f.addr),
-		ProposedNodes: []*registryv1.Node{
-			{Id: "n1", Url: "https://orch.example.com:8935", Capabilities: []*registryv1.Capability{{Name: "openai:/v1/chat/completions"}}},
-		},
-	})
-	if err != nil {
-		t.Fatalf("Build: %v", err)
-	}
-	if len(build.GetManifestJson()) == 0 || len(build.GetCanonicalBytes()) == 0 {
-		t.Fatal("Build produced empty bytes")
-	}
-
-	signed, err := pcli.SignManifest(ctx, &registryv1.SignManifestRequest{ManifestJson: build.GetManifestJson()})
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if signed.GetSignatureValue() == "" || len(signed.GetSignatureValue()) != 132 {
-		t.Fatalf("signature shape: %s", signed.GetSignatureValue())
-	}
-
-	// Decode-and-validate the signed body via DecodeManifest to confirm
-	// the signature recovers to the publisher's address.
-	m, err := types.DecodeManifest(signed.GetManifestJson())
-	if err != nil {
-		t.Fatalf("verify: %v", err)
-	}
-	if m.EthAddress != string(f.addr) {
-		t.Fatalf("eth: %s vs %s", m.EthAddress, f.addr)
-	}
-}
-
 func TestWire_Refresh_ListKnown(t *testing.T) {
 	f := newWireFixture(t)
 	f.signManifestForFixture([]types.Node{{ID: "n1", URL: "https://x.test", Capabilities: []types.Capability{}}})
@@ -507,43 +446,22 @@ func TestUnixSocketResolveAndSelect_UseLiveBrokerHealth(t *testing.T) {
 		},
 	})
 
-	manifest := &types.Manifest{
-		SchemaVersion: types.SchemaVersion,
-		EthAddress:    string(addr),
-		IssuedAt:      clk.Now(),
-		Nodes: []types.Node{
-			{
-				ID:  "n1",
-				URL: broker.URL,
-				Capabilities: []types.Capability{
-					{
-						Name:     "openai:chat-completions",
-						WorkUnit: "token",
-						Offerings: []types.Offering{
-							{ID: "healthy", PricePerWorkUnitWei: "10"},
-							{ID: "degraded", PricePerWorkUnitWei: "11"},
-						},
+	fetcher.Bodies[uri] = signedEnvelopeFor(t, addr, uri, clk.Now(), sk, []types.Node{
+		{
+			ID:  "n1",
+			URL: broker.URL,
+			Capabilities: []types.Capability{
+				{
+					Name:     "openai:chat-completions",
+					WorkUnit: "token",
+					Offerings: []types.Offering{
+						{ID: "healthy", PricePerWorkUnitWei: "10"},
+						{ID: "degraded", PricePerWorkUnitWei: "11"},
 					},
 				},
 			},
 		},
-		Signature: types.Signature{Alg: types.SignatureAlgEthPersonal},
-	}
-	canonical, err := types.CanonicalBytes(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sig, err := sk.SignCanonical(canonical)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.Signature.Value = "0x" + hexLower(sig)
-	manifest.Signature.SignedCanonicalBytesSHA256 = types.CanonicalSHA256(canonical)
-	body, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	fetcher.Bodies[uri] = body
+	})
 
 	resolverSvc := resolver.New(resolver.Config{
 		Chain:      chainProvider,
@@ -806,4 +724,139 @@ func hexLower(b []byte) string {
 		out[i*2+1] = digits[c&0x0f]
 	}
 	return string(out)
+}
+
+// signedEnvelopeFor builds and signs a coordinator envelope covering
+// every capability/offering the given nodes serve.
+func signedEnvelopeFor(t *testing.T, addr types.EthAddress, uri string, now time.Time, key interface {
+	SignCanonical([]byte) ([]byte, error)
+}, nodes []types.Node) []byte {
+	t.Helper()
+	env := types.CoordinatorSignedManifest{
+		Manifest: types.CoordinatorManifestPayload{
+			SpecVersion:    "2.4.1",
+			PublicationSeq: 1,
+			IssuedAt:       now.UTC(),
+			ExpiresAt:      now.UTC().Add(24 * time.Hour),
+			Orch:           types.CoordinatorOrch{EthAddress: string(addr), ServiceURI: uri},
+		},
+		Signature: types.CoordinatorEnvelopeSignature{
+			Algorithm:        types.CoordinatorSignatureAlg,
+			Canonicalization: "JCS",
+		},
+	}
+	for _, n := range nodes {
+		for _, c := range n.Capabilities {
+			offerings := c.Offerings
+			if len(offerings) == 0 {
+				offerings = []types.Offering{{ID: "default", PricePerWorkUnitWei: "1"}}
+			}
+			for _, o := range offerings {
+				price := o.PricePerWorkUnitWei
+				if price == "" {
+					price = "1"
+				}
+				env.Manifest.Capabilities = append(env.Manifest.Capabilities, types.CoordinatorCapability{
+					CapabilityID:    c.Name,
+					OfferingID:      o.ID,
+					Protocol:        "paid-job/v1",
+					Job:             json.RawMessage(`{"transports":["unary"]}`),
+					WorkUnit:        types.CoordinatorWorkUnit{Name: c.WorkUnit},
+					PricePerUnitWei: price,
+					PerUnits:        1,
+					WorkerURL:       n.URL,
+				})
+			}
+		}
+	}
+	canonical, err := types.CoordinatorCanonicalBytes(env.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sig, err := key.SignCanonical(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	env.Signature.Value = "0x" + hexLower(sig)
+	body, err := json.Marshal(env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
+}
+
+func TestWire_OverlayManifestSelectRetriesUncachedAddress(t *testing.T) {
+	f := newWireFixture(t)
+	overlay, err := config.ParseOverlayYAML([]byte(fmt.Sprintf("overlay:\n  - eth_address: %q\n    manifest_url: %q\n", f.addr, f.uri)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server.resolverSvc = resolver.New(resolver.Config{
+		// No chain provider: a lookup would panic and fail the RPC.
+		Fetcher: f.fetcher, Verifier: verifier.New(), Cache: f.cache,
+		Audit: f.auditRepo, Overlay: func() *config.Overlay { return overlay },
+		Clock: f.clk, RejectUnsigned: true, OverlayOnly: true,
+	})
+	cli := registryv1.NewResolverClient(f.clientConn)
+	req := &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}
+	if _, err := cli.Select(context.Background(), req); err == nil {
+		t.Fatal("expected no route before publication")
+	}
+	// A failed startup fetch leaves no cache entry. Selection must discover
+	// the configured address and retry, without a Resolve/Refresh roundtrip.
+	f.signManifestForFixture([]types.Node{{ID: "broker", URL: "https://broker.example.com", Capabilities: []types.Capability{{Name: "example:work", WorkUnit: "unit", Offerings: []types.Offering{{ID: "default", PricePerWorkUnitWei: "42"}}}}}})
+	result, err := cli.Select(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := result.GetRoute()
+	if route.GetEthAddress() != string(f.addr) || route.GetWorkerUrl() != "https://broker.example.com" || route.GetPricePerWorkUnitWei() != "42" || route.GetWorkUnit() != "unit" || route.GetUnitsPerPrice() != 1 || route.GetQuoteId() == "" || len(route.GetRouteFingerprint()) == 0 {
+		t.Fatalf("incomplete overlay route: %+v", route)
+	}
+}
+
+func TestWire_SelectHonorsUnsignedPolicy(t *testing.T) {
+	for _, tc := range []struct {
+		name                                     string
+		overlayAllows, rejectUnsigned, wantRoute bool
+	}{
+		{"default-reject", false, true, false},
+		{"overlay-allows", true, true, true},
+		{"daemon-allows", false, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newWireFixture(t)
+			o, err := config.ParseOverlayYAML([]byte(fmt.Sprintf(`overlay:
+  - eth_address: %q
+    unsigned_allowed: %t
+    pin:
+      - id: static
+        url: https://broker.example.com
+        capabilities:
+          - name: example:work
+            protocol: paid-job/v1
+            work_unit: unit
+            offerings:
+              - id: default
+                price_per_work_unit_wei: "10"
+`, f.addr, tc.overlayAllows)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.server.resolverSvc = resolver.New(resolver.Config{Fetcher: f.fetcher, Cache: f.cache, Audit: f.auditRepo, Clock: f.clk, Overlay: func() *config.Overlay { return o }, OverlayOnly: true, RejectUnsigned: tc.rejectUnsigned})
+			cli := registryv1.NewResolverClient(f.clientConn)
+			req := &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}
+			// Both calls exercise initial synthesis and cached rehydration.
+			for i := 0; i < 2; i++ {
+				result, err := cli.Select(context.Background(), req)
+				if !tc.wantRoute {
+					if status.Code(err) != codes.NotFound {
+						t.Fatalf("unsigned route escaped policy: %v %v", result, err)
+					}
+				} else if err != nil || result.GetRoute().GetWorkerUrl() != "https://broker.example.com" {
+					t.Fatalf("allowed route missing: %v %v", result, err)
+				}
+			}
+		})
+	}
 }

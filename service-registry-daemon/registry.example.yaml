@@ -1,28 +1,10 @@
-# Example operator overlay for the resolver. The file is consumed via
-# --static-overlay=/path/to/nodes.yaml. See
-# docs/design-docs/static-overlay.md for the full spec.
-
+# Coordinator discovery, not a broker/runner list. The signed publication
+# provides broker endpoints, capabilities, prices and settlement keys.
+# Use --discovery=overlay-only to skip chain enumeration and serviceURI lookup.
+# Replace both values with your orchestrator's expected identity and coordinator.
 overlay:
-  - eth_address: "0xabcdef0000000000000000000000000000000000"
-    enabled: true
-    tier_allowed: [free, prepaid]
-    weight: 100
-    unsigned_allowed: false
-    pin:
-      - id: side-channel-1
-        url: "https://internal-orch.example.com:8935"
-        weight: 50
-        capabilities:
-          - name: "openai:chat-completions"
-            work_unit: token
-            offerings:
-              - id: "gpt-oss-20b"
-                price_per_work_unit_wei: "1000"
-        tier_allowed: [prepaid]
-
-  # An operator who hasn't deployed a manifest yet. Resolver returns
-  # a single legacy node; we explicitly mark it allowed because legacy
-  # is treated as SigLegacy, not SigUnsigned.
-  - eth_address: "0xfedcba0000000000000000000000000000000000"
+  - eth_address: "0x0123456789abcdef0123456789abcdef01234567"
+    manifest_url: "https://coordinator.example.com/.well-known/livepeer-registry.json"
     enabled: true
     weight: 100
+    tier_allowed: [prepaid]

@@ -4,7 +4,6 @@ import "time"
 
 type HostEnrollmentStatus string
 type HardwareUnitState string
-type TemplateStatus string
 type TemplateAssignmentRole string
 type TemplateAssignmentState string
 type CertificationStatus string
@@ -30,10 +29,7 @@ const (
 	HardwareUnitRetired      HardwareUnitState = "retired"
 )
 
-const (
-	TemplateStatusActive   TemplateStatus = "active"
-	TemplateStatusDisabled TemplateStatus = "disabled"
-)
+const ()
 
 const (
 	TemplateAssignmentPrimary   TemplateAssignmentRole = "primary"
@@ -77,6 +73,7 @@ const (
 )
 
 type PoolMember struct {
+	PoolID      string       `json:"pool_id"`
 	ID          string       `json:"id"`
 	EthAddress  string       `json:"eth_address"`
 	DisplayName string       `json:"display_name,omitempty"`
@@ -98,6 +95,11 @@ type MemberNonce struct {
 }
 
 type HostEnrollment struct {
+	GPUUUIDs                []string             `json:"gpu_uuids,omitempty"`
+	CredentialGeneration    uint64               `json:"credential_generation,omitempty"`
+	TermsVersion            string               `json:"terms_version,omitempty"`
+	PoolID                  string               `json:"pool_id"`
+	DeviceOwnership         map[string]uint64    `json:"device_ownership,omitempty"`
 	ID                      string               `json:"id"`
 	MemberEthAddress        string               `json:"member_eth_address"`
 	HostLabel               string               `json:"host_label,omitempty"`
@@ -111,52 +113,60 @@ type HostEnrollment struct {
 	UpdatedAt               time.Time            `json:"updated_at"`
 }
 
+// HardwareKind is what a compute unit is.
+type HardwareKind string
+
+const (
+	HardwareKindGPU HardwareKind = "gpu"
+	HardwareKindCPU HardwareKind = "cpu"
+)
+
+// IsCPU reports whether this unit is a CPU socket.
+func (u HardwareUnit) IsCPU() bool { return u.Kind == HardwareKindCPU }
+
 type HardwareUnit struct {
-	ID               string            `json:"id"`
-	EnrollmentID     string            `json:"enrollment_id"`
-	MemberEthAddress string            `json:"member_eth_address"`
-	GPUUUID          string            `json:"gpu_uuid"`
-	GPUModel         string            `json:"gpu_model"`
-	VRAMBytes        uint64            `json:"vram_bytes,omitempty"`
-	DriverVersion    string            `json:"driver_version,omitempty"`
-	CUDAVersion      string            `json:"cuda_version,omitempty"`
-	RuntimeFacts     map[string]string `json:"runtime_facts,omitempty"`
-	State            HardwareUnitState `json:"state"`
-	LastSeenAt       time.Time         `json:"last_seen_at,omitempty"`
-	CreatedAt        time.Time         `json:"created_at"`
-	UpdatedAt        time.Time         `json:"updated_at"`
+	OwnershipGeneration uint64            `json:"ownership_generation,omitempty"`
+	ID                  string            `json:"id"`
+	EnrollmentID        string            `json:"enrollment_id"`
+	MemberEthAddress    string            `json:"member_eth_address"`
+	GPUUUID             string            `json:"gpu_uuid"`
+	GPUModel            string            `json:"gpu_model"`
+	VRAMBytes           uint64            `json:"vram_bytes,omitempty"`
+	DriverVersion       string            `json:"driver_version,omitempty"`
+	CUDAVersion         string            `json:"cuda_version,omitempty"`
+	RuntimeFacts        map[string]string `json:"runtime_facts,omitempty"`
+	// PublicURL is the HOST's outside-facing origin, copied onto each of
+	// its units at relay the way MemberEthAddress is, because the
+	// planner's input is units. Empty: the host is not public, and no
+	// paid-session template places here (plan 0046 §2).
+	PublicURL string `json:"public_url,omitempty"`
+	// Kind: a compute unit was a GPU first (plan 0047). "cpu" makes this
+	// a socket — the GPU-named fields keep their names, and the CPU's
+	// own facts ride below. Empty means gpu.
+	Kind       HardwareKind      `json:"kind,omitempty"`
+	Cores      int               `json:"cores,omitempty"`
+	Threads    int               `json:"threads,omitempty"`
+	ISA        []string          `json:"isa,omitempty"`
+	State      HardwareUnitState `json:"state"`
+	LastSeenAt time.Time         `json:"last_seen_at,omitempty"`
+	CreatedAt  time.Time         `json:"created_at"`
+	UpdatedAt  time.Time         `json:"updated_at"`
 }
 
-type TemplateCatalogEntry struct {
-	ID                 string              `json:"id"`
-	CapabilityID       string              `json:"capability_id"`
-	OfferingID         string              `json:"offering_id"`
-	InteractionMode    string              `json:"interaction_mode"`
-	DisplayName        string              `json:"display_name,omitempty"`
-	Description        string              `json:"description,omitempty"`
-	AllowedGPUClasses  []string            `json:"allowed_gpu_classes,omitempty"`
-	AllowedGPUModels   []string            `json:"allowed_gpu_models,omitempty"`
-	PrimaryAllowed     bool                `json:"primary_allowed"`
-	SecondaryAllowed   bool                `json:"secondary_allowed"`
-	MaxInFlightDefault int                 `json:"max_in_flight_default,omitempty"`
-	QueueLimitDefault  int                 `json:"queue_limit_default,omitempty"`
-	ProbationSharePPM  uint64              `json:"probation_share_ppm,omitempty"`
-	ActiveSharePPM     uint64              `json:"active_share_ppm,omitempty"`
-	CommissionBPS      uint32              `json:"commission_bps,omitempty"`
-	RunnerCompose      map[string]any      `json:"runner_compose,omitempty"`
-	CertificationSteps []CertificationStep `json:"certification_steps,omitempty"`
-	Status             TemplateStatus      `json:"status"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
-}
-
+// CertificationStep is one step of a template's certification recipe.
+//
+// The yaml tags are load-bearing: templates are authored as YAML files,
+// and without them yaml.v3 would lowercase the Go field names, so
+// `timeout_ms` would be a parse error and the only accepted spelling
+// would be `timeoutms`. The loader sets KnownFields(true), so that
+// mismatch fails the boot rather than silently dropping a timeout.
 type CertificationStep struct {
-	Name        string         `json:"name"`
-	Type        string         `json:"type"`
-	Config      map[string]any `json:"config,omitempty"`
-	TimeoutMS   int            `json:"timeout_ms,omitempty"`
-	Required    bool           `json:"required"`
-	Description string         `json:"description,omitempty"`
+	Name        string         `yaml:"name" json:"name"`
+	Type        string         `yaml:"type" json:"type"`
+	Config      map[string]any `yaml:"config,omitempty" json:"config,omitempty"`
+	TimeoutMS   int            `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	Required    bool           `yaml:"required" json:"required"`
+	Description string         `yaml:"description,omitempty" json:"description,omitempty"`
 }
 
 type TemplateAssignment struct {
@@ -176,8 +186,37 @@ type TemplateAssignment struct {
 	DrainingSince       time.Time               `json:"draining_since,omitempty"`
 	UpdateRequiredAt    time.Time               `json:"update_required_at,omitempty"`
 	LastCertifiedAt     time.Time               `json:"last_certified_at,omitempty"`
-	CreatedAt           time.Time               `json:"created_at"`
-	UpdatedAt           time.Time               `json:"updated_at"`
+	// SuspensionReason is the ladder's reason code for the CURRENT
+	// suspension, and SuspendedAt when it happened.
+	//
+	// Recorded but not yet acted on. The two causes want opposite
+	// remedies: repeated certification failure is fixed by re-running
+	// certification, whereas invalid output is not — the smoke step
+	// checks that a response came back with the right shape, and a
+	// runner returning fluent, confident, wrong answers passes it every
+	// time. Reinstating currently re-certifies in both cases, which is
+	// right for the first and thin for the second.
+	//
+	// Nothing produces an invalid-output signal today, so the gap is
+	// latent. It is recorded now so the audit trail is honest
+	// immediately, and so whoever builds that detector finds the cause
+	// already here rather than inheriting a default that quietly does
+	// the wrong thing.
+	SuspensionReason string    `json:"suspension_reason,omitempty"`
+	SuspendedAt      time.Time `json:"suspended_at,omitempty"`
+
+	// ReinstatedAt is when an operator last lifted a suspension.
+	//
+	// The ladder counts certification failures only after it. Without
+	// that boundary a placement suspended for two failed runs would be
+	// re-suspended by the same historical count on the very next tick,
+	// and the operator's decision would visibly do nothing, once a
+	// minute, forever. Keeping the boundary rather than resetting the
+	// counters leaves the history intact for whoever reviews whether
+	// the reinstate was wise.
+	ReinstatedAt time.Time `json:"reinstated_at,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type CertificationRun struct {
@@ -205,6 +244,11 @@ type CertificationResult struct {
 }
 
 type SettlementWindow struct {
+	ChainID                    uint64                 `json:"chain_id,omitempty"`
+	PoolID                     string                 `json:"pool_id,omitempty"`
+	TermsVersion               string                 `json:"terms_version,omitempty"`
+	CommissionBPS              uint64                 `json:"commission_bps,omitempty"`
+	RegionalAllocation         *RegionalAllocation    `json:"regional_allocation,omitempty"`
 	ID                         string                 `json:"id"`
 	StartRoundID               string                 `json:"start_round_id"`
 	EndRoundID                 string                 `json:"end_round_id"`
@@ -232,6 +276,7 @@ type OfferingSettlement struct {
 }
 
 type PayoutBatch struct {
+	PoolID             string            `json:"pool_id,omitempty"`
 	ID                 string            `json:"id"`
 	SettlementWindowID string            `json:"settlement_window_id"`
 	Status             PayoutBatchStatus `json:"status"`

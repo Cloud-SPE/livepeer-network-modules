@@ -1,19 +1,18 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/serviceauth"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/health"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/registry"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
-	"github.com/gorilla/websocket"
 )
 
 type runtimeStatusResponse struct {
@@ -43,20 +42,64 @@ func (s *Server) handleOfferings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "runtime config is not loaded", http.StatusInternalServerError)
 		return
 	}
-	payload := registry.BuildOfferings(cfg, s.currentMetadata())
+	domainClient, ok := s.payment.(payment.DomainClient)
+	if !ok {
+		http.Error(w, "payment ledger identity unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	domainID, err := domainClient.SettlementDomain(r.Context())
+	if err != nil || domainID == "" {
+		http.Error(w, "payment ledger identity unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	payload := registry.BuildOfferings(cfg)
+	if s.offersEngine != nil {
+		payload.OffersRevision = s.offersEngine.Revision()
+		// Advertised offers: frozen (or accepted-pending) shapes only —
+		// a pure function of offer set + frozen shapes, never of live
+		// runner churn (plan 0043 §3.4).
+		for _, adv := range s.offersEngine.AdvertisedOffers() {
+			if t := registry.OfferTuple(adv.Offer, offerShape(adv.Shape)); t != nil {
+				t.SettlementDomainID = domainID
+				payload.Capabilities = append(payload.Capabilities, *t)
+			}
+		}
+	}
+	if s.workAccounting != nil {
+		draining, err := s.workAccounting.Store.Draining()
+		if err != nil {
+			http.Error(w, "source fence unavailable", 503)
+			return
+		}
+		if draining || (s.workAccounting.RequireTerms && s.workAccounting.Store.TermsPermitAdmission() != nil) {
+			payload.Capabilities = payload.Capabilities[:0]
+		}
+	}
 	observability.SetPublishedOfferings(len(payload.Capabilities))
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(payload)
 }
 
-func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
-	healthMgr := s.currentHealth()
-	if healthMgr == nil {
-		http.Error(w, "health manager is not available", http.StatusInternalServerError)
+// handleSettlementKeys publishes the delegated settlement key as a
+// self-signed announcement (broker-admin §7.1). The coordinator reads
+// it on scrape and carries the key into the manifest candidate; the
+// cold key still decides whether it is delegated.
+func (s *Server) handleSettlementKeys(w http.ResponseWriter, r *http.Request) {
+	cfg := s.currentConfig()
+	if cfg == nil {
+		http.Error(w, "runtime config is not loaded", http.StatusInternalServerError)
 		return
 	}
-	registry.WriteHealthResponse(w, healthMgr, s.currentMetadata(), s.currentPoolSnapshot())
+	payload := registry.BuildSettlementKeys(cfg.Identity.OrchEthAddress, cfg.ExternalBaseURL, s.settlementSigner)
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(payload)
+}
+
+func (s *Server) handleRegistryHealth(w http.ResponseWriter, r *http.Request) {
+	registry.WriteHealthResponse(w, s.offerHealth(), s.currentPoolSnapshot())
 }
 
 func (s *Server) handleRuntimeStatus(w http.ResponseWriter, r *http.Request) {
@@ -83,79 +126,6 @@ func (s *Server) handleRuntimeReload(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(status)
 }
 
-func (s *Server) handleWorkerSessions(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdminAuth(w, r) {
-		return
-	}
-	var ids []string
-	if s.workerRegistry != nil {
-		ids = s.workerRegistry.ConnectedBackendIDs()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(struct {
-		ConnectedBackendIDs []string `json:"connected_backend_ids"`
-	}{ConnectedBackendIDs: ids})
-}
-
-func (s *Server) handleWorkerSessionKill(w http.ResponseWriter, r *http.Request) {
-	if !s.requireAdminAuth(w, r) {
-		return
-	}
-	backendID := strings.TrimSpace(r.PathValue("backend_id"))
-	if backendID == "" {
-		http.Error(w, "backend_id is required", http.StatusBadRequest)
-		return
-	}
-	if s.workerRegistry != nil {
-		s.workerRegistry.Unregister(backendID)
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	_ = json.NewEncoder(w).Encode(struct {
-		BackendID string `json:"backend_id"`
-		Status    string `json:"status"`
-	}{BackendID: backendID, Status: "killed"})
-}
-
-func (s *Server) handleWorkerSession(w http.ResponseWriter, r *http.Request) {
-	rawIDs := strings.TrimSpace(r.URL.Query().Get("backend_ids"))
-	if rawIDs == "" {
-		http.Error(w, "backend_ids query parameter is required", http.StatusBadRequest)
-		return
-	}
-	backendIDs := parseCSV(rawIDs)
-	if len(backendIDs) == 0 {
-		http.Error(w, "at least one backend id is required", http.StatusBadRequest)
-		return
-	}
-	if !s.requireWorkerSessionAuth(w, r, backendIDs) {
-		return
-	}
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	conn, err := upgrader.Upgrade(w, r, nil)
-	if err != nil {
-		return
-	}
-	forwarder := workerconn.NewSessionForwarder(conn)
-	for _, id := range backendIDs {
-		if err := s.workerRegistry.Register(id, forwarder); err != nil {
-			_ = forwarder.Close()
-			return
-		}
-	}
-	defer func() {
-		for _, id := range backendIDs {
-			s.workerRegistry.Unregister(id)
-		}
-		_ = forwarder.Close()
-	}()
-	select {
-	case <-r.Context().Done():
-	case <-forwarder.Done():
-	}
-}
-
 func (s *Server) runtimeStatus() runtimeStatusResponse {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -172,58 +142,16 @@ func (s *Server) runtimeStatus() runtimeStatusResponse {
 	}
 }
 
-func (s *Server) requireWorkerSessionAuth(w http.ResponseWriter, r *http.Request, backendIDs []string) bool {
-	s.mu.RLock()
-	token := s.adminToken
-	cfg := s.cfg
-	s.mu.RUnlock()
-	authz := strings.TrimSpace(r.Header.Get("Authorization"))
-	if strings.TrimSpace(token) == "" {
-		if authz == "" || s.workerCredentialAllowed(cfg, backendIDs, authz) {
-			return true
+func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
+	cfg := s.currentConfig()
+	if cfg != nil && cfg.ServiceAuthFile != "" {
+		if _, err := (serviceauth.Verifier{Path: cfg.ServiceAuthFile}).Authorize(r, cfg.PoolID, cfg.ServiceResource, brokerServiceRoles(r)...); err != nil {
+			http.Error(w, "unauthorized service", http.StatusUnauthorized)
+			return false
 		}
-		w.Header().Set("WWW-Authenticate", `Bearer realm="capability-broker-worker"`)
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return false
-	}
-	if authz == "Bearer "+token || s.workerCredentialAllowed(cfg, backendIDs, authz) {
 		return true
 	}
-	w.Header().Set("WWW-Authenticate", `Bearer realm="capability-broker-worker"`)
-	http.Error(w, "unauthorized", http.StatusUnauthorized)
-	return false
-}
 
-func (s *Server) workerCredentialAllowed(cfg *config.Config, backendIDs []string, authz string) bool {
-	if cfg == nil || !strings.HasPrefix(authz, "Bearer ") {
-		return false
-	}
-	token := strings.TrimSpace(strings.TrimPrefix(authz, "Bearer "))
-	if token == "" {
-		return false
-	}
-	needed := make(map[string]bool, len(backendIDs))
-	for _, id := range backendIDs {
-		needed[id] = false
-	}
-	for _, cap := range cfg.Capabilities {
-		if _, ok := needed[cap.Backend.ID]; !ok {
-			continue
-		}
-		if strings.TrimSpace(cap.Backend.WorkerSessionCredential) != token {
-			return false
-		}
-		needed[cap.Backend.ID] = true
-	}
-	for _, ok := range needed {
-		if !ok {
-			return false
-		}
-	}
-	return true
-}
-
-func (s *Server) requireAdminAuth(w http.ResponseWriter, r *http.Request) bool {
 	s.mu.RLock()
 	token := s.adminToken
 	s.mu.RUnlock()
@@ -270,35 +198,28 @@ func (s *Server) reloadRuntime() (runtimeStatusResponse, error) {
 
 	cfg, err := config.Load(s.configPath)
 	if err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
+		return s.runtimeStatus(), err
+	}
+	current := s.currentConfig()
+	if current != nil && (current.PoolID != cfg.PoolID || current.ServiceResource != cfg.ServiceResource || current.AccountingStorePath != cfg.AccountingStorePath || current.ReceiptSink != cfg.ReceiptSink) {
+		err := fmt.Errorf("regional identity, accounting store and receipt client cannot change through runtime reload; restart with the same durable identity")
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
 		return s.runtimeStatus(), err
 	}
 	loadedRevision, loadedConfigPath, err := loadRuntimeRevision(s.configPath, cfg)
 	if err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
+		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil)
 		return s.runtimeStatus(), err
 	}
-	metadata := newMetadataCatalog()
-	refreshMetadataCatalog(context.Background(), &http.Client{Timeout: 2 * time.Second}, cfg, metadata)
-	if err := validateConfigAgainstRegistries(cfg, s.modes, s.extractors); err != nil {
-		s.finishReload(attemptID, startedAt, "failed", err.Error(), "", nil, nil)
-		return s.runtimeStatus(), err
-	}
-	var previousSnapshots []health.Snapshot
-	if previous := s.currentHealth(); previous != nil {
-		previousSnapshots = previous.Snapshot().Capabilities
-	}
-	healthMgr := health.NewWithTransport(cfg, previousSnapshots, s.workerRegistry.HTTPTransport(nil))
-	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg, healthMgr)
+	s.finishReload(attemptID, startedAt, "applied", "", loadedRevision, cfg)
 	s.mu.Lock()
 	s.loadedConfigPath = loadedConfigPath
-	s.metadata = metadata
 	s.mu.Unlock()
-	s.startHealthLoop(healthMgr)
 	return s.runtimeStatus(), nil
 }
 
-func (s *Server) finishReload(attemptID string, startedAt time.Time, status, reloadError, revision string, cfg *config.Config, healthMgr *health.Manager) {
+func (s *Server) finishReload(attemptID string, startedAt time.Time, status, reloadError, revision string, cfg *config.Config) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.lastReloadAttemptID = attemptID
@@ -308,9 +229,13 @@ func (s *Server) finishReload(attemptID string, startedAt time.Time, status, rel
 	s.lastReloadError = reloadError
 	if status == "applied" {
 		s.cfg = cfg
-		s.health = healthMgr
 		s.loadedRevision = revision
 		s.loadedAt = s.lastReloadFinishedAt
+		if s.offersEngine != nil {
+			if err := s.offersEngine.Reload(cfg); err != nil {
+				log.Printf("offers engine reload: %v", err)
+			}
+		}
 	}
 	s.recordReloadHistory(runtimeHistoryEntry{
 		AttemptID:      attemptID,

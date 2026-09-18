@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"testing"
+
+	"github.com/ethereum/go-ethereum"
 )
 
 func TestErrorClass_String(t *testing.T) {
@@ -146,5 +148,30 @@ func TestIsPermanent(t *testing.T) {
 	}
 	if IsPermanent(fmt.Errorf("EOF")) {
 		t.Errorf("EOF should not be permanent")
+	}
+}
+
+func TestClassify_NotFoundIsItsOwnClassAndStaysIs(t *testing.T) {
+	c := Classify(ethereum.NotFound)
+	if c.Class != ClassNotFound || c.Code != "rpc.not_found" {
+		t.Fatalf("Classify(ethereum.NotFound) = class %s code %s", c.Class, c.Code)
+	}
+	if !errors.Is(c, ethereum.NotFound) {
+		t.Fatal("classified error must still satisfy errors.Is(err, ethereum.NotFound)")
+	}
+	if IsTransient(ethereum.NotFound) {
+		t.Fatal("NotFound must not be transient: the transport would retry and penalize the endpoint")
+	}
+	// Wrapped by a caller, the sentinel is still recognised.
+	wrapped := fmt.Errorf("receipt poll: %w", ethereum.NotFound)
+	if Classify(wrapped).Class != ClassNotFound {
+		t.Fatalf("wrapped NotFound classified as %s", Classify(wrapped).Class)
+	}
+	// A node that is merely behind is still transient, not not-found.
+	if Classify(errors.New("block not found")).Class != ClassTransient {
+		t.Fatal("\"block not found\" (unsynced node) must stay transient")
+	}
+	if ClassNotFound.String() != "not_found" {
+		t.Fatalf("String() = %s", ClassNotFound.String())
 	}
 }

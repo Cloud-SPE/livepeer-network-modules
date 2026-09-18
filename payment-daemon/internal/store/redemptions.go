@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/types"
 	"math/big"
 
 	bolt "go.etcd.io/bbolt"
@@ -36,13 +37,15 @@ type PendingRedemption struct {
 // pending queue, either because it was confirmed on-chain or drained
 // locally after a terminal failure.
 type RedeemedRedemption struct {
-	TicketHash       []byte `json:"ticket_hash"`
-	TxHash           []byte `json:"tx_hash"`
-	Sender           []byte `json:"sender"`
-	FaceValueWei     string `json:"face_value_wei"`
-	CreationRound    int64  `json:"creation_round"`
-	RedeemedRound    int64  `json:"redeemed_round"`
-	ConfirmedOnChain bool   `json:"confirmed_on_chain"`
+	DrainReason      string                     `json:"drain_reason,omitempty"`
+	Inclusion        *types.RedemptionInclusion `json:"inclusion,omitempty"`
+	TicketHash       []byte                     `json:"ticket_hash"`
+	TxHash           []byte                     `json:"tx_hash"`
+	Sender           []byte                     `json:"sender"`
+	FaceValueWei     string                     `json:"face_value_wei"`
+	CreationRound    int64                      `json:"creation_round"`
+	RedeemedRound    int64                      `json:"redeemed_round"`
+	ConfirmedOnChain bool                       `json:"confirmed_on_chain"`
 }
 
 // EnqueueRedemption inserts a winning ticket into the FIFO redemption
@@ -118,6 +121,17 @@ func (s *Store) PendingRedemptions() ([]PendingRedemption, error) {
 // metadata. A zero tx hash means the ticket drained locally without an
 // on-chain confirmation.
 func (s *Store) MarkRedeemed(ticketHash, txHash []byte, ticket *SignedTicket, redeemedRound int64) error {
+	return s.markRedeemed(ticketHash, txHash, ticket, redeemedRound, nil, "")
+}
+
+func (s *Store) MarkRedeemedWithInclusion(ticketHash []byte, ticket *SignedTicket, evidence *types.RedemptionInclusion) error {
+	if evidence == nil || len(evidence.TxHash) != 32 || isAllZero(evidence.TxHash) || len(evidence.BlockHash) != 32 || evidence.Round <= 0 {
+		return fmt.Errorf("invalid inclusion evidence")
+	}
+	return s.markRedeemed(ticketHash, evidence.TxHash, ticket, evidence.Round, evidence, "")
+}
+
+func (s *Store) markRedeemed(ticketHash, txHash []byte, ticket *SignedTicket, redeemedRound int64, evidence *types.RedemptionInclusion, drainReason string) error {
 	if len(ticketHash) != 32 {
 		return fmt.Errorf("ticketHash must be 32 bytes, got %d", len(ticketHash))
 	}
@@ -129,6 +143,8 @@ func (s *Store) MarkRedeemed(ticketHash, txHash []byte, ticket *SignedTicket, re
 		copy(stamped, txHash[:min(32, len(txHash))])
 	}
 	record, err := json.Marshal(RedeemedRedemption{
+		Inclusion:        evidence,
+		DrainReason:      drainReason,
 		TicketHash:       append([]byte(nil), ticketHash...),
 		TxHash:           stamped,
 		Sender:           append([]byte(nil), ticket.Sender...),
@@ -233,4 +249,46 @@ func isAllZero(b []byte) bool {
 		}
 	}
 	return true
+}
+
+// MarkDrained distinguishes a proven non-redemption from unresolved used-ticket
+// history. A used ticket without known inclusion must hold source completeness.
+func (s *Store) MarkDrained(hash []byte, ticket *SignedTicket, round int64, reason string) error {
+	return s.markRedeemed(hash, make([]byte, 32), ticket, round, nil, reason)
+}
+
+// RedemptionHistory is one atomic snapshot, without a fixed-size result limit.
+func (s *Store) RedemptionHistory() ([]PendingRedemption, []RedeemedRedemption, bool, error) {
+	var pending []PendingRedemption
+	var redeemed []RedeemedRedemption
+	legacy := false
+	err := s.db.View(func(tx *bolt.Tx) error {
+		if err := tx.Bucket([]byte(redemptionsByHash)).ForEach(func(hash, seq []byte) error {
+			raw := tx.Bucket([]byte(redemptionsPending)).Get(seq)
+			if raw == nil {
+				return fmt.Errorf("redemption index is incomplete")
+			}
+			var ticket SignedTicket
+			if err := json.Unmarshal(raw, &ticket); err != nil {
+				return err
+			}
+			pending = append(pending, PendingRedemption{Hash: append([]byte(nil), hash...), Ticket: &ticket, Seq: readSeq(seq)})
+			return nil
+		}); err != nil {
+			return err
+		}
+		return tx.Bucket([]byte(redemptionsRedeemed)).ForEach(func(_, raw []byte) error {
+			if len(raw) == 32 {
+				legacy = true
+				return nil
+			}
+			var record RedeemedRedemption
+			if err := json.Unmarshal(raw, &record); err != nil {
+				return err
+			}
+			redeemed = append(redeemed, record)
+			return nil
+		})
+	})
+	return pending, redeemed, legacy, err
 }

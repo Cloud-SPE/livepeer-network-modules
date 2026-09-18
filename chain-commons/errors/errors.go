@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/ethereum/go-ethereum"
 )
 
 // ErrorClass categorizes errors by recovery story.
@@ -52,6 +54,15 @@ const (
 	// circuit breakers; no upstream is healthy. Treated as transient by
 	// callers but surfaces a distinct error code for ops dashboards.
 	ClassCircuitOpen
+
+	// ClassNotFound indicates the queried object does not exist on the
+	// endpoint yet: a receipt for a transaction that has not been mined, a
+	// transaction hash the node has not seen. This is a normal state while
+	// polling, not a fault. The transport must not retry it, must not fail
+	// over on it, and must not count it against the endpoint; pollers keep
+	// polling. errors.Is(err, ethereum.NotFound) stays true through the
+	// wrapper.
+	ClassNotFound
 )
 
 // String returns the canonical name of the class.
@@ -73,6 +84,8 @@ func (c ErrorClass) String() string {
 		return "reorged"
 	case ClassCircuitOpen:
 		return "circuit_open"
+	case ClassNotFound:
+		return "not_found"
 	default:
 		return fmt.Sprintf("class(%d)", c)
 	}
@@ -132,6 +145,14 @@ func Classify(err error) *Error {
 	var ce *Error
 	if errors.As(err, &ce) {
 		return ce
+	}
+
+	// go-ethereum's sentinel for "no such object": ethclient returns it
+	// when the node answers null for a receipt or a transaction. Checked
+	// before the string matches so its message ("not found") cannot be
+	// mistaken for a sync problem.
+	if errors.Is(err, ethereum.NotFound) {
+		return Wrap(ClassNotFound, "rpc.not_found", "object not found on the endpoint (not yet mined or unknown)", err)
 	}
 
 	msg := strings.ToLower(err.Error())

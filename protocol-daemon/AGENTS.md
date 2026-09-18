@@ -7,8 +7,9 @@ The map every agent should keep at hand when modifying this module.
 Round initialization (`RoundsManager.initializeRound`), reward calling
 (`BondingManager.rewardWithHint`), and on-chain `ServiceRegistry` /
 `AIServiceRegistry` pointer management on behalf of a Livepeer
-orchestrator. Built fresh on `chain-commons`. Three modes:
-`round-init`, `reward`, `both`.
+orchestrator. Built fresh on `chain-commons`. Four modes:
+`round-init`, `reward`, `both`, `read-only`. The last observes public chain
+rounds without signing providers or transaction recovery.
 
 Also exposes orchestrator self-service actions (plan 0039), all signed by
 the daemon's hot wallet (which must BE the orchestrator address): set
@@ -45,7 +46,7 @@ Enforced by `lint/layer-check/`. Don't reach across layers; route through provid
 
 - Every on-chain write goes through `chain-commons.services.txintent.Manager.Submit`. Never call `keystore.SignTx` + `rpc.SendTransaction` directly from service code.
 - `chain-commons.services.txintent` provides idempotency by `(Kind, KeyParams)`. For round-init: `Kind="InitializeRound", KeyParams=round.Number.Bytes()`. For reward: `Kind="RewardWithHint", KeyParams=round.Number.Bytes() ++ orchAddr.Bytes()`.
-- `Manager.Resume(ctx)` is called once at startup before any other service runs.
+- In signing modes, `Manager.Resume(ctx)` is called once at startup before any other service runs. Read-only mode never constructs or resumes a manager.
 - Mode-specific RPCs return `Unimplemented` when the daemon is not running in that mode.
 - Preflight failures exit non-zero with a structured `error_code` log line; the gRPC socket is not opened until preflight passes.
 - `--metrics-listen` is empty by default. Operators opt in. No metrics listener bound when empty.
@@ -56,10 +57,10 @@ Enforced by `lint/layer-check/`. Don't reach across layers; route through provid
 
 | Task | Where to start |
 |---|---|
-| Add a new RPC method | `proto/livepeer/protocol/v1/protocol.proto` → `internal/runtime/grpc/server.go` → tests |
+| Add a new RPC method | `../proto-contracts/livepeer/protocol/v1/protocol.proto` (sibling module; `make proto` there) → `internal/runtime/grpc/{server,adapter}.go` → tests |
 | Tune the round-init loop | `internal/service/roundinit/service.go` |
 | Tune positional-hint walking | `internal/service/reward/hints.go` + `internal/repo/poolhints/cache.go` |
-| Add a new metric | `internal/runtime/metrics/names.go` (constant) → emitter site → `docs/design-docs/observability.md` |
+| Add a new metric | `internal/runtime/metrics/names.go` (constant) → emitter site → package doc-comment in `internal/runtime/metrics/` (no standalone observability design-doc yet — see `docs/design-docs/index.md`) |
 | Bump preflight | `internal/service/preflight/preflight.go` |
 | Add a start-time (infra) flag | `cmd/livepeer-protocol-daemon/run.go` (flag def) → `internal/config/config.go` (struct field + validation) |
 | Add a runtime operational-config field | `internal/types/opconfig.go` (struct + `Default`/`Validate`) → `internal/repo/opconfig/store.go` (persist) → `proto.../protocol.proto` `OperationalConfig` → `internal/runtime/grpc/{server_actions,adapter_actions}.go` → secure-orch-console config form |

@@ -77,3 +77,24 @@ func TestListPendingRounds(t *testing.T) {
 		t.Fatalf("pending rounds = %+v", pending)
 	}
 }
+
+func TestPendingBoundaryAppliedBeforeLimit(t *testing.T) {
+	r, err := Open(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for _, n := range []uint64{3340, 4339, 4341, 4342} {
+		if err := r.MarkFailed(n, "retry"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pending, err := r.ListPendingRoundsFrom(1, 4341)
+	if err != nil || len(pending) != 1 || pending[0].RoundID != 4341 {
+		t.Fatalf("pending=%v err=%v", pending, err)
+	}
+	old, found, err := r.GetRound(3340)
+	if err != nil || !found || old.Status != "failed" {
+		t.Fatal("historical diagnostics lost")
+	}
+}

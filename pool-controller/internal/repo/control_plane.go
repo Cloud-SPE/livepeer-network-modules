@@ -2,6 +2,7 @@ package repo
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -9,18 +10,22 @@ import (
 	bolt "go.etcd.io/bbolt"
 )
 
+// Buckets. The legacy member model's four buckets (join_requests,
+// members, member_backends, assignments) and the offers bucket are no
+// longer declared or opened — an offer is derived from the enabled
+// template set, never stored. Existing databases keep those bytes: nothing enumerates
+// buckets, so they are inert, and there is no migration machinery in
+// this module to convert them with. Deleting a user's rows on upgrade
+// is not a decision this code should make silently.
 const (
-	offersBucket              = "offers"
-	joinRequestsBucket        = "join_requests"
-	membersBucket             = "members"
-	memberBackendsBucket      = "member_backends"
-	assignmentsBucket         = "assignments"
 	auditEventsBucket         = "audit_events"
 	poolMembersBucket         = "pool_members_v2"
 	memberNoncesBucket        = "member_nonces"
 	hostEnrollmentsBucket     = "host_enrollments"
 	hardwareUnitsBucket       = "hardware_units"
-	templateCatalogBucket     = "template_catalog"
+	templateOverridesBucket   = "template_overrides"
+	memberOptOutsBucket       = "member_template_opt_outs"
+	hardwareConflictsBucket   = "hardware_claim_conflicts"
 	templateAssignmentsBucket = "template_assignments"
 	certificationRunsBucket   = "certification_runs"
 	settlementWindowsBucket   = "settlement_windows"
@@ -29,23 +34,20 @@ const (
 
 func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	for _, bucket := range []string{
-		offersBucket,
-		joinRequestsBucket,
-		membersBucket,
-		memberBackendsBucket,
-		assignmentsBucket,
 		auditEventsBucket,
+		"member_agent_apply",
 		poolMembersBucket,
 		memberNoncesBucket,
 		hostEnrollmentsBucket,
 		hardwareUnitsBucket,
-		templateCatalogBucket,
+		templateOverridesBucket,
+		memberOptOutsBucket,
+		hardwareConflictsBucket,
 		templateAssignmentsBucket,
 		certificationRunsBucket,
 		settlementWindowsBucket,
 		payoutBatchesBucket,
 		desiredBrokerRuntimeBucket,
-		appliedBrokerRuntimeBucket,
 	} {
 		if _, err := tx.CreateBucketIfNotExists([]byte(bucket)); err != nil {
 			return err
@@ -53,6 +55,8 @@ func (r *StateRepo) initControlPlaneBuckets(tx *bolt.Tx) error {
 	}
 	return nil
 }
+
+var ErrNotFound = errors.New("not found")
 
 func putJSON[T any](r *StateRepo, bucket, key string, value T) error {
 	if r == nil || r.db == nil {
@@ -66,6 +70,12 @@ func putJSON[T any](r *StateRepo, bucket, key string, value T) error {
 		return err
 	}
 	return r.db.Update(func(tx *bolt.Tx) error {
+		if err := guardDeviceTransferWrite(tx, bucket, raw); err != nil {
+			return err
+		}
+		if err := guardRegionalAccounting(bucket, tx.Bucket([]byte(bucket)).Get([]byte(key)), raw); err != nil {
+			return err
+		}
 		return tx.Bucket([]byte(bucket)).Put([]byte(key), raw)
 	})
 }
@@ -78,9 +88,13 @@ func getJSON[T any](r *StateRepo, bucket, key string, out *T) error {
 		return fmt.Errorf("key is required")
 	}
 	return r.db.View(func(tx *bolt.Tx) error {
-		raw := tx.Bucket([]byte(bucket)).Get([]byte(key))
+		b := tx.Bucket([]byte(bucket))
+		if b == nil {
+			return fmt.Errorf("%s %q: %w", bucket, key, ErrNotFound)
+		}
+		raw := b.Get([]byte(key))
 		if raw == nil {
-			return fmt.Errorf("%s %q: not found", bucket, key)
+			return fmt.Errorf("%s %q: %w", bucket, key, ErrNotFound)
 		}
 		return json.Unmarshal(raw, out)
 	})

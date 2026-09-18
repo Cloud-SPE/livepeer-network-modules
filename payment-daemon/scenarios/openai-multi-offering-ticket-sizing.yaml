@@ -21,7 +21,7 @@ offerings:
   - name: "qwen3.6-35b-a3b-fp8-default"
     capability_id: "openai:chat-completions"
     offering_id: "qwen3.6-35b-a3b-fp8-default"
-    interaction: "http-stream@v0"
+    interaction: "paid-job/v1"
     work_unit: "tokens"
     price:
       # Cadence break-even:
@@ -70,7 +70,7 @@ offerings:
   - name: "vllm-qwen3-coder-30b-stream"
     capability_id: "openai:chat-completions"
     offering_id: "vllm-qwen3-coder-30b-stream"
-    interaction: "http-stream@v0"
+    interaction: "paid-job/v1"
     work_unit: "tokens"
     price:
       # 5,400,000,000,000,000 wei / 24h / 375,000 billable tokens/hour
@@ -90,7 +90,7 @@ offerings:
   - name: "vllm-qwen3.6-27b-stream"
     capability_id: "openai:chat-completions"
     offering_id: "vllm-qwen3.6-27b-stream"
-    interaction: "http-stream@v0"
+    interaction: "paid-job/v1"
     work_unit: "tokens"
     price:
       # 5,400,000,000,000,000 wei / 24h / 322,916.67 billable tokens/hour
@@ -110,7 +110,7 @@ offerings:
   - name: "FLUX.1-dev image"
     capability_id: "openai:images-generations"
     offering_id: "black-forest-labs/FLUX.1-dev"
-    interaction: "http-reqresp@v0"
+    interaction: "paid-job/v1"
     work_unit: "images"
     price:
       # Break-even for one 0.0054 ETH expected win/day at 12 images/hour:
@@ -128,7 +128,7 @@ offerings:
   - name: "kokoro audio speech"
     capability_id: "openai:audio-speech"
     offering_id: "kokoro"
-    interaction: "http-reqresp@v0"
+    interaction: "paid-job/v1"
     work_unit: "requests"
     price:
       # Break-even for one 0.0054 ETH expected win/day at 240 requests/hour:

@@ -41,13 +41,18 @@ work_unit:
 
 ## Streaming caveat
 
-For `http-stream` mode against OpenAI chat-completions:
+For the `stream` transport against OpenAI chat-completions:
 
 - The backend emits `usage` only in the **final** SSE event when
   `stream_options.include_usage: true` is set in the request.
-- Broker MAY rewrite the request body to inject
-  `stream_options.include_usage: true` when this extractor is active for an
-  `http-stream`-mode capability (transparent to the gateway and customer).
+- The broker MUST NOT rewrite the body to inject it. `paid-job/v1` §3 binds
+  the authorization to the exact request body and passes that body to the
+  runner; setting `stream_options.include_usage: true` is the **gateway's**
+  obligation. An
+  offering whose extractor needs it advertises the requirement in its
+  free-form offering metadata (e.g. an operator-declared
+  `extra.features.include_usage_required`) so the gateway knows before it
+  sends. A stream that arrives without it claims `0`.
 - The final SSE event carries the usage object; broker reads it before
   emitting the `Livepeer-Work-Units` trailer.
 

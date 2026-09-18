@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")"
+./preflight.sh pilot
+[ ! -e run/DRAINING ] || { echo "pilot is drained; preserve or clear run/DRAINING explicitly before admitting new work" >&2; exit 2; }
+set -a; . ./stack.env; set +a
+
+compose=(docker compose --env-file stack.env -f compose.yaml)
+checkpoint="${RECOVERY_CHECKPOINT:-/var/lib/livepeer/payment-daemon/recovery-$(date -u +%Y%m%dT%H%M%SZ)-$$.json}"
+[[ "$checkpoint" =~ ^/var/lib/livepeer/payment-daemon/recovery-[A-Za-z0-9._-]+\.json$ ]] || {
+  echo "RECOVERY_CHECKPOINT must name a recovery-*.json file in the probe-state directory" >&2
+  exit 2
+}
+common=(
+  --payer-socket=/var/run/livepeer/payer/payer-daemon.sock
+  --payee-socket=/var/run/livepeer/payee/payment-daemon.sock
+  --broker-url=http://broker:8080
+  --broker-uri="${EXTERNAL_BASE_URL%/}"
+  --recipient="$ORCH_ETH_ADDRESS"
+  --chain-id="$CHAIN_ID"
+  --capability=conformance:job
+  --offering=all
+  --work-unit="${WORK_UNIT:-tokens}"
+  --price-wei="$PRICE_WEI"
+  --per-units="${PER_UNITS:-1000}"
+  --max-authorization-units="${MAX_AUTHORIZATION_UNITS:-131072}"
+  --account-float-wei="$ACCOUNT_FLOAT_WEI"
+  --checkpoint-file="$checkpoint"
+)
+
+if [ -n "${RECOVERY_CHECKPOINT:-}" ]; then
+  echo "resuming admitted wholesale recovery checkpoint: $checkpoint"
+  ./up.sh
+  "${compose[@]}" --profile pilot run --rm probe --protocol=wholesale-recovery-verify "${common[@]}"
+  echo "restart checkpoint verified: $checkpoint"
+  exit 0
+fi
+
+echo "preparing durable wholesale recovery checkpoint: $checkpoint"
+"${compose[@]}" --profile pilot run --rm probe --protocol=wholesale-recovery-prepare "${common[@]}"
+
+echo "stopping all stateful participants at the admitted checkpoint"
+"${compose[@]}" stop payer runner broker payee
+
+echo "restarting in receiver-first migration order"
+./up.sh
+
+echo "verifying replay and settling the preserved authorization"
+"${compose[@]}" --profile pilot run --rm probe --protocol=wholesale-recovery-verify "${common[@]}"
+
+echo "restart checkpoint verified: $checkpoint"

@@ -29,6 +29,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/extractors"
 )
@@ -36,9 +37,15 @@ import (
 const Name = "request-formula"
 
 type Extractor struct {
-	expr         ast.Expr
-	fieldPaths   map[string]string
-	defaultValue uint64
+	expr       ast.Expr
+	fieldPaths map[string]string
+	// textFieldPaths resolve to the Unicode CODE POINT count of a string
+	// at that path, rather than to a number. Declared separately from
+	// fields so the coercion is a choice in the manifest and not a
+	// silent fallback: a path that names a string where a number was
+	// meant should fail to the default, not quietly bill its length.
+	textFieldPaths map[string]string
+	defaultValue   uint64
 }
 
 // Compile-time interface check.
@@ -58,9 +65,10 @@ func New(cfg map[string]any) (extractors.Extractor, error) {
 		return nil, fmt.Errorf("request-formula: invalid expression %q: %w", exprStr, err)
 	}
 
-	fieldsCfg, ok := cfg["fields"].(map[string]any)
-	if !ok {
-		return nil, fmt.Errorf("request-formula: fields is required (map of identifier → JSON path)")
+	// Either block may be omitted, but not both — see the check below.
+	fieldsCfg, _ := cfg["fields"].(map[string]any)
+	if raw, present := cfg["fields"]; present && fieldsCfg == nil {
+		return nil, fmt.Errorf("request-formula: fields must be a map of identifier → JSON path, got %T", raw)
 	}
 	fieldPaths := map[string]string{}
 	for k, v := range fieldsCfg {
@@ -69,6 +77,27 @@ func New(cfg map[string]any) (extractors.Extractor, error) {
 			return nil, fmt.Errorf("request-formula: fields.%s must be a non-empty string", k)
 		}
 		fieldPaths[k] = s
+	}
+
+	textFieldPaths := map[string]string{}
+	if raw, ok := cfg["text_fields"]; ok {
+		m, ok := raw.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("request-formula: text_fields must be a map of identifier → JSON path")
+		}
+		for k, v := range m {
+			sv, ok := v.(string)
+			if !ok || sv == "" {
+				return nil, fmt.Errorf("request-formula: text_fields.%s must be a non-empty string", k)
+			}
+			if _, dup := fieldPaths[k]; dup {
+				return nil, fmt.Errorf("request-formula: %q declared in both fields and text_fields", k)
+			}
+			textFieldPaths[k] = sv
+		}
+	}
+	if len(fieldPaths) == 0 && len(textFieldPaths) == 0 {
+		return nil, fmt.Errorf("request-formula: fields or text_fields is required")
 	}
 
 	defaultValue := uint64(0)
@@ -89,7 +118,12 @@ func New(cfg map[string]any) (extractors.Extractor, error) {
 		}
 	}
 
-	return &Extractor{expr: parsed, fieldPaths: fieldPaths, defaultValue: defaultValue}, nil
+	return &Extractor{
+		expr:           parsed,
+		fieldPaths:     fieldPaths,
+		textFieldPaths: textFieldPaths,
+		defaultValue:   defaultValue,
+	}, nil
 }
 
 func (e *Extractor) Name() string { return Name }
@@ -108,6 +142,15 @@ func (e *Extractor) Extract(ctx context.Context, req *extractors.Request, resp *
 		return e.defaultValue, nil
 	}
 	values := map[string]float64{}
+	for name, path := range e.textFieldPaths {
+		n, err := codePointsAt(path, data)
+		if err != nil {
+			log.Printf("request-formula: text field %s (%s): %v; using default %d",
+				name, path, err, e.defaultValue)
+			return e.defaultValue, nil
+		}
+		values[name] = float64(n)
+	}
 	for ident, path := range e.fieldPaths {
 		v, err := lookupAndCoerce(path, data)
 		if err != nil {
@@ -266,14 +309,33 @@ func evalExpr(node ast.Expr, values map[string]float64) (float64, error) {
 // lookupAndCoerce evaluates a JSONPath-ish dotted path against parsed JSON
 // and coerces the result to float64.
 func lookupAndCoerce(path string, data any) (float64, error) {
+	current, err := valueAtPath(path, data)
+	if err != nil {
+		return 0, err
+	}
+	switch v := current.(type) {
+	case float64:
+		return v, nil
+	case int:
+		return float64(v), nil
+	case int64:
+		return float64(v), nil
+	default:
+		return 0, fmt.Errorf("not numeric: %T", v)
+	}
+}
+
+// valueAtPath walks a JSONPath-ish dotted path and returns the raw value
+// there, leaving the caller to decide what kind of value it wanted.
+func valueAtPath(path string, data any) (any, error) {
 	if !strings.HasPrefix(path, "$") {
-		return 0, fmt.Errorf("path must start with $")
+		return nil, fmt.Errorf("path must start with $")
 	}
 	current := data
 	rest := path[1:]
 	for len(rest) > 0 {
 		if rest[0] != '.' {
-			return 0, fmt.Errorf("only $.foo paths supported in v0.1; got %q", path)
+			return nil, fmt.Errorf("only $.foo paths supported in v0.1; got %q", path)
 		}
 		rest = rest[1:]
 		end := strings.IndexByte(rest, '.')
@@ -287,22 +349,33 @@ func lookupAndCoerce(path string, data any) (float64, error) {
 		}
 		m, ok := current.(map[string]any)
 		if !ok {
-			return 0, fmt.Errorf("path mid-segment is not an object")
+			return nil, fmt.Errorf("path mid-segment is not an object")
 		}
 		v, present := m[key]
 		if !present {
-			return 0, fmt.Errorf("key %q absent", key)
+			return nil, fmt.Errorf("key %q absent", key)
 		}
 		current = v
 	}
-	switch v := current.(type) {
-	case float64:
-		return v, nil
-	case int:
-		return float64(v), nil
-	case int64:
-		return float64(v), nil
-	default:
-		return 0, fmt.Errorf("not numeric: %T", v)
+	return current, nil
+}
+
+// codePointsAt resolves a dotted path to a string and returns its
+// Unicode CODE POINT count.
+//
+// Code points, not bytes and not UTF-16 units: it is the unit a
+// character-priced offering means by "character", and the only one that
+// gives the same number for the same text regardless of the encoding it
+// arrived in. A byte count would charge twice as much for Greek as for
+// English, and three times for most CJK.
+func codePointsAt(path string, data any) (int, error) {
+	v, err := valueAtPath(path, data)
+	if err != nil {
+		return 0, err
 	}
+	str, ok := v.(string)
+	if !ok {
+		return 0, fmt.Errorf("not a string: %T", v)
+	}
+	return utf8.RuneCountInString(str), nil
 }

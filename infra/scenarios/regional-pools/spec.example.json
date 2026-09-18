@@ -1,0 +1,144 @@
+{
+  "version": 1,
+  "deployment_id": "regional-pools",
+  "chain_id": 42161,
+  "payee": "0x1111111111111111111111111111111111111111",
+  "rpc_urls": [
+    "https://rpc.example.invalid"
+  ],
+  "credential_expires_at": "REPLACE_WITH_UTC_EXPIRY",
+  "images": {
+    "executor": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "receiver": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "broker": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "controller": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "observer": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "portal": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "reconciler": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "agent": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "proxy": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE",
+    "volume-init": "REPLACE_WITH_TESTED_IMMUTABLE_IMAGE_REFERENCE"
+  },
+  "provenance": {
+    "git_commit": "REPLACE_WITH_BUILD_COMMIT",
+    "tree_sha256": "REPLACE_WITH_BUILD_TREE_SHA256",
+    "validation_evidence": "REPLACE_WITH_ARCHIVED_EVIDENCE",
+    "local_only": true
+  },
+  "hosts": {
+    "eu-transcode-broker": {
+      "tls_cert": "/material/ca.crt",
+      "tls_key": "/material/tls.key"
+    },
+    "us-transcode-broker": {
+      "tls_cert": "/material/ca.crt",
+      "tls_key": "/material/tls.key"
+    },
+    "audio-broker": {
+      "tls_cert": "/material/ca.crt",
+      "tls_key": "/material/tls.key"
+    },
+    "llm-broker": {
+      "tls_cert": "/material/ca.crt",
+      "tls_key": "/material/tls.key"
+    }
+  },
+  "regions": {
+    "eu": {
+      "pool_id": "REPLACE_WITH_PERSISTED_CONTROLLER_POOL_ID",
+      "host": "eu-transcode-broker",
+      "member_url": "https://eu-members.example.invalid",
+      "admin_url": "https://eu-management.example.invalid",
+      "payout_wallet": "0x0000000000000000000000000000000000000002",
+      "keystore": "/material/keystore-2.json",
+      "password_file": "/material/password"
+    },
+    "us": {
+      "pool_id": "REPLACE_WITH_PERSISTED_CONTROLLER_POOL_ID",
+      "host": "us-transcode-broker",
+      "member_url": "https://us-members.example.invalid",
+      "admin_url": "https://us-management.example.invalid",
+      "payout_wallet": "0x0000000000000000000000000000000000000003",
+      "keystore": "/material/keystore-3.json",
+      "password_file": "/material/password"
+    }
+  },
+  "brokers": {
+    "eu-transcode-broker": {
+      "host": "eu-transcode-broker",
+      "pool": "eu",
+      "source_id": "REPLACE_WITH_DISTINCT_PERSISTED_RECEIVER_DOMAIN",
+      "public_url": "https://eu-transcode-broker.example.invalid",
+      "admin_url": "https://eu-transcode-broker-admin.example.invalid",
+      "template_ids": [
+        "video-transcode-abr",
+        "video-transcode-vod",
+        "video-transcode-live"
+      ],
+      "receiver_wallet": "0x0000000000000000000000000000000000000004",
+      "keystore": "/material/keystore-4.json",
+      "password_file": "/material/password",
+      "settlement_key": "/material/eu-transcode-broker-settlement.key",
+      "sealing_key": "/material/eu-transcode-broker-seal.key"
+    },
+    "us-transcode-broker": {
+      "host": "us-transcode-broker",
+      "pool": "us",
+      "source_id": "REPLACE_WITH_DISTINCT_PERSISTED_RECEIVER_DOMAIN",
+      "public_url": "https://us-transcode-broker.example.invalid",
+      "admin_url": "https://us-transcode-broker-admin.example.invalid",
+      "template_ids": [
+        "video-transcode-abr",
+        "video-transcode-vod",
+        "video-transcode-live"
+      ],
+      "receiver_wallet": "0x0000000000000000000000000000000000000005",
+      "keystore": "/material/keystore-5.json",
+      "password_file": "/material/password",
+      "settlement_key": "/material/us-transcode-broker-settlement.key",
+      "sealing_key": "/material/us-transcode-broker-seal.key"
+    },
+    "audio-broker": {
+      "host": "audio-broker",
+      "pool": "us",
+      "source_id": "REPLACE_WITH_DISTINCT_PERSISTED_RECEIVER_DOMAIN",
+      "public_url": "https://audio-broker.example.invalid",
+      "admin_url": "https://audio-broker-admin.example.invalid",
+      "template_ids": [
+        "openai-audio-transcriptions-whisper-large-v3",
+        "openai-audio-speech-kokoro"
+      ],
+      "receiver_wallet": "0x0000000000000000000000000000000000000006",
+      "keystore": "/material/keystore-6.json",
+      "password_file": "/material/password",
+      "settlement_key": "/material/audio-broker-settlement.key",
+      "sealing_key": "/material/audio-broker-seal.key"
+    },
+    "llm-broker": {
+      "host": "llm-broker",
+      "pool": "us",
+      "source_id": "REPLACE_WITH_DISTINCT_PERSISTED_RECEIVER_DOMAIN",
+      "public_url": "https://llm-broker.example.invalid",
+      "admin_url": "https://llm-broker-admin.example.invalid",
+      "template_ids": [
+        "openai-chat-qwen3.6-27b"
+      ],
+      "receiver_wallet": "0x0000000000000000000000000000000000000007",
+      "keystore": "/material/keystore-7.json",
+      "password_file": "/material/password",
+      "settlement_key": "/material/llm-broker-settlement.key",
+      "sealing_key": "/material/llm-broker-seal.key"
+    }
+  },
+  "portal": {
+    "host": "eu-transcode-broker",
+    "url": "https://portal.example.invalid",
+    "signer_file": "/material/issuer.json",
+    "trust_file": "/material/trust.json",
+    "ca_file": "/material/ca.crt"
+  },
+  "ownership": {
+    "host": "eu-transcode-broker",
+    "url": "https://ownership.example.invalid"
+  }
+}

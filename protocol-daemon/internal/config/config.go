@@ -89,7 +89,7 @@ func (c *Config) Validate() error {
 	if err := c.Mode.Validate(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
-	// Dev mode: relax requirements that would normally come from --eth-urls,
+	// Dev mode: relax requirements that would normally come from --chain-rpc-urls,
 	// --keystore-path, etc. The dev-mode wire-up uses chain-commons.testing
 	// fakes, so the chain-commons config doesn't need to validate here.
 	if c.Dev {
@@ -98,7 +98,11 @@ func (c *Config) Validate() error {
 		// provided. Defer that validation to the wire-up code.
 		return nil
 	}
-	if err := c.Chain.Validate(); err != nil {
+	if c.Mode == types.ModeReadOnly {
+		if err := c.Chain.ValidateReadOnly(); err != nil {
+			return err
+		}
+	} else if err := c.Chain.Validate(); err != nil {
 		return err
 	}
 	if c.Mode.HasReward() && c.OrchAddress == (chain.Address{}) {
@@ -119,7 +123,7 @@ func (c *Config) Validate() error {
 // String returns a redacted summary safe to log.
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{mode=%s eth_urls=%d chain_id=%d controller=%s orch=%s ai_service_registry=%s init_jitter=%s min_balance=%s metrics_listen=%q dev=%v}",
+		"Config{mode=%s chain_rpc_urls=%d chain_id=%d controller=%s orch=%s ai_service_registry=%s init_jitter=%s min_balance=%s metrics_listen=%q dev=%v}",
 		c.Mode, len(c.Chain.EthURLs), c.Chain.ChainID, c.Chain.ControllerAddr.Hex(), c.OrchAddress.Hex(),
 		c.AIServiceRegistryAddress.Hex(), c.InitJitter, c.MinBalanceWei, c.MetricsListen, c.Dev,
 	)

@@ -44,10 +44,8 @@ One paragraph. What are we trying to achieve and why.
 What is explicitly NOT in this plan.
 
 ## Approach
-Bullet list of steps. Check off as completed.
-
-- [ ] Step 1
-- [ ] Step 2
+Describe the design, boundaries and validation approach. Link the implementing
+beads; work status and dependencies live in beads, not a parallel checklist.
 
 ## Decisions log
 Append-only. Each decision: date + one-paragraph rationale.
@@ -64,10 +62,12 @@ Links to PRs, generated docs, schemas created.
 
 ## Lifecycle
 
+Beads owns task status. Plan status records the design/publication lifecycle.
+
 1. **Opened** — file created in `active/`, status `active`.
-2. **In progress** — steps checked off, decisions appended.
+2. **In progress** — implementation status tracked in beads, decisions appended.
 3. **Blocked** — status flipped to `blocked`, open-questions populated, escalated.
-4. **Completed** — all steps checked; file moved from `active/` → `completed/`, status updated, final artifacts linked.
+4. **Completed** — implementing beads closed; file moved from `active/` → `completed/`, status updated, final artifacts linked.
 5. **Abandoned** — status flipped to `abandoned`, reason added to decisions log, file moved to `completed/`.
 
 ## Rules

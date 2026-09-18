@@ -1,0 +1,25 @@
+rule_files:
+  - alerts.yaml
+evaluation_interval: 1m
+tests:
+  - interval: 1m
+    input_series:
+      - series: 'livepeer_registry_chain_last_success_timestamp_seconds{job="livepeer-registry",instance="failed"}'
+        values: '1+0x20'
+      - series: 'livepeer_registry_chain_reads_total{job="livepeer-registry",instance="failed",outcome="unavailable"}'
+        values: '0+1x20'
+      - series: 'livepeer_registry_chain_last_success_timestamp_seconds{job="livepeer-registry",instance="idle-overlay"}'
+        values: '0+0x20'
+      - series: 'livepeer_registry_chain_last_success_timestamp_seconds{job="livepeer-registry",instance="healthy"}'
+        values: '0+60x20'
+      - series: 'livepeer_registry_chain_reads_total{job="livepeer-registry",instance="healthy",outcome="ok"}'
+        values: '0+1x20'
+    promql_expr_test:
+      - expr: |
+          (time() - livepeer_registry_chain_last_success_timestamp_seconds > 300)
+          and on (job, instance)
+          (sum by (job, instance) (increase(livepeer_registry_chain_reads_total{outcome="unavailable"}[5m])) > 0)
+        eval_time: 10m
+        exp_samples:
+          - labels: '{job="livepeer-registry",instance="failed"}'
+            value: 599

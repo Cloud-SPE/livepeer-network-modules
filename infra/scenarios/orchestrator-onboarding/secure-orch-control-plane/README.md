@@ -36,7 +36,8 @@ Convention assumed by the defaults:
 ```
 
 The keystore must hold the private key for `ORCH_ADDRESS`. Both
-`protocol-daemon` and `secure-orch-console` mount these files read-only.
+`protocol-daemon` and `secure-orch-console` mount the same two files
+read-only, from the one `KEYSTORE_FILE` / `KEYSTORE_PASSWORD_FILE` pair.
 
 ## Bring-up
 
@@ -58,13 +59,27 @@ docker compose \
 
 You must set these in `.env` before bring-up:
 
+- `CHAIN_RPC_URLS` — comma-separated Arbitrum RPC endpoints, primary
+  first. `protocol-daemon` and `service-registry-daemon` both read this
+  one list and fail over between entries. The public endpoints in the
+  example are placeholders; put your own provider first.
 - `ORCH_ADDRESS` — your orchestrator's on-chain address
-- `ETH_URLS` — one or more Arbitrum RPC endpoints
 - `SECURE_ORCH_ADMIN_TOKENS` — generated secret, used to authenticate the
   operator UI / CLI against the console
-- `PROTOCOL_KEYSTORE` / `PROTOCOL_KEYSTORE_PASSWORD_FILE` (and the matching
-  `SECURE_ORCH_*` vars) — only if your keystore lives somewhere other than
-  `/opt/livepeer/`
+
+Everything else has a default baked into the compose file and is listed,
+commented out, under "Overrides" in `.env.example`. The ones you are most
+likely to touch:
+
+- `KEYSTORE_FILE` / `KEYSTORE_PASSWORD_FILE` — only if your keystore lives
+  somewhere other than `/opt/livepeer/`
+- `SECURE_ORCH_BIND` — host interface the console port is published on.
+  Defaults to `127.0.0.1`; reach the console over an SSH tunnel, or set a
+  private LAN address only if this host is fully isolated. The metrics
+  ports have the same knob (`PROTOCOL_METRICS_BIND`,
+  `REGISTRY_METRICS_BIND`). Leave `SECURE_ORCH_LISTEN` (the in-container
+  bind) at `0.0.0.0:8081` — Docker's port forwarding cannot reach a
+  container-loopback listener
 
 ## Optional: automated sign cycle (agent mode)
 

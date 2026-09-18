@@ -1,10 +1,11 @@
 # pool-payout-executor
 
-`pool-payout-executor` is the future payout-submission worker for Pool member
+`pool-payout-executor` is the payout-submission worker for Pool member
 distribution.
 
 Operator runbook:
 - [`RUNBOOK.md`](./RUNBOOK.md)
+- [Regional wallet identity and restart safety](docs/regional-wallets.md)
 
 Current scope:
 
@@ -21,11 +22,34 @@ transfers from a dedicated hot wallet and writes back `submitted`, `paid`, or
 geth-compatible `keystore.json` plus password file configured in the executor
 YAML.
 
+Every transfer is a chain-commons **transaction intent**, keyed by the
+controller's payout intent id and persisted in `executor.intent_store_path`
+(default: `payout-intents.db` next to `state_path`). The intent processor
+owns the wallet's nonce, re-signs a transaction that sits unmined past
+`replace_after_seconds` with bumped gas (up to `max_replacements` times), and
+reports `paid` only after `confirmation_blocks`. Because the intent id is
+stable, re-running a batch, restarting mid-broadcast, or a controller write
+that failed after the transaction went out all resolve to the one transaction
+already sent — never a second payment.
+
+A `submitted` payout the executor has no intent for (one sent by a previous
+version, or by another executor host that has since retired) is **adopted**
+on the next confirm pass from the controller's `tx_hash` and `external_ref`
+(`nonce-N`), then tracked to confirmation like any other. If the controller
+recorded no nonce and no endpoint knows the transaction, the payout is left
+in `submitted` with a `pending_confirmation` result carrying the reason, for
+the controller's stale-submitted alerting to surface. A regional executor
+(`pool_controller.pool_id` set) is stricter: it adopts only a transaction the
+RPC returns and that matches this wallet, chain, member and exact amount with
+no calldata; a nonce hint alone is never enough
+([regional wallets](docs/regional-wallets.md)).
+
 A live Arbitrum dust payout has been validated end to end against this path.
 
 `send-native-batch` supports `--dry-run` for operator preview and refuses to
 rebroadcast intents that already carry `external_ref` or `tx_hash` settlement
-metadata.
+metadata. A dry-run confirm reads receipts straight from the chain and writes
+nothing to the intent store.
 
 When broadcasting a real exported batch, the executor now claims those intents
 from `pool-controller` with a bounded lease before submitting them. That lease
@@ -196,6 +220,15 @@ go run ./cmd/livepeer-pool-payout-executor state-summary \
   --intents-limit 25
 ```
 
+Validate a config offline, or print the build version:
+
+```bash
+go run ./cmd/livepeer-pool-payout-executor validate-config \
+  --config examples/pool-payout-executor-config.example.yaml
+
+go run ./cmd/livepeer-pool-payout-executor version
+```
+
 Write executor status back:
 
 ```bash
@@ -232,5 +265,19 @@ For local live-chain testing, keep these files side by side:
 - `keystore.json`
 - `keystore-password`
 
-`keystore_path` and `keystore_password_path` resolve relative to the config
-file path when you use `--config ...`.
+No keystore ships in `examples/`: `keystore.json` and `keystore-password` are
+gitignored repo-wide, so supply your own before `make run` or the compose
+defaults will work.
+
+`keystore_path`, `keystore_password_path`, `state_path` and
+`intent_store_path` resolve relative to the config file path when you use
+`--config ...`.
+
+## Regional service credentials
+
+See the [regional service access contract](../docs/design-docs/regional-service-access.md)
+for HTTPS configuration, exact role permissions, and credential rotation.
+Regional mode (`pool_controller.pool_id` + `token_file` + HTTPS `url`) also
+requires `executor.expected_wallet_address` and a persistent
+`executor.state_path`, and cannot be combined with `bearer_token` /
+`bearer_token_ref`.

@@ -176,7 +176,10 @@ func New(cfg config.PoolSnapshot, auth *backend.AuthApplier) (*Cache, error) {
 
 	cache.configured = true
 	cache.endpoint = endpoint
-	cache.client = &http.Client{Timeout: timeout}
+	cache.client, err = cfg.Auth.ServiceClient(baseURL, timeout)
+	if err != nil {
+		return nil, err
+	}
 	cache.auth = auth
 	cache.authCfg = cfg.Auth
 	cache.pollInterval = pollInterval
@@ -318,7 +321,7 @@ func (c *Cache) poll(ctx context.Context) {
 		c.recordError(fmt.Errorf("build request: %w", err))
 		return
 	}
-	if c.auth != nil {
+	if c.auth != nil && c.authCfg.Method != "scoped" {
 		if err := c.auth.Apply(req.Header, c.authCfg); err != nil {
 			c.recordError(fmt.Errorf("apply auth: %w", err))
 			return

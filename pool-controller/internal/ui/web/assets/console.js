@@ -3,15 +3,7 @@
     const val = (id) => { const el = $(id); return el ? el.value.trim() : ""; };
     const statusEl = $("status");
     let latestOffers = [];
-    let latestMembers = [];
-    let latestBackends = [];
-    let latestAssignments = [];
-    let latestRuntime = null;
-    let latestAssignmentPreview = null;
-    let latestJoinPreview = null;
-    let latestAssignmentCandidates = [];
     let latestAuditEvents = [];
-    let latestRuntimeHistory = [];
     let latestPoolMembers = [];
     let latestHostEnrollments = [];
     let latestHardwareUnits = [];
@@ -20,6 +12,18 @@
     let latestCertificationRuns = [];
     let latestSettlementWindows = [];
     let latestPayoutBatches = [];
+    let latestPlacementPlan = null;
+    let latestExceptions = null;
+    let latestPayoutPolicy = null;
+    // The ladder run and the per-batch policy review are POSTs: they exist
+    // only because an operator asked for them, so they are held here for
+    // the page rather than refetched.
+    let latestLadderRun = null;
+    let latestPolicyReviews = {};
+    // Routes fetched with soft() record their failure here instead of
+    // rejecting the refresh. A blank console is a worse answer than a
+    // console with one panel missing and a message saying which.
+    let softErrors = [];
 
     function auditQuery() {
       const params = new URLSearchParams();
@@ -82,6 +86,19 @@
       return response.text();
     }
 
+    // Same fetch, but a failure is reported rather than thrown. Used for
+    // the derived surfaces (placement plan, exception queue, payout
+    // policy) so that e.g. an unparseable policy file cannot take the
+    // whole console down with it.
+    async function soft(path) {
+      try {
+        return await api(path);
+      } catch (err) {
+        softErrors.push(path + ": " + err.message);
+        return null;
+      }
+    }
+
     function card(html) {
       const div = document.createElement("div");
       div.className = "card";
@@ -89,309 +106,29 @@
       return div;
     }
 
-    function offerPayloadFromForm() {
-      return {
-        id: $("offerId").value.trim(),
-        capability_id: $("offerCapability").value.trim(),
-        offering_id: $("offerOffering").value.trim(),
-        interaction_mode: $("offerInteraction").value.trim(),
-        work_unit: {
-          name: $("offerWorkUnitName").value.trim(),
-          extractor: {
-            type: $("offerExtractorType").value.trim(),
-            expression: $("offerExtractorExpression").value.trim()
-          }
-        },
-        price: {
-          amount_wei: $("offerAmountWei").value.trim(),
-          per_units: Number($("offerPerUnits").value || "0")
-        }
-      };
+    // Card bodies are assembled as HTML strings, and template text now
+    // comes from YAML files rather than from this codebase, so anything
+    // interpolated from a response goes through here first.
+    function esc(value) {
+      return String(value === null || value === undefined ? "" : value)
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
     }
 
-    function joinPayloadFromForm() {
-      return {
-        id: $("joinId").value.trim(),
-        member_eth_address: $("joinMemberAddress").value.trim(),
-        display_name: $("joinDisplayName").value.trim(),
-        payout_mode: $("joinPayoutMode").value,
-        requested_backends: [
-          {
-            id: $("joinBackendId").value.trim(),
-            transport: $("joinBackendTransport").value.trim(),
-            url: $("joinBackendUrl").value.trim(),
-            auth: { method: "none" },
-            health_probe: {
-              type: "http-status",
-              config: { url: $("joinHealthUrl").value.trim() }
-            },
-            claimed_capabilities: [
-              {
-                capability_id: $("joinCapability").value.trim(),
-                offering_id: $("joinOffering").value.trim(),
-                interaction_mode: $("joinInteraction").value.trim()
-              }
-            ]
-          }
-        ]
-      };
+    function priceLabel(price) {
+      if (!price) return "unpriced";
+      return esc(price.amount_wei || "0") + " wei / " + esc(price.per_units || 1) + " units";
     }
 
-    function assignmentPayloadFromForm() {
-      return {
-        id: $("assignmentId").value.trim(),
-        offer_id: $("assignmentOfferId").value.trim(),
-        member_backend_id: $("assignmentBackendId").value.trim()
-      };
-    }
-
-    function syncPayloadTextarea(id, payload) {
-      $(id).value = JSON.stringify(payload, null, 2);
-      return $(id).value;
-    }
-
-    function resetOfferForm() {
-      $("offerId").value = "rerank-zerank2";
-      $("offerCapability").value = "rerank";
-      $("offerOffering").value = "zerank-2-default";
-      $("offerInteraction").value = "http-reqresp@v0";
-      $("offerWorkUnitName").value = "requests";
-      $("offerExtractorType").value = "request-formula";
-      $("offerExtractorExpression").value = "1";
-      $("offerAmountWei").value = "372000000000";
-      $("offerPerUnits").value = "1";
-      $("offerEditorState").textContent = "Creating a new offer.";
-      syncPayloadTextarea("offerPayload", offerPayloadFromForm());
-    }
-
-    function loadOfferIntoForm(item) {
-      $("offerId").value = item.id || "";
-      $("offerCapability").value = item.capability_id || "";
-      $("offerOffering").value = item.offering_id || "";
-      $("offerInteraction").value = item.interaction_mode || "";
-      $("offerWorkUnitName").value = (item.work_unit && item.work_unit.name) || "";
-      $("offerExtractorType").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.type) || "";
-      $("offerExtractorExpression").value = (item.work_unit && item.work_unit.extractor && item.work_unit.extractor.expression) || "";
-      $("offerAmountWei").value = (item.price && item.price.amount_wei) || "";
-      $("offerPerUnits").value = String((item.price && item.price.per_units) || 1);
-      $("offerEditorState").textContent = "Editing existing offer " + item.id + ".";
-      syncPayloadTextarea("offerPayload", offerPayloadFromForm());
-    }
-
-    function syncAssignmentSelectors() {
-      const offerSelect = $("assignmentOfferSelect");
-      const backendSelect = $("assignmentBackendSelect");
-      if (!offerSelect || !backendSelect) return;
-      offerSelect.innerHTML = '<option value="">Select an offer</option>';
-      backendSelect.innerHTML = '<option value="">Select a backend</option>';
-      latestOffers.forEach(item => {
-        const option = document.createElement("option");
-        option.value = item.id;
-        option.textContent = item.id + " (" + item.capability_id + ")";
-        offerSelect.appendChild(option);
-      });
-      latestBackends.forEach(item => {
-        const option = document.createElement("option");
-        option.value = item.id;
-        option.textContent = item.id + " [" + item.status + ", " + item.verification_status + "]";
-        backendSelect.appendChild(option);
-      });
-    }
-
-    function renderAssignmentPreview(preview) {
-      const host = $("assignmentPreviewDetails");
-      if (!host) return;
-      host.innerHTML = "";
-      if (!preview) return;
-      const checks = preview.checks || [];
-      checks.forEach(check => {
-        const div = document.createElement("div");
-        div.className = "check";
-        div.innerHTML =
-          '<strong class="' + (check.passed ? "ok" : "bad") + '">' + check.name + '</strong>' +
-          '<div class="small">' + (check.detail || "") + '</div>';
-        host.appendChild(div);
-      });
-      if (preview.matched_claim) {
-        const div = document.createElement("div");
-        div.className = "check";
-        div.innerHTML =
-          '<strong class="ok">matched_claim</strong>' +
-          '<div class="small">' + preview.matched_claim.capability_id + ' / ' + (preview.matched_claim.offering_id || "") + ' / ' + (preview.matched_claim.interaction_mode || "") + '</div>';
-        host.appendChild(div);
-      }
-      if ((preview.reasons || []).length) {
-        const div = document.createElement("div");
-        div.className = "check";
-        div.innerHTML =
-          '<strong class="warn">reasons</strong>' +
-          '<div class="small">' + preview.reasons.join("; ") + '</div>';
-        host.appendChild(div);
-      }
-    }
-
-    function renderJoinPreview(preview) {
-      const host = $("joinPreviewDetails");
-      if (!host) return;
-      host.innerHTML = "";
-      latestJoinPreview = preview;
-      if (!preview) return;
-      const summary = document.createElement("div");
-      summary.className = "check";
-      summary.innerHTML =
-        '<strong class="' + (preview.approavable ? "ok" : "bad") + '">join_request</strong>' +
-        '<div class="small">id=' + (preview.join_request_id || "") + ', status=' + (preview.status || "") + ', approvable=' + String(!!preview.approavable) + '</div>';
-      host.appendChild(summary);
-      (preview.backend_previews || []).forEach(item => {
-        const div = document.createElement("div");
-        div.className = "check";
-        const reasons = (item.reasons || []).length ? item.reasons.join("; ") : "";
-        div.innerHTML =
-          '<strong class="' + (item.approavable ? "ok" : "bad") + '">' + (item.backend_id || "backend") + '</strong>' +
-          '<div class="small">' + [item.transport, item.url, item.verification_status, "claims=" + String(item.claim_count || 0), "servable_claims=" + String(item.servable_claim_count || 0)].filter(Boolean).join(" | ") + '</div>' +
-          (item.verification_error ? '<div class="small">' + item.verification_error + '</div>' : '') +
-          (reasons ? '<div class="small">' + reasons + '</div>' : '');
-        host.appendChild(div);
-        (item.claim_previews || []).forEach(claim => {
-          const claimDiv = document.createElement("div");
-          claimDiv.className = "check";
-          const claimReasons = (claim.reasons || []).length ? claim.reasons.join("; ") : "";
-          const suggestedOfferID = (claim.suggested_offer_ids || [])[0] || "";
-          const draftButton = suggestedOfferID
-            ? '<div class="row"><button data-join-draft="' + (item.backend_id || "") + '|' + suggestedOfferID + '" class="secondary">Use Suggested Offer In Assignment Draft</button></div>'
-            : "";
-          claimDiv.innerHTML =
-            '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
-            '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
-            '<div class="small">matching_offers=' + ((claim.matching_offer_ids || []).join(", ") || "none") + '</div>' +
-            '<div class="small">active_offers=' + ((claim.active_offer_ids || []).join(", ") || "none") + '</div>' +
-            '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
-            draftButton +
-            (claimReasons ? '<div class="small">' + claimReasons + '</div>' : '');
-          host.appendChild(claimDiv);
-          (claim.suggestions || []).forEach(suggestion => {
-            const suggestionDiv = document.createElement("div");
-            suggestionDiv.className = "check";
-            suggestionDiv.innerHTML =
-              '<strong class="ok">suggestion</strong>' +
-              '<div class="small">' + (suggestion.offer_id || "") + ' | score=' + String(suggestion.score || 0) + '</div>' +
-              (suggestion.reason ? '<div class="small">' + suggestion.reason + '</div>' : '');
-            host.appendChild(suggestionDiv);
-          });
-        });
-      });
-      host.querySelectorAll("[data-join-draft]").forEach(btn => btn.onclick = () => {
-        const parts = btn.dataset.joinDraft.split("|");
-        seedAssignmentDraft(parts[0] || "", parts[1] || "");
-      });
-      if ((preview.reasons || []).length) {
-        const div = document.createElement("div");
-        div.className = "check";
-        div.innerHTML =
-          '<strong class="warn">reasons</strong>' +
-          '<div class="small">' + preview.reasons.join("; ") + '</div>';
-        host.appendChild(div);
-      }
-    }
-
-    function selectedOffer() {
-      return latestOffers.find(item => item.id === val("assignmentOfferId")) || null;
-    }
-
-    function selectedBackend() {
-      return latestBackends.find(item => item.id === val("assignmentBackendId")) || null;
-    }
-
-    async function refreshAssignmentDraftState() {
-      if (!$("assignmentDraftState")) return;
-      const offer = selectedOffer();
-      const backend = selectedBackend();
-      const el = $("assignmentDraftState");
-      if (!offer && !backend) {
-        el.textContent = "Select an offer and backend to draft an assignment.";
-        latestAssignmentPreview = null;
-        renderAssignmentPreview(null);
-        return;
-      }
-      if (!offer || !backend) {
-        el.textContent = "Draft is incomplete. Choose both an offer and a backend.";
-        latestAssignmentPreview = null;
-        renderAssignmentPreview(null);
-        return;
-      }
-      try {
-        const preview = await api("/admin/v1/assignment-preview", {
-          method: "POST",
-          body: JSON.stringify({
-            offer_id: offer.id,
-            member_backend_id: backend.id
-          })
-        });
-        latestAssignmentPreview = preview;
-        renderAssignmentPreview(preview);
-        const summary = [
-          "offer=" + offer.id,
-          "backend=" + backend.id,
-          "backend_status=" + (preview.backend_status || backend.status),
-          "verification=" + (preview.verification_status || backend.verification_status)
-        ];
-        if (preview.compatible) {
-          el.textContent = "Draft looks routable: " + summary.join(", ");
-        } else {
-          el.textContent = "Draft needs attention: " + summary.join(", ") + ". " + (preview.reasons || []).join("; ");
-        }
-      } catch (err) {
-        latestAssignmentPreview = null;
-        renderAssignmentPreview(null);
-        el.textContent = "Draft preview failed: " + err.message;
-      }
-    }
-
-    function promoteBackendToAssignmentDraft(backendID) {
-      if (!backendID) return;
-      $("assignmentBackendId").value = backendID;
-      $("assignmentBackendSelect").value = backendID;
-      if (!$("assignmentId").value.trim() || $("assignmentId").value.trim() === "assign-sample") {
-        $("assignmentId").value = "assign-" + backendID;
-      }
-      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-      void refreshAssignmentDraftState();
-      setStatus("Backend " + backendID + " promoted into assignment draft.", "ok");
-    }
-
-    function promoteOfferToAssignmentDraft(offerID) {
-      if (!offerID) return;
-      $("assignmentOfferId").value = offerID;
-      $("assignmentOfferSelect").value = offerID;
-      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-      void refreshAssignmentDraftState();
-      setStatus("Offer " + offerID + " promoted into assignment draft.", "ok");
-    }
-
-    function seedAssignmentDraft(backendID, offerID) {
-      if (backendID) {
-        $("assignmentBackendId").value = backendID;
-        $("assignmentBackendSelect").value = backendID;
-      }
-      if (offerID) {
-        $("assignmentOfferId").value = offerID;
-        $("assignmentOfferSelect").value = offerID;
-      }
-      if (backendID && offerID) {
-        $("assignmentId").value = "assign-" + backendID + "-" + offerID;
-      } else if (backendID && (!$("assignmentId").value.trim() || $("assignmentId").value.trim() === "assign-sample")) {
-        $("assignmentId").value = "assign-" + backendID;
-      }
-      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-      void refreshAssignmentDraftState();
-      setStatus("Assignment draft seeded from join review.", "ok");
-    }
-
-    function runtimeSummary(item) {
-      if (!item) return "—";
-      const state = item.dirty ? "dirty" : "converged";
-      const applyStatus = item.last_apply_status || "unapplied";
-      return state + " / " + applyStatus;
+    // The layout prints the logged-in operator; carrying it into an
+    // override makes the stored updated_by name a person instead of
+    // leaving the audit trail anonymous.
+    function currentActor() {
+      const el = document.querySelector(".identity-chip code");
+      return el ? el.textContent.trim() : "";
     }
 
     function renderOverview() {
@@ -400,7 +137,11 @@
       set("ovMembers", (latestPoolMembers || []).length);
       set("ovBackends", (latestHardwareUnits || []).length);
       set("ovAssignments", (latestTemplateAssignments || []).length);
-      set("ovRuntime", runtimeSummary(latestRuntime));
+      const view = latestExceptions;
+      set("ovExceptions", view
+        ? ((view.suspended_members || []).length + (view.suspended_hardware || []).length +
+           (view.held_windows || []).length + (view.duplicate_gpus || []).length)
+        : "—");
     }
 
     function renderConnectedPool() {
@@ -411,16 +152,16 @@
       set("poolAssignmentCount", latestTemplateAssignments.length);
       set("poolWindowCount", latestSettlementWindows.filter(item => item.status === "open" || item.status === "closing" || item.status === "pending_approval").length);
       renderSimpleCards("poolMembers", latestPoolMembers, item =>
-        "<strong>" + (item.eth_address || item.id) + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.payout_mode || "eth") + '</span></div>' +
-        '<div class="small">' + (item.contact || item.display_name || "") + '</div>'
+        "<strong>" + esc(item.eth_address || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "unknown") + '</span><span class="pill">' + esc(item.payout_mode || "eth") + '</span></div>' +
+        '<div class="small">' + esc(item.contact || item.display_name || "") + '</div>'
       );
       renderSimpleCards("poolEnrollments", latestHostEnrollments, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span></div>' +
-        '<div class="small">' + (item.host_label || "unlabeled host") + '</div>' +
-        '<div class="mono">' + (item.member_eth_address || "") + '</div>' +
-        ((item.status === "active" || item.status === "pending") ? '<div class="row"><button class="secondary" data-enrollment-revoke="' + item.id + '">Revoke</button></div>' : "")
+        "<strong>" + esc(item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "unknown") + '</span></div>' +
+        '<div class="small">' + esc(item.host_label || "unlabeled host") + '</div>' +
+        '<div class="mono">' + esc(item.member_eth_address || "") + '</div>' +
+        ((item.status === "active" || item.status === "pending") ? '<div class="row"><button class="secondary" data-enrollment-revoke="' + esc(item.id) + '">Revoke</button></div>' : "")
       );
       const enrollmentHost = $("poolEnrollments");
       if (enrollmentHost) {
@@ -435,20 +176,21 @@
         });
       }
       renderSimpleCards("poolHardware", latestHardwareUnits, item =>
-        "<strong>" + (item.gpu_model || item.id) + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.state || "unknown") + '</span><span class="pill">' + (item.gpu_uuid || "no uuid") + '</span></div>' +
-        '<div class="small">host ' + (item.enrollment_id || "") + '</div>'
+        "<strong>" + esc(item.gpu_model || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.state || "unknown") + '</span><span class="pill">' + esc(item.gpu_uuid || "no uuid") + '</span></div>' +
+        '<div class="small">host ' + esc(item.enrollment_id || "") + '</div>'
       );
       renderSimpleCards("poolTemplates", latestTemplateCatalog, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.interaction_mode || "") + '</span></div>' +
-        '<div class="small">' + (item.capability_id || "") + " / " + (item.offering_id || "") + '</div>'
+        "<strong>" + esc(item.display_name || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + templateState(item) + '</span><span class="pill">' + esc(item.protocol) + '</span></div>' +
+        '<div class="small">' + esc(item.capability) + " / " + esc(item.offering_id) + '</div>' +
+        '<div class="small">' + priceLabel(item.effective_price) + '</div>'
       );
       renderSimpleCards("poolAssignments", latestTemplateAssignments, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.state || "unknown") + '</span><span class="pill">' + (item.role || "primary") + '</span></div>' +
-        '<div class="small">' + (item.template_id || "") + " on " + (item.hardware_unit_id || "") + '</div>' +
-        ((item.state === "pending" || item.state === "throttled") ? '<div class="row"><button class="secondary" data-cert-start="' + item.id + '">Start certification</button></div>' : "")
+        "<strong>" + esc(item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.state || "unknown") + '</span><span class="pill">' + esc(item.role || "primary") + '</span></div>' +
+        '<div class="small">' + esc(item.template_id || "") + " on " + esc(item.hardware_unit_id || "") + '</div>' +
+        ((item.state === "pending" || item.state === "throttled") ? '<div class="row"><button class="secondary" data-cert-start="' + esc(item.id) + '">Start certification</button></div>' : "")
       );
       const assignmentHost = $("poolAssignments");
       if (assignmentHost) {
@@ -463,10 +205,10 @@
         });
       }
       renderSimpleCards("poolCertificationRuns", latestCertificationRuns, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + (item.execution_path || "") + '</span></div>' +
-        '<div class="small">' + (item.assignment_id || "") + '</div>' +
-        (item.status === "running" ? '<div class="row"><button class="secondary" data-cert-pass="' + item.id + '">Pass</button><button class="secondary" data-cert-fail="' + item.id + '">Fail</button></div>' : "")
+        "<strong>" + esc(item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "unknown") + '</span><span class="pill">' + esc(item.execution_path || "") + '</span></div>' +
+        '<div class="small">' + esc(item.assignment_id || "") + '</div>' +
+        (item.status === "running" ? '<div class="row"><button class="secondary" data-cert-pass="' + esc(item.id) + '">Pass</button><button class="secondary" data-cert-fail="' + esc(item.id) + '">Fail</button></div>' : "")
       );
       const certHost = $("poolCertificationRuns");
       if (certHost) {
@@ -491,15 +233,15 @@
         });
       }
       renderSimpleCards("poolSettlementWindows", latestSettlementWindows, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">scale ' + (item.settlement_scale_ppm || 0) + ' ppm</span></div>' +
-        '<div class="small">attributed ' + (item.attributed_revenue_wei || "0") + " / confirmed " + (item.confirmed_revenue_wei || "0") + '</div>'
+        "<strong>" + esc(item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "unknown") + '</span><span class="pill">scale ' + esc(item.settlement_scale_ppm || 0) + ' ppm</span></div>' +
+        '<div class="small">attributed ' + esc(item.attributed_revenue_wei || "0") + " / confirmed " + esc(item.confirmed_revenue_wei || "0") + '</div>'
       );
       renderSimpleCards("poolPayoutBatches", latestPayoutBatches, item =>
-        "<strong>" + item.id + "</strong>" +
-        '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span><span class="pill">' + ((item.line_items || []).length) + ' rows</span></div>' +
-        '<div class="small">total ' + (item.total_amount_wei || "0") + '</div>' +
-        (item.status === "pending_approval" ? '<div class="row"><button class="secondary" data-payout-approve="' + item.id + '">Approve</button></div>' : "")
+        "<strong>" + esc(item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "unknown") + '</span><span class="pill">' + ((item.line_items || []).length) + ' rows</span></div>' +
+        '<div class="small">total ' + esc(item.total_amount_wei || "0") + '</div>' +
+        (item.status === "pending_approval" ? '<div class="row"><button class="secondary" data-payout-approve="' + esc(item.id) + '">Approve</button></div>' : "")
       );
       const payoutHost = $("poolPayoutBatches");
       if (payoutHost) {
@@ -515,34 +257,382 @@
       }
     }
 
-    function renderSimpleCards(hostID, items, render) {
+    function renderSimpleCards(hostID, items, render, emptyText) {
       const host = $(hostID);
       if (!host) return;
       host.innerHTML = "";
       if (!items || !items.length) {
         const empty = document.createElement("div");
         empty.className = "card";
-        empty.innerHTML = '<span class="muted">No records</span>';
+        empty.innerHTML = '<span class="muted">' + esc(emptyText || "No records") + '</span>';
         host.appendChild(empty);
         return;
       }
       items.forEach(item => host.appendChild(card(render(item))));
     }
 
+
+    // ---------------------------------------------------------------
+    // Placement
+    //
+    // Placement is deterministic policy over declared facts, so the plan
+    // is worth reading before it is applied. An operator on this page is
+    // usually asking "why is that card idle", and the answer is a
+    // rejection reason code — which is why rejections are rendered
+    // beside the placements rather than hidden behind a toggle.
+    // ---------------------------------------------------------------
+    function renderPlacement() {
+      if (!$("placementDecisions")) return;
+      const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+      const plan = latestPlacementPlan || {};
+      const decisions = plan.decisions || [];
+      const changes = plan.changes || [];
+      const notEnabled = plan.not_enabled || [];
+      let placed = 0;
+      let rejected = 0;
+      decisions.forEach(item => {
+        placed += (item.placements || []).length;
+        rejected += (item.rejections || []).length;
+      });
+      set("plDecisionCount", latestPlacementPlan ? decisions.length : "—");
+      set("plPlacedCount", latestPlacementPlan ? placed : "—");
+      set("plRejectedCount", latestPlacementPlan ? rejected : "—");
+      set("plChangeCount", latestPlacementPlan ? changes.length : "—");
+      set("plGeneratedAt", plan.generated_at || "unavailable");
+
+      const notEnabledHost = $("placementNotEnabled");
+      if (notEnabledHost) {
+        notEnabledHost.innerHTML = notEnabled.length
+          ? notEnabled.map(id => '<span class="badge">' + esc(id) + "</span>").join("")
+          : '<span class="small muted">Every catalog template this pool knows about is enabled.</span>';
+      }
+
+      const applyBtn = $("placementApply");
+      if (applyBtn) {
+        applyBtn.disabled = !changes.length;
+        applyBtn.textContent = !latestPlacementPlan
+          ? "Plan unavailable"
+          : (changes.length
+            ? "Apply plan (" + changes.length + " change" + (changes.length === 1 ? "" : "s") + ")"
+            : "Nothing to apply");
+      }
+
+      renderSimpleCards("placementChanges", changes, item =>
+        "<strong>" + esc(item.kind || "change") + "</strong>" +
+        '<div class="row">' +
+          '<span class="pill ' + changePillClass(item.kind) + '">' + esc(item.kind || "change") + "</span>" +
+          (item.role ? '<span class="pill">role ' + esc(item.role) + "</span>" : "") +
+        "</div>" +
+        '<div class="mono">' + esc(item.template_id || "") + " on " + esc(item.hardware_unit_id || "") + "</div>" +
+        '<div class="small">' + esc(item.reason || "no reason recorded") + "</div>",
+        latestPlacementPlan ? "The fleet already matches the plan — nothing to apply." : "Placement plan unavailable.");
+
+      renderSimpleCards("placementDecisions", decisions, item => {
+        const placements = (item.placements || []).map(entry =>
+          '<div class="check">' +
+            "<strong>" + esc(entry.template_id || "") + "</strong>" +
+            '<div class="row"><span class="pill">role ' + esc(entry.role || "primary") + "</span></div>" +
+            '<div class="small">' + esc(entry.reason || "no reason recorded") + "</div>" +
+          "</div>").join("");
+        const rejections = (item.rejections || []).map(entry =>
+          '<div class="check">' +
+            "<strong>" + esc(entry.template_id || "") + "</strong>" +
+            '<div class="row"><span class="pill pill-warn">' + esc(entry.reason || "rejected") + "</span></div>" +
+            (entry.detail ? '<div class="small">' + esc(entry.detail) + "</div>" : "") +
+          "</div>").join("");
+        return "<strong>" + esc(item.hardware_unit_id || "") + "</strong>" +
+          '<div class="row">' +
+            '<span class="pill">' + esc(item.gpu_class || "unclassified") + "</span>" +
+            '<span class="pill">' + (item.placements || []).length + " placed</span>" +
+            '<span class="pill ' + ((item.rejections || []).length ? "pill-warn" : "") + '">' + (item.rejections || []).length + " rejected</span>" +
+          "</div>" +
+          '<div class="mono">member ' + esc(item.member_eth_address || "unknown") + "</div>" +
+          '<div class="small">host ' + esc(item.host_enrollment_id || "unenrolled") + "</div>" +
+          '<div class="small"><strong>Placed</strong></div>' +
+          '<div class="check-list">' + (placements || '<div class="check"><span class="muted">Nothing placed on this GPU.</span></div>') + "</div>" +
+          '<div class="small"><strong>Rejected</strong></div>' +
+          '<div class="check-list">' + (rejections || '<div class="check"><span class="muted">No template was refused for this GPU.</span></div>') + "</div>";
+      }, latestPlacementPlan ? "No hardware to judge." : "Placement plan unavailable.");
+    }
+
+    function changePillClass(kind) {
+      if (kind === "drain") return "pill-danger";
+      if (kind === "role_change") return "pill-warn";
+      return "pill-ok";
+    }
+
+    // ---------------------------------------------------------------
+    // Ladder
+    // ---------------------------------------------------------------
+    function renderLadder() {
+      if (!$("ladderTransitions")) return;
+      const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+      const run = latestLadderRun;
+      set("ladderSeeded", run ? (run.seeded || 0) : "—");
+      set("ladderEvaluated", run ? (run.evaluated || 0) : "—");
+      set("ladderTransitionCount", run ? (run.transitions || []).length : "—");
+      const meta = $("ladderMeta");
+      if (meta && run) {
+        const moved = (run.transitions || []).length;
+        meta.textContent = moved
+          ? "Last run evaluated " + (run.evaluated || 0) + " placement(s) and moved " + moved + "."
+          : "Last run evaluated " + (run.evaluated || 0) + " placement(s) and moved none — the ladder is evaluated far more often than it moves.";
+      }
+      if (!run) return;
+      renderSimpleCards("ladderTransitions", run.transitions || [], item =>
+        "<strong>" + esc(item.assignment_id || "") + "</strong>" +
+        '<div class="row">' +
+          '<span class="pill">' + esc(item.from || "unset") + "</span>" +
+          '<span class="pill pill-accent">&rarr; ' + esc(item.to || "") + "</span>" +
+          '<span class="pill">' + esc(item.reason_code || "no reason code") + "</span>" +
+        "</div>" +
+        '<div class="small">' + esc(item.evidence || "no evidence recorded") + "</div>" +
+        '<div class="small">share ' + esc(item.share_ppm || 0) + " ppm" +
+        (item.max_in_flight ? ", max in flight " + esc(item.max_in_flight) : "") + "</div>" +
+        '<div class="small muted">' + esc(item.at || "") + "</div>",
+        "This run moved nothing.");
+    }
+
+    // ---------------------------------------------------------------
+    // Exceptions — the queue of judgements policy refuses to make.
+    // ---------------------------------------------------------------
+    function renderExceptions() {
+      if (!$("exSuspendedMembers")) return;
+      const set = (id, v) => { const e = $(id); if (e) e.textContent = v; };
+      const view = latestExceptions || {};
+      const suspendedMembers = view.suspended_members || [];
+      const suspendedHardware = view.suspended_hardware || [];
+      const heldWindows = view.held_windows || [];
+      const duplicateGPUs = view.duplicate_gpus || [];
+      set("exMemberCount", latestExceptions ? suspendedMembers.length : "—");
+      set("exHardwareCount", latestExceptions ? suspendedHardware.length : "—");
+      set("exWindowCount", latestExceptions ? heldWindows.length : "—");
+      set("exDuplicateCount", latestExceptions ? duplicateGPUs.length : "—");
+      set("exGeneratedAt", view.generated_at || "unavailable");
+
+      renderSimpleCards("exSuspendedMembers", suspendedMembers, item =>
+        "<strong>" + esc(item.eth_address || item.id) + "</strong>" +
+        '<div class="row"><span class="pill pill-danger">' + esc(item.status || "suspended") + "</span>" +
+          '<span class="pill">' + esc(item.payout_mode || "eth") + "</span></div>" +
+        '<div class="small">' + esc(item.display_name || item.contact || "no display name") + "</div>" +
+        '<div class="small muted">updated ' + esc(item.updated_at || "") + "</div>" +
+        '<div class="row"><label class="small">reason <input data-status-reason placeholder="optional: why this member is coming back"></label></div>' +
+        '<div class="row"><button class="secondary" data-member-reinstate="' + esc(item.eth_address || "") + '">Reinstate</button></div>',
+        latestExceptions ? "No member is suspended." : "Exception queue unavailable.");
+      wireMemberStatusButtons("exSuspendedMembers", "memberReinstate", "active");
+
+      const activeMembers = (latestPoolMembers || []).filter(item => item.status !== "suspended");
+      renderSimpleCards("exActiveMembers", activeMembers, item =>
+        "<strong>" + esc(item.eth_address || item.id) + "</strong>" +
+        '<div class="row"><span class="pill">' + esc(item.status || "active") + "</span>" +
+          '<span class="pill">' + esc(item.payout_mode || "eth") + "</span></div>" +
+        '<div class="small">' + esc(item.display_name || item.contact || "no display name") + "</div>" +
+        '<div class="row"><label class="small">reason (required) <input data-status-reason placeholder="why this member is being suspended"></label></div>' +
+        '<div class="row"><button class="secondary" data-member-suspend="' + esc(item.eth_address || "") + '" disabled>Suspend</button>' +
+          '<span class="small muted" data-status-hint>A suspension with no reason is a decision nobody can review later.</span></div>',
+        "No active members.");
+      wireMemberStatusButtons("exActiveMembers", "memberSuspend", "suspended");
+
+      renderSimpleCards("exSuspendedHardware", suspendedHardware, item =>
+        "<strong>" + esc(item.gpu_model || item.id) + "</strong>" +
+        '<div class="row"><span class="pill pill-danger">' + esc(item.state || "suspended") + "</span>" +
+          '<span class="pill">' + esc(item.gpu_uuid || "no uuid") + "</span></div>" +
+        '<div class="mono">member ' + esc(item.member_eth_address || "") + "</div>" +
+        '<div class="small">host ' + esc(item.enrollment_id || "") + "</div>" +
+        '<div class="small muted">last seen ' + esc(item.last_seen_at || "never") + "</div>",
+        latestExceptions ? "No hardware is suspended." : "Exception queue unavailable.");
+
+      renderSimpleCards("exHeldWindows", heldWindows, item =>
+        "<strong>" + esc(item.window_id || "") + "</strong>" +
+        '<div class="row"><span class="pill pill-warn">' + esc(item.status || "held") + "</span>" +
+          '<span class="pill">scale ' + esc(item.settlement_scale_ppm || 0) + " ppm</span></div>" +
+        '<div class="small">' + (item.anomaly ? "anomaly: " + esc(item.anomaly) : "no anomaly recorded — held for approval") + "</div>",
+        latestExceptions ? "No window is waiting on a person." : "Exception queue unavailable.");
+
+      renderSimpleCards("exDuplicateGPUs", duplicateGPUs, item =>
+        "<strong>" + esc(item.gpu_uuid || "") + "</strong>" +
+        '<div class="row"><span class="pill pill-danger">' + (item.member_eth_addresses || []).length + " claimants</span></div>" +
+        (item.member_eth_addresses || []).map(addr => '<div class="mono">' + esc(addr) + "</div>").join(""),
+        latestExceptions ? "No GPU is claimed by two members." : "Exception queue unavailable.");
+    }
+
+    // The reason field is enforced here as well as at the server: the
+    // server refuses a reasonless suspension with a 400, and an operator
+    // should learn that from a disabled button, not from a red banner
+    // after the fact.
+    function wireMemberStatusButtons(hostID, dataKey, status) {
+      const host = $(hostID);
+      if (!host) return;
+      const attr = dataKey === "memberSuspend" ? "[data-member-suspend]" : "[data-member-reinstate]";
+      host.querySelectorAll(attr).forEach(btn => {
+        const scope = btn.closest(".card");
+        const input = scope ? scope.querySelector("[data-status-reason]") : null;
+        const hint = scope ? scope.querySelector("[data-status-hint]") : null;
+        if (status === "suspended" && input) {
+          const sync = () => {
+            const ready = input.value.trim().length > 0;
+            btn.disabled = !ready;
+            if (hint) hint.textContent = ready ? "Suspending drains this member's placements." : "A reason is required to suspend.";
+          };
+          input.addEventListener("input", sync);
+          sync();
+        }
+        btn.onclick = async () => {
+          const reason = input ? input.value.trim() : "";
+          if (status === "suspended" && !reason) {
+            setStatus("A reason is required when suspending a member.", "bad");
+            return;
+          }
+          try {
+            setStatus(status === "suspended" ? "Suspending member..." : "Reinstating member...");
+            const address = btn.dataset.memberSuspend || btn.dataset.memberReinstate;
+            const result = await api("/admin/v1/pool-members/" + encodeURIComponent(address), {
+              method: "PATCH",
+              body: JSON.stringify({ status: status, reason: reason, actor: currentActor() })
+            });
+            await refreshAll();
+            if (status === "suspended") {
+              setStatus("Member suspended; " + ((result && result.drained_placements) || 0) + " placement(s) draining.", "ok");
+            } else {
+              setStatus("Member reinstated.", "ok");
+            }
+          } catch (err) {
+            setStatus(err.message, "bad");
+          }
+        };
+      });
+    }
+
+    // ---------------------------------------------------------------
+    // Payouts — the policy in force, and what it decides per batch.
+    //
+    // Whether automation is armed is the first thing this page has to
+    // answer, so paused and shadow are stated as a banner before any
+    // batch is listed.
+    // ---------------------------------------------------------------
+    function renderPayouts() {
+      const banner = $("payoutPolicyBanner");
+      if (!banner) return;
+      const view = latestPayoutPolicy;
+      const policy = (view && view.policy) || {};
+      const auto = policy.auto_approve || {};
+      const paused = !!(view && view.paused);
+      const shadow = !!policy.shadow;
+      const enabled = !!auto.enabled;
+
+      let cls = "message-card-info";
+      let title = "Policy unavailable";
+      let body = "The payout policy could not be read; automatic approval cannot be assumed either way.";
+      if (view) {
+        if (paused) {
+          cls = "message-card-error";
+          title = "PAUSED — automation is disarmed";
+          body = "A pause file is in place. No batch will be approved by policy until it is removed; approval is human-only right now.";
+        } else if (!enabled) {
+          cls = "message-card-info";
+          title = "OFF — automatic approval is not enabled";
+          body = "The policy exists but does not authorise automatic approval. Every batch waits for a person.";
+        } else if (shadow) {
+          cls = "message-card-warn";
+          title = "SHADOW — records verdicts, approves nothing";
+          body = "The policy evaluates each batch and records what it WOULD have decided. Nothing is approved automatically; divergence from human approvals is what earns the move to live.";
+        } else {
+          cls = "message-card-ok";
+          title = "LIVE — policy can approve batches without a person";
+          body = "Automatic approval is armed and not paused. A batch inside the bounds below is approved by policy the moment it is reviewed.";
+        }
+      }
+      banner.className = "card message-card " + cls;
+      banner.innerHTML = "<h2>" + esc(title) + "</h2><p>" + esc(body) + "</p>" +
+        '<p class="small">' +
+          "mode " + (shadow ? "shadow" : "live") +
+          " &middot; auto-approve " + (enabled ? "enabled" : "disabled") +
+          " &middot; " + (paused ? "paused" : "not paused") +
+        "</p>";
+
+      const detail = $("payoutPolicyDetail");
+      if (detail) {
+        detail.innerHTML = "";
+        detail.appendChild(card(
+          "<strong>Policy file</strong>" +
+          '<div class="row">' +
+            '<span class="pill ' + (shadow ? "pill-warn" : "pill-ok") + '">' + (shadow ? "shadow" : "live") + "</span>" +
+            '<span class="pill ' + (enabled ? "pill-ok" : "") + '">auto-approve ' + (enabled ? "enabled" : "disabled") + "</span>" +
+            '<span class="pill ' + (paused ? "pill-danger" : "") + '">' + (paused ? "paused" : "not paused") + "</span>" +
+          "</div>" +
+          '<div class="mono">' + esc((view && view.path) || "no policy path configured") + "</div>" +
+          '<div class="mono">hash ' + esc((view && view.policy_hash) || "none — no policy file in force") + "</div>" +
+          '<div class="small">Every decision this policy makes is recorded in the audit trail beside this hash, so an audit can prove which rules were in force.</div>' +
+          '<div class="small">bounds: max batch ' + esc(auto.max_batch_wei || "unbounded") +
+            " wei &middot; max per member " + esc(auto.max_per_member_wei || "unbounded") + " wei</div>" +
+          '<div class="small">requires settlement scale &ge; ' + esc(auto.require_scale_gte || 0) +
+            " &middot; max " + esc(auto.max_batches_per_day || 0) + " batches/day</div>"
+        ));
+      }
+
+      renderSimpleCards("payoutBatches", latestPayoutBatches, item => {
+        const review = latestPolicyReviews[item.id];
+        const reviewBlock = review
+          ? '<div class="check">' +
+              "<strong>Policy review — " + (review.approved ? "approved" : "refused") + "</strong>" +
+              '<div class="row">' +
+                '<span class="pill ' + (review.approved ? "pill-ok" : "pill-warn") + '">' + (review.approved ? "approved" : "refused") + "</span>" +
+                '<span class="pill ' + (review.shadow ? "pill-warn" : "") + '">' + (review.shadow ? "shadow — nothing approved" : "live") + "</span>" +
+              "</div>" +
+              '<div class="small">' + esc(review.reason || "no reason recorded") + "</div>" +
+              '<div class="mono">policy ' + esc(review.policy_hash || "none") + "</div>" +
+            "</div>"
+          : "";
+        return "<strong>" + esc(item.id || "") + "</strong>" +
+          '<div class="row">' +
+            '<span class="pill">' + esc(item.status || "unknown") + "</span>" +
+            '<span class="pill">' + ((item.line_items || []).length) + " rows</span>" +
+          "</div>" +
+          '<div class="small">total ' + esc(item.total_amount_wei || "0") + " wei</div>" +
+          '<div class="small muted">window ' + esc(item.settlement_window_id || "") + "</div>" +
+          reviewBlock +
+          '<div class="row">' +
+            '<button class="secondary" data-policy-review="' + esc(item.id || "") + '">Policy review</button>' +
+            (item.status === "pending_approval" ? '<button class="secondary" data-payout-approve-live="' + esc(item.id || "") + '">Approve manually</button>' : "") +
+          "</div>";
+      }, "No payout batches.");
+
+      const host = $("payoutBatches");
+      if (!host) return;
+      host.querySelectorAll("[data-policy-review]").forEach(btn => btn.onclick = async () => {
+        const id = btn.dataset.policyReview;
+        try {
+          setStatus("Evaluating batch against the payout policy...");
+          const decision = await api("/admin/v1/payout-batches/" + encodeURIComponent(id) + "/policy-review", { method: "POST", body: "{}" });
+          latestPolicyReviews[id] = decision;
+          await refreshAll();
+          setStatus("Policy " + (decision.approved ? "approved" : "refused") + " " + id +
+            (decision.shadow ? " (shadow — nothing was approved)" : "") + ": " + (decision.reason || ""), decision.approved ? "ok" : "bad");
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
+      host.querySelectorAll("[data-payout-approve-live]").forEach(btn => btn.onclick = async () => {
+        try {
+          setStatus("Approving payout batch...");
+          await api("/admin/v1/payout-batches/" + encodeURIComponent(btn.dataset.payoutApproveLive) + "/approve", { method: "POST", body: "{}" });
+          await refreshAll();
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
+    }
+
     async function refreshAll() {
       setStatus("Refreshing control-plane state...");
+      softErrors = [];
       try {
-        const [auditEvents, offers, joinRequests, members, backends, assignmentCandidates, assignments, runtime, runtimeHistory, brokerConfig, poolMembers, hostEnrollments, hardwareUnits, templateCatalog, templateAssignments, certificationRuns, settlementWindows, payoutBatches] = await Promise.all([
+        // Ten hard fetches and three soft ones: thirteen destructured
+        // names against thirteen entries, which is the invariant that
+        // keeps a mismatched Promise.all from blanking the console.
+        const [auditEvents, offers, poolMembers, hostEnrollments, hardwareUnits, templateCatalog, templateAssignments, certificationRuns, settlementWindows, payoutBatches, placementPlan, exceptions, payoutPolicy] = await Promise.all([
           api(auditQuery()),
           api("/admin/v1/offers"),
-          api("/admin/v1/join-requests"),
-          api("/admin/v1/members"),
-          api("/admin/v1/member-backends"),
-          api("/admin/v1/assignment-candidates"),
-          api("/admin/v1/assignments"),
-          api("/admin/v1/broker-runtime"),
-          api("/admin/v1/broker-runtime/history?limit=12"),
-          api("/admin/v1/broker-config", { headers: tokenHeaders(false) }),
           api("/admin/v1/pool-members"),
           api("/admin/v1/host-enrollments"),
           api("/admin/v1/hardware-units"),
@@ -550,13 +640,13 @@
           api("/admin/v1/template-assignments"),
           api("/admin/v1/certification-runs"),
           api("/admin/v1/settlement-windows"),
-          api("/admin/v1/payout-batches")
+          api("/admin/v1/payout-batches"),
+          soft("/admin/v1/placement-plan"),
+          soft("/admin/v1/exceptions"),
+          soft("/admin/v1/payout-policy")
         ]);
 
         latestOffers = offers.offers || [];
-        latestMembers = members.members || [];
-        latestBackends = backends.backends || [];
-        latestAssignments = assignments.assignments || [];
         latestPoolMembers = poolMembers.pool_members || [];
         latestHostEnrollments = hostEnrollments.host_enrollments || [];
         latestHardwareUnits = hardwareUnits.hardware_units || [];
@@ -565,195 +655,154 @@
         latestCertificationRuns = certificationRuns.certification_runs || [];
         latestSettlementWindows = settlementWindows.settlement_windows || [];
         latestPayoutBatches = payoutBatches.payout_batches || [];
-        latestRuntime = runtime;
-        latestAssignmentCandidates = assignmentCandidates.candidates || [];
         latestAuditEvents = auditEvents.events || [];
-        latestRuntimeHistory = runtimeHistory.items || [];
-        syncAssignmentSelectors();
-        void refreshAssignmentDraftState();
-        renderAuditEvents(auditEvents.events || []);
-        renderOffers(offers.offers || []);
-        renderJoinRequests(joinRequests.join_requests || []);
-        renderMembers(members.members || []);
-        renderBackends(backends.backends || []);
-        renderAssignmentCandidates(assignmentCandidates.candidates || []);
-        renderAssignments(assignments.assignments || []);
-        renderRuntime(runtime, brokerConfig);
-        renderRuntimeHistory(runtimeHistory.items || []);
+        latestPlacementPlan = placementPlan;
+        latestExceptions = exceptions;
+        latestPayoutPolicy = payoutPolicy;
+        renderAuditEvents(latestAuditEvents);
+        renderOffers(latestOffers);
+        renderTemplateCatalog(latestTemplateCatalog);
         renderConnectedPool();
+        renderPlacement();
+        renderLadder();
+        renderExceptions();
+        renderPayouts();
         renderOverview();
-        setStatus("Control-plane state refreshed.", "ok");
+        if (softErrors.length) {
+          setStatus("Refreshed, but some surfaces failed: " + softErrors.join("; "), "bad");
+        } else {
+          setStatus("Control-plane state refreshed.", "ok");
+        }
       } catch (err) {
         setStatus(err.message, "bad");
       }
     }
 
+    // The offer set has no identity of its own any more: the controller
+    // recomputes it from the adopted templates on every read, which is
+    // the same computation the broker push runs. So this renders what the
+    // fleet was actually sent, and it is deliberately read-only — the
+    // template panel is the only place an operator can change it.
     function renderOffers(items) {
-      const host = $("offers");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const el = card(
-          "<strong>" + item.id + "</strong>" +
-          '<div class="row"><span class="pill">' + item.capability_id + '</span><span class="pill">' + item.offering_id + '</span><span class="pill">' + item.status + '</span></div>' +
-          '<div class="small">mode: ' + item.interaction_mode + '</div>' +
-          '<div class="mono">price: ' + item.price.amount_wei + " / " + item.price.per_units + '</div>' +
+      renderSimpleCards("offers", items, item => {
+        const match = Object.keys(item.match || {}).map(key => esc(key) + "=" + esc(item.match[key])).join(", ");
+        const certification = (item.certification || []).map(step => esc(step.name || step.type || "step")).join(", ");
+        const promoted = (item.extra_from_runner || []).map(esc).join(", ");
+        const capacity = item.capacity;
+        return "<strong>" + esc(item.offering_id) + "</strong>" +
           '<div class="row">' +
-            '<button data-offer-promote="' + item.id + '" class="secondary">Use In Assignment Draft</button>' +
-            '<button data-offer-edit="' + item.id + '" class="secondary">Load Into Editor</button>' +
-            '<button data-offer-active="' + item.id + '" class="secondary">Set Active</button>' +
-            '<button data-offer-disabled="' + item.id + '" class="secondary">Disable</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
-      });
-      host.querySelectorAll("[data-offer-promote]").forEach(btn => btn.onclick = () => promoteOfferToAssignmentDraft(btn.dataset.offerPromote));
-      host.querySelectorAll("[data-offer-edit]").forEach(btn => btn.onclick = () => {
-        const item = items.find(offer => offer.id === btn.dataset.offerEdit);
-        if (item) loadOfferIntoForm(item);
-      });
-      host.querySelectorAll("[data-offer-active]").forEach(btn => btn.onclick = () => patchOfferStatus(btn.dataset.offerActive, "active"));
-      host.querySelectorAll("[data-offer-disabled]").forEach(btn => btn.onclick = () => patchOfferStatus(btn.dataset.offerDisabled, "disabled"));
-    }
-
-    function renderJoinRequests(items) {
-      const host = $("joinRequests");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const el = card(
-          "<strong>" + item.id + "</strong>" +
-          '<div class="row"><span class="pill">' + item.status + '</span><span class="pill">' + (item.payout_mode || "onchain") + '</span></div>' +
-          '<div class="mono">' + item.member_eth_address + '</div>' +
-          '<div class="small">backends: ' + (item.requested_backends || []).length + '</div>' +
-          ((item.requested_backends || []).map(b => '<div class="small">backend ' + b.id + ': ' + (b.verification_status || "unknown") + (b.verification_error ? " (" + b.verification_error + ")" : "") + '</div>').join("")) +
-          '<div class="row">' +
-            '<button data-preview-join="' + item.id + '" class="secondary">Preview</button>' +
-            '<button data-refresh-join="' + item.id + '" class="secondary">Refresh Verification</button>' +
-            '<button data-approve="' + item.id + '">Approve With Reason</button>' +
-            '<button data-reject="' + item.id + '" class="secondary">Reject</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
-      });
-      host.querySelectorAll("[data-preview-join]").forEach(btn => btn.onclick = () => previewJoin(btn.dataset.previewJoin));
-      host.querySelectorAll("[data-refresh-join]").forEach(btn => btn.onclick = () => refreshJoin(btn.dataset.refreshJoin));
-      host.querySelectorAll("[data-approve]").forEach(btn => btn.onclick = () => reviewJoin(btn.dataset.approve, "approve"));
-      host.querySelectorAll("[data-reject]").forEach(btn => btn.onclick = () => reviewJoin(btn.dataset.reject, "reject"));
-    }
-
-    function renderMembers(items) {
-      const host = $("members");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const transition = latestStatusTransition("member_status_updated", "member", item.id);
-        const el = card(
-          "<strong>" + (item.display_name || item.eth_address) + '</strong>' +
-          '<div class="row"><span class="pill">' + (item.status || "active") + '</span></div>' +
-          '<div class="mono">' + item.eth_address + '</div>' +
-          '<div class="small">payout: ' + (item.payout_mode || "onchain") + '</div>' +
-          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
-          '<div class="row">' +
-            '<button data-member-active="' + item.id + '" class="secondary">Set Active</button>' +
-            '<button data-member-suspended="' + item.id + '" class="secondary">Suspend</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
-      });
-      host.querySelectorAll("[data-member-active]").forEach(btn => btn.onclick = () => patchMember(btn.dataset.memberActive, "active"));
-      host.querySelectorAll("[data-member-suspended]").forEach(btn => btn.onclick = () => patchMember(btn.dataset.memberSuspended, "suspended"));
-    }
-
-    function renderBackends(items) {
-      const host = $("backends");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const transition = latestStatusTransition("member_backend_status_updated", "member_backend", item.id);
-        const el = card(
-          "<strong>" + item.id + '</strong>' +
-          '<div class="row"><span class="pill">' + item.status + '</span><span class="pill">' + item.verification_status + '</span></div>' +
-          '<div class="mono">' + item.url + '</div>' +
-          '<div class="small">' + (item.verification_error || "") + '</div>' +
-          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
-          '<div class="row">' +
-            '<button data-backend-verify="' + item.id + '" class="secondary">Verify</button>' +
-            '<button data-backend-promote="' + item.id + '" class="secondary">Use In Assignment Draft</button>' +
-            '<button data-backend-active="' + item.id + '" class="secondary">Set Active</button>' +
-            '<button data-backend-draining="' + item.id + '" class="secondary">Drain</button>' +
-            '<button data-backend-disabled="' + item.id + '" class="secondary">Disable</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
-      });
-      host.querySelectorAll("[data-backend-verify]").forEach(btn => btn.onclick = () => verifyBackend(btn.dataset.backendVerify));
-      host.querySelectorAll("[data-backend-promote]").forEach(btn => btn.onclick = () => promoteBackendToAssignmentDraft(btn.dataset.backendPromote));
-      host.querySelectorAll("[data-backend-active]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendActive, "active"));
-      host.querySelectorAll("[data-backend-draining]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendDraining, "draining"));
-      host.querySelectorAll("[data-backend-disabled]").forEach(btn => btn.onclick = () => patchBackend(btn.dataset.backendDisabled, "disabled"));
-    }
-
-    function renderAssignmentCandidates(items) {
-      const host = $("assignmentCandidates");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const claimsHtml = (item.suggested_claims || []).map(claim => {
-          const suggested = (claim.suggested_offer_ids || [])[0] || "";
-          const button = suggested
-            ? '<button data-candidate-draft="' + item.backend_id + '|' + suggested + '" class="secondary">Use Suggested Offer</button>'
-            : "";
-          return (
-            '<div class="check">' +
-              '<strong class="' + (claim.servable ? "ok" : "warn") + '">claim</strong>' +
-              '<div class="small">' + [claim.capability_id || "", claim.offering_id || "", claim.interaction_mode || ""].filter(Boolean).join(" / ") + '</div>' +
-              '<div class="small">suggested_offers=' + ((claim.suggested_offer_ids || []).join(", ") || "none") + '</div>' +
-              ((claim.suggestions || []).map(suggestion => '<div class="small">suggestion ' + (suggestion.offer_id || "") + ' score=' + String(suggestion.score || 0) + ' ' + (suggestion.reason || "") + '</div>').join("")) +
-              (button ? '<div class="row">' + button + '</div>' : '') +
-            '</div>'
-          );
-        }).join("");
-        const el = card(
-          "<strong>" + item.backend_id + "</strong>" +
-          '<div class="row"><span class="pill">' + item.backend_status + '</span><span class="pill">' + item.verification_status + '</span><span class="pill">active_assignments=' + item.active_assignments + '</span></div>' +
-          '<div class="small">' + (item.member_display_name || item.member_eth_address || item.member_id) + '</div>' +
-          '<div class="small">total_assignments=' + item.assignment_count + '</div>' +
-          claimsHtml
-        );
-        host.appendChild(el);
-      });
-      host.querySelectorAll("[data-candidate-draft]").forEach(btn => btn.onclick = () => {
-        const parts = btn.dataset.candidateDraft.split("|");
-        seedAssignmentDraft(parts[0] || "", parts[1] || "");
+            '<span class="pill">' + esc(item.capability) + '</span>' +
+            '<span class="pill">' + esc(item.protocol) + '</span>' +
+            '<span class="pill">' + (item.disabled ? "pushed, not advertised" : "advertised") + '</span>' +
+          '</div>' +
+          '<div class="mono">price: ' + priceLabel(item.price) + '</div>' +
+          (capacity ? '<div class="small">capacity: ' + esc(capacity.max_in_flight || 0) + " in flight, queue " + esc(capacity.queue_limit || 0) + '</div>' : '<div class="small">capacity: broker default</div>') +
+          '<div class="small">match: ' + (match || "any runner serving the capability") + '</div>' +
+          '<div class="small">certification: ' + (certification || "none") + '</div>' +
+          (promoted ? '<div class="small">runner may promote: ' + promoted + '</div>' : "");
       });
     }
 
-    function renderAssignments(items) {
-      const host = $("assignments");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const transition = latestStatusTransition("assignment_status_updated", "assignment", item.id);
-        const el = card(
-          "<strong>" + item.id + '</strong>' +
-          '<div class="row"><span class="pill">' + item.status + '</span></div>' +
-          '<div class="small">offer: ' + item.offer_id + '</div>' +
-          '<div class="small">backend: ' + item.member_backend_id + '</div>' +
-          (transition ? '<div class="small">last status change: ' + transitionSummary(transition) + '</div>' : '') +
+    // The three states an operator has to be able to tell apart. No
+    // override at all means the pool never adopted the template and no
+    // offer is pushed for it; an override with enabled false still pushes
+    // the offer, so the broker keeps it and stops advertising it.
+    function templateState(item) {
+      if (!item.override_updated_at) return "not adopted";
+      return item.enabled ? "enabled" : "disabled";
+    }
+
+    function templateByID(id) {
+      return (latestTemplateCatalog || []).find(item => item.id === id) || null;
+    }
+
+    // A PUT replaces the whole override, so a toggle that only means
+    // "enable this" still has to carry everything else the pool set
+    // forward — the price, or the offer drops back to the catalog's
+    // suggestion, and extra_override, or the pool's advertised metadata
+    // is lost. extra_override is the pool's own half unmerged, which is
+    // why it can be echoed back: nothing of the catalog's rides along to
+    // be frozen where a later catalog edit could not reach it.
+    function templateOverrideBody(item, enabled, price) {
+      const body = { enabled: enabled, updated_by: currentActor() };
+      if (price) {
+        body.price = price;
+      } else if (item.price_overridden && item.effective_price) {
+        body.price = { amount_wei: item.effective_price.amount_wei, per_units: item.effective_price.per_units };
+      }
+      // Absent and empty are not the same record: send extra only where
+      // the pool actually set some.
+      if (hasExtraOverride(item)) body.extra = item.extra_override;
+      return body;
+    }
+
+    function hasExtraOverride(item) {
+      return !!item.extra_override && Object.keys(item.extra_override).length > 0;
+    }
+
+    async function putTemplateOverride(id, body) {
+      try {
+        setStatus("Saving template override...");
+        await api("/admin/v1/template-overrides/" + encodeURIComponent(id), { method: "PUT", body: JSON.stringify(body) });
+        await refreshAll();
+      } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    }
+
+    function renderTemplateCatalog(items) {
+      renderSimpleCards("templateCatalog", items, item => {
+        const price = item.effective_price || {};
+        const id = esc(item.id);
+        return "<strong>" + esc(item.display_name || item.id) + "</strong>" +
           '<div class="row">' +
-            '<button data-assignment-active="' + item.id + '" class="secondary">Set Active</button>' +
-            '<button data-assignment-draining="' + item.id + '" class="secondary">Drain</button>' +
-            '<button data-assignment-disabled="' + item.id + '" class="secondary">Disable</button>' +
-            '<button data-delete-assignment="' + item.id + '" class="secondary">Delete</button>' +
-          '</div>'
-        );
-        host.appendChild(el);
+            '<span class="pill">' + templateState(item) + '</span>' +
+            '<span class="pill">' + esc(item.capability) + '</span>' +
+            '<span class="pill">' + esc(item.protocol) + '</span>' +
+          '</div>' +
+          '<div class="mono">' + id + " to " + esc(item.offering_id) + '</div>' +
+          (item.description ? '<div class="small">' + esc(item.description) + '</div>' : "") +
+          '<div class="small">price: ' + priceLabel(price) + " (" + (item.price_overridden ? "pool override" : "catalog default") + ")</div>" +
+          (hasExtraOverride(item) ? '<div class="row"><span class="pill">extra override: ' + Object.keys(item.extra_override).length + ' key(s)</span></div>' : "") +
+          (item.override_updated_at ? '<div class="small muted">override updated ' + esc(item.override_updated_at) + '</div>' : "") +
+          '<div class="row">' +
+            '<label class="small">amount wei <input data-template-amount value="' + esc(price.amount_wei || "0") + '"></label>' +
+            '<label class="small">per units <input data-template-per type="number" min="1" value="' + esc(price.per_units || 1) + '"></label>' +
+          '</div>' +
+          '<div class="row">' +
+            '<button data-template-save="' + id + '">Save price</button>' +
+            '<button class="secondary" data-template-enable="' + id + '">' + (item.enabled ? "Disable" : "Enable") + '</button>' +
+            (item.override_updated_at ? '<button class="secondary" data-template-revert="' + id + '">Revert to catalog default</button>' : "") +
+          '</div>';
       });
-      host.querySelectorAll("[data-assignment-active]").forEach(btn => btn.onclick = () => patchAssignment(btn.dataset.assignmentActive, "active"));
-      host.querySelectorAll("[data-assignment-draining]").forEach(btn => btn.onclick = () => patchAssignment(btn.dataset.assignmentDraining, "draining"));
-      host.querySelectorAll("[data-assignment-disabled]").forEach(btn => btn.onclick = () => patchAssignment(btn.dataset.assignmentDisabled, "disabled"));
-      host.querySelectorAll("[data-delete-assignment]").forEach(btn => btn.onclick = () => deleteAssignment(btn.dataset.deleteAssignment));
+      const host = $("templateCatalog");
+      if (!host) return;
+      host.querySelectorAll("[data-template-save]").forEach(btn => btn.onclick = () => {
+        const item = templateByID(btn.dataset.templateSave);
+        if (!item) return;
+        const scope = btn.closest(".card");
+        const amount = scope.querySelector("[data-template-amount]").value.trim();
+        const perUnits = Number(scope.querySelector("[data-template-per]").value || "1");
+        // Pricing a template the pool never adopted is how it gets
+        // adopted; pricing one the operator deliberately turned off must
+        // not quietly turn it back on.
+        const enabled = item.override_updated_at ? item.enabled : true;
+        void putTemplateOverride(item.id, templateOverrideBody(item, enabled, { amount_wei: amount, per_units: perUnits }));
+      });
+      host.querySelectorAll("[data-template-enable]").forEach(btn => btn.onclick = () => {
+        const item = templateByID(btn.dataset.templateEnable);
+        if (!item) return;
+        void putTemplateOverride(item.id, templateOverrideBody(item, !item.enabled, null));
+      });
+      host.querySelectorAll("[data-template-revert]").forEach(btn => btn.onclick = async () => {
+        try {
+          setStatus("Reverting template to catalog default...");
+          await api("/admin/v1/template-overrides/" + encodeURIComponent(btn.dataset.templateRevert), { method: "DELETE" });
+          await refreshAll();
+        } catch (err) {
+          setStatus(err.message, "bad");
+        }
+      });
     }
 
     function renderAuditEvents(items) {
@@ -763,12 +812,12 @@
       items.slice().reverse().slice(0, 20).forEach(item => {
         const details = item.details ? JSON.stringify(item.details) : "";
         const el = card(
-          "<strong>" + item.kind + '</strong>' +
-          '<div class="small">' + (item.resource_type || "") + ': ' + (item.resource_id || "") + '</div>' +
-          '<div class="small">' + (item.occurred_at || "") + '</div>' +
-          (details ? '<div class="mono">' + details + '</div>' : '') +
+          "<strong>" + esc(item.kind) + '</strong>' +
+          '<div class="small">' + esc(item.resource_type || "") + ': ' + esc(item.resource_id || "") + '</div>' +
+          '<div class="small">' + esc(item.occurred_at || "") + '</div>' +
+          (details ? '<div class="mono">' + esc(details) + '</div>' : '') +
           '<div class="row">' +
-            '<button data-audit-drill="' + (item.resource_type || "") + '|' + (item.resource_id || "") + '" class="secondary">Drill Down</button>' +
+            '<button data-audit-drill="' + esc(item.resource_type || "") + '|' + esc(item.resource_id || "") + '" class="secondary">Drill Down</button>' +
           '</div>'
         );
         host.appendChild(el);
@@ -781,161 +830,37 @@
       });
     }
 
-    function renderRuntime(item, yaml) {
-      const host = $("runtime");
-      if (!host) return;
-      host.innerHTML = "";
-      const startedAt = item.last_apply_started_at || "";
-      const finishedAt = item.last_apply_finished_at || "";
-      const applyError = item.last_apply_error || "";
-      host.appendChild(card(
-        "<strong>Desired vs Applied</strong>" +
-        '<div class="row"><span class="pill">' + (item.dirty ? "dirty" : "converged") + '</span><span class="pill">' + (item.broker_dirty ? "broker-dirty" : "broker-confirmed") + '</span><span class="pill">' + (item.last_apply_status || "unapplied") + '</span></div>' +
-        '<div class="small">apply mode: ' + (item.apply_mode || "controller-refresh") + (item.apply_timeout_ms ? ' | timeout_ms=' + item.apply_timeout_ms : '') + '</div>' +
-        '<div class="small">apply command configured: ' + String(!!item.apply_command_configured) + ' | broker admin configured: ' + String(!!item.broker_admin_configured) + '</div>' +
-        '<div class="small">desired: <span class="mono">' + (item.desired_revision || "") + '</span></div>' +
-        '<div class="small">applied: <span class="mono">' + (item.applied_revision || "") + '</span></div>' +
-        (item.broker_reload_attempt_id ? '<div class="small">broker attempt: <span class="mono">' + item.broker_reload_attempt_id + '</span></div>' : '') +
-        '<div class="small">broker loaded: <span class="mono">' + (item.broker_loaded_revision || "") + '</span></div>' +
-        '<div class="small">offers: ' + item.offer_count + ', members: ' + item.member_count + ', backends: ' + item.backend_count + ', assignments: ' + item.assignment_count + '</div>' +
-        (startedAt ? '<div class="small">last started: <span class="mono">' + startedAt + '</span></div>' : '') +
-        (finishedAt ? '<div class="small">last finished: <span class="mono">' + finishedAt + '</span></div>' : '') +
-        (item.broker_loaded_at ? '<div class="small">broker loaded at: <span class="mono">' + item.broker_loaded_at + '</span></div>' : '') +
-        (item.broker_reload_status ? '<div class="small">broker reload status: ' + item.broker_reload_status + '</div>' : '') +
-        (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '') +
-        (applyError ? '<div class="small bad">last error: ' + applyError + '</div>' : '')
-      ));
-      if ($("runtimeYaml")) $("runtimeYaml").textContent = yaml;
-    }
-
-    function renderRuntimeHistory(items) {
-      const host = $("runtimeHistory");
-      if (!host) return;
-      host.innerHTML = "";
-      items.forEach(item => {
-        const el = card(
-          "<strong>" + (item.kind || item.status || "runtime_event") + "</strong>" +
-          '<div class="row"><span class="pill">' + (item.status || "unknown") + '</span>' +
-          (item.broker_reload_status ? '<span class="pill">' + item.broker_reload_status + '</span>' : '') +
-          '</div>' +
-          '<div class="small">' + (item.occurred_at || "") + (item.actor ? ' | actor=' + item.actor : '') + '</div>' +
-          (item.desired_revision ? '<div class="small">desired: <span class="mono">' + item.desired_revision + '</span></div>' : '') +
-          (item.current_revision ? '<div class="small">current: <span class="mono">' + item.current_revision + '</span></div>' : '') +
-          (item.applied_revision ? '<div class="small">applied: <span class="mono">' + item.applied_revision + '</span></div>' : '') +
-          (item.broker_reload_attempt_id ? '<div class="small">broker attempt: <span class="mono">' + item.broker_reload_attempt_id + '</span></div>' : '') +
-          (item.broker_loaded_revision ? '<div class="small">broker loaded: <span class="mono">' + item.broker_loaded_revision + '</span></div>' : '') +
-          (item.error ? '<div class="small bad">error: ' + item.error + '</div>' : '') +
-          (item.broker_reload_error ? '<div class="small bad">broker reload error: ' + item.broker_reload_error + '</div>' : '')
-        );
-        host.appendChild(el);
-      });
-    }
-
-    async function submitJSON(path, payload, method = "POST") {
-      await api(path, { method, body: payload });
-      await refreshAll();
-    }
-
-    async function reviewJoin(id, action) {
-      try {
-        setStatus("Submitting join-request review...");
-        if (action === "approve") {
-          const preview = await api("/admin/v1/join-request-preview", {
-            method: "POST",
-            body: JSON.stringify({ join_request_id: id })
-          });
-          renderJoinPreview(preview);
-          if (!preview.approavable) {
-            throw new Error((preview.reasons || []).join("; ") || "join request is not approvable");
-          }
-        }
-        const payload = JSON.stringify({ reason: val("joinReviewReason") });
-        await submitJSON("/admin/v1/join-requests/" + id + "/" + action, payload);
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function previewJoin(id) {
-      try {
-        setStatus("Previewing join request...");
-        const preview = await api("/admin/v1/join-request-preview", {
-          method: "POST",
-          body: JSON.stringify({ join_request_id: id })
-        });
-        renderJoinPreview(preview);
-        setStatus("Join-request preview refreshed.", preview.approavable ? "ok" : "bad");
-      } catch (err) {
-        renderJoinPreview(null);
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function refreshJoin(id) {
-      try {
-        setStatus("Refreshing join-request verification...");
-        await submitJSON("/admin/v1/join-requests/" + id + "/refresh", "{}");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function patchBackend(id, status) {
-      try {
-        setStatus("Updating backend status...");
-        await submitJSON("/admin/v1/member-backends/" + id, JSON.stringify({ status }), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function verifyBackend(id) {
-      try {
-        setStatus("Verifying backend...");
-        await submitJSON("/admin/v1/member-backends/" + id + "/verify", "{}");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function patchMember(id, status) {
-      try {
-        setStatus("Updating member status...");
-        await submitJSON("/admin/v1/members/" + id, JSON.stringify({ status }), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function patchOfferStatus(id, status) {
-      try {
-        setStatus("Updating offer status...");
-        await submitJSON("/admin/v1/offers/" + id, JSON.stringify({ status }), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function deleteAssignment(id) {
-      try {
-        setStatus("Deleting assignment...");
-        await api("/admin/v1/assignments/" + id, { method: "DELETE", headers: tokenHeaders(false) });
-        await refreshAll();
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
-    async function patchAssignment(id, status) {
-      try {
-        setStatus("Updating assignment status...");
-        await submitJSON("/admin/v1/assignments/" + id, JSON.stringify({ status }), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    }
-
     on("refresh", "click", () => { void refreshAll(); });
+    on("placementApply", "click", async () => {
+      const changes = (latestPlacementPlan && latestPlacementPlan.changes) || [];
+      if (!changes.length) return;
+      // Applying creates and role-changes freely but only DRAINS what it
+      // withdraws, so the confirm says how many placements stop taking
+      // new work rather than pretending it is all additive.
+      const drains = changes.filter(item => item.kind === "drain").length;
+      const question = "Apply " + changes.length + " placement change(s)" +
+        (drains ? ", including " + drains + " drain(s)?" : "?");
+      if (!window.confirm(question)) return;
+      try {
+        setStatus("Applying the placement plan...");
+        const result = await api("/admin/v1/placement-plan/apply", { method: "POST", body: "{}" });
+        await refreshAll();
+        setStatus("Applied " + ((result && result.applied) || []).length + " placement change(s).", "ok");
+      } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    });
+    on("ladderRun", "click", async () => {
+      try {
+        setStatus("Running the selection ladder...");
+        latestLadderRun = await api("/admin/v1/ladder/run", { method: "POST", body: "{}" });
+        const moved = (latestLadderRun.transitions || []).length;
+        await refreshAll();
+        setStatus("Ladder evaluated " + (latestLadderRun.evaluated || 0) + " placement(s) and moved " + moved + ".", "ok");
+      } catch (err) {
+        setStatus(err.message, "bad");
+      }
+    });
     on("applyAuditFilters", "click", () => { void refreshAll(); });
     on("clearAuditFilters", "click", () => {
       if ($("auditKind")) $("auditKind").value = "";
@@ -944,92 +869,9 @@
       if ($("auditLimit")) $("auditLimit").value = "20";
       void refreshAll();
     });
-    on("assignmentOfferSelect", "change", () => {
-      if ($("assignmentOfferSelect").value) $("assignmentOfferId").value = $("assignmentOfferSelect").value;
-      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-      void refreshAssignmentDraftState();
-    });
-    on("assignmentBackendSelect", "change", () => {
-      if ($("assignmentBackendSelect").value) $("assignmentBackendId").value = $("assignmentBackendSelect").value;
-      syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-      void refreshAssignmentDraftState();
-    });
-    on("syncOfferPayload", "click", () => syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
-    on("syncJoinPayload", "click", () => syncPayloadTextarea("joinPayload", joinPayloadFromForm()));
-    on("syncAssignmentPayload", "click", () => syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm()));
-    on("createOffer", "click", async () => {
-      try {
-        setStatus("Creating offer...");
-        await submitJSON("/admin/v1/offers", syncPayloadTextarea("offerPayload", offerPayloadFromForm()));
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("updateOffer", "click", async () => {
-      try {
-        const id = val("offerId");
-        if (!id) throw new Error("Offer ID is required");
-        setStatus("Updating offer...");
-        await submitJSON("/admin/v1/offers/" + encodeURIComponent(id), syncPayloadTextarea("offerPayload", offerPayloadFromForm()), "PATCH");
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("resetOfferForm", "click", () => resetOfferForm());
-    on("submitOfferRaw", "click", async () => {
-      try {
-        setStatus("Submitting raw offer JSON...");
-        await submitJSON("/admin/v1/offers", $("offerPayload").value);
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("submitJoin", "click", async () => {
-      try {
-        setStatus("Submitting join request...");
-        await api("/member/v1/join-requests", {
-          method: "POST",
-          body: syncPayloadTextarea("joinPayload", joinPayloadFromForm()),
-          headers: { "Content-Type": "application/json" }
-        });
-        await refreshAll();
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("submitJoinRaw", "click", async () => {
-      try {
-        setStatus("Submitting raw join JSON...");
-        await api("/member/v1/join-requests", {
-          method: "POST",
-          body: $("joinPayload").value,
-          headers: { "Content-Type": "application/json" }
-        });
-        await refreshAll();
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("createAssignment", "click", async () => {
-      try {
-        setStatus("Creating assignment...");
-        await submitJSON("/admin/v1/assignments", syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm()));
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
-    on("submitAssignmentRaw", "click", async () => {
-      try {
-        setStatus("Submitting raw assignment JSON...");
-        await submitJSON("/admin/v1/assignments", $("assignmentPayload").value);
-      } catch (err) {
-        setStatus(err.message, "bad");
-      }
-    });
     on("applyRuntime", "click", async () => {
       try {
         setStatus("Applying desired runtime...");
-        await submitJSON("/admin/v1/broker-runtime/apply", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1037,7 +879,6 @@
     on("markApplied", "click", async () => {
       try {
         setStatus("Marking desired revision applied...");
-        await submitJSON("/admin/v1/broker-runtime/mark-applied", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1045,7 +886,6 @@
     on("markStarted", "click", async () => {
       try {
         setStatus("Marking apply started...");
-        await submitJSON("/admin/v1/broker-runtime/mark-started", "{}");
       } catch (err) {
         setStatus(err.message, "bad");
       }
@@ -1054,14 +894,9 @@
       try {
         const error = window.prompt("Apply failure reason", "reload failed") || "";
         setStatus("Marking apply failed...");
-        await submitJSON("/admin/v1/broker-runtime/mark-failed", JSON.stringify({ error }));
       } catch (err) {
         setStatus(err.message, "bad");
       }
     });
 
-    if ($("offerId")) resetOfferForm();
-    if ($("joinPayload")) syncPayloadTextarea("joinPayload", joinPayloadFromForm());
-    if ($("assignmentPayload")) syncPayloadTextarea("assignmentPayload", assignmentPayloadFromForm());
-    void refreshAssignmentDraftState();
     refreshAll();

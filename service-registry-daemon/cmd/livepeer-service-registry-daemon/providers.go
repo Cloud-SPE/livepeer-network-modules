@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
 	"os"
+
+	"gopkg.in/yaml.v3"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -24,6 +27,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
 	clockadapter "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock/chaincommonsadapter"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/diagnostics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/discovery"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/livehealthfetcher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
@@ -35,36 +39,37 @@ import (
 	storeadapter "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store/chaincommonsadapter"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/verifier"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
-	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 // builtProviders holds the set of providers needed by the services. The
-// resolver needs all I/O providers; the publisher needs Signer + Chain.
+// resolver uses discovery/fetch providers; publisher only needs a loaded identity.
 type builtProviders struct {
-	cfg      *config.Daemon
-	log      logger.Logger
-	store    store.Store
-	chain    chain.Chain
-	signer   signer.Signer
-	verify   verifier.Verifier
-	fetcher  manifestfetcher.ManifestFetcher
-	liveHealth livehealthfetcher.Fetcher
-	clock    clock.Clock
-	recorder metrics.Recorder
+	diagnostics *diagnostics.State
+	cfg         *config.Daemon
+	log         logger.Logger
+	store       store.Store
+	chain       chain.Chain
+	signer      signer.Signer
+	verify      verifier.Verifier
+	fetcher     manifestfetcher.ManifestFetcher
+	liveHealth  livehealthfetcher.Fetcher
+	clock       clock.Clock
+	recorder    metrics.Recorder
 
 	// Resolver chain-discovery dependencies (nil unless in resolver
 	// mode with --discovery=chain). roundclock + discovery feed the
 	// runtime/seeder loop.
 	roundClock ccroundclock.NamedClock
 	discovery  discovery.Discovery
+	chainSeed  []types.EthAddress
 
 	// closers are extra teardown callbacks that aren't covered by
 	// store.Close (chain-commons RPC client, Controller refresher,
 	// timesource poller). Drained in reverse on shutdown.
 	closers []func()
 
-	// overlayLoader returns the current static overlay; reload swaps the
-	// pointer atomically so resolver reads see the new value next call.
+	// The overlay is loaded once at startup. The accessor is injectable
+	// for tests; there is no runtime file reload.
 	overlay atomic.Pointer[config.Overlay]
 }
 
@@ -74,7 +79,7 @@ func (bp *builtProviders) addCloser(fn func()) {
 
 // build assembles providers from cfg. Dev mode uses fakes; production
 // dials chain RPC and loads the keystore.
-func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
+func build(ctx context.Context, cfg *config.Daemon) (_ *builtProviders, buildErr error) {
 	// Clock: chain-commons-backed via thin adapter.
 	clk, err := clockadapter.New(cclock.System())
 	if err != nil {
@@ -85,6 +90,11 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		clock:  clk,
 		verify: verifier.New(),
 	}
+	defer func() {
+		if buildErr != nil {
+			bp.Close()
+		}
+	}()
 	bp.log = logger.New(logger.Config{Level: cfg.LogLevel, Format: cfg.LogFormat})
 
 	// Recorder: Prometheus when --metrics-listen is set, Noop otherwise.
@@ -152,11 +162,21 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 
 	var controllerAddrs cccontrollerapi.Addresses
 
+	// ccRPC is the one chain client for a production resolver: the
+	// Controller refresher, the round poller, pool discovery and the
+	// ServiceRegistry reads all share it, so they all fail over across
+	// the same --chain-rpc-urls list. Opened once, closed once.
+	var ccRPC *ccrpcmulti.MultiRPC
+
 	// Resolver production deployments resolve ServiceRegistry from the
 	// Controller by default so operators don't need to pass the address
 	// explicitly. The explicit flag remains as an override.
-	if cfg.Mode == config.ModeResolver && !cfg.Dev {
-		ccRPC, err := ccrpcmulti.Open(ccrpcmulti.Options{URLs: []string{cfg.ChainRPC}})
+	if cfg.Mode == config.ModeResolver && !cfg.Dev && cfg.Discovery == config.DiscoveryChain {
+		var err error
+		if err := chain.ValidateRPCChainIDs(ctx, cfg.ChainRPCURLs, cfg.ChainID); err != nil {
+			return nil, err
+		}
+		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs})
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
 		}
@@ -225,18 +245,25 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		if bp.signer != nil {
 			addr = bp.signer.Address()
 		}
-		bp.chain = chain.NewInMemory(addr)
-	} else if cfg.Mode == config.ModeResolver {
-		cli, err := ethclient.DialContext(ctx, cfg.ChainRPC)
+		mem := chain.NewInMemory(addr)
+		// Seed the in-memory chain so a chain-free deployment can still
+		// resolve through the SIGNED path.
+		//
+		// Chain seeds exercise chain-style discovery in dev. Overlay manifest_url
+		// entries provide signed discovery independently of this seed.
+		seeded, err := seedChain(mem, cfg.ChainSeedPath)
 		if err != nil {
-			return nil, fmt.Errorf("providers: chain dial %s: %w", cfg.ChainRPC, err)
+			return nil, fmt.Errorf("providers: chain seed: %w", err)
 		}
+		bp.chainSeed = seeded
+		bp.chain = mem
+	} else if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryChain {
 		serviceRegistryAddress := cfg.ServiceRegistryAddress
 		if serviceRegistryAddress == "" && cfg.Mode == config.ModeResolver {
 			serviceRegistryAddress = controllerAddrs.ServiceRegistry.Hex()
 		}
 		eth, err := chain.NewEth(chain.EthConfig{
-			Client:                   cli,
+			Client:                   ccRPC,
 			ServiceRegistryAddress:   serviceRegistryAddress,
 			AIServiceRegistryAddress: cfg.AIServiceRegistryAddress,
 		})
@@ -245,10 +272,11 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}
 		bp.chain = eth
 	} else {
-		// Publisher mode doesn't read on-chain serviceURI pointers.
+		// Overlay-only and publisher modes do not read serviceURI pointers.
 		bp.chain = chain.NewInMemory("")
 	}
-	bp.chain = chain.WithMetrics(bp.chain, bp.recorder)
+	bp.diagnostics = diagnostics.New(cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryChain, cfg.Mode == config.ModeResolver)
+	bp.chain = bp.diagnostics.WrapChain(chain.WithMetrics(bp.chain, bp.recorder))
 
 	// Manifest fetcher (resolver only, but cheap to always build)
 	bp.fetcher = manifestfetcher.WithMetrics(
@@ -259,6 +287,7 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		}),
 		bp.recorder,
 	)
+	bp.fetcher = bp.diagnostics.WrapFetcher(bp.fetcher)
 	bp.liveHealth = livehealthfetcher.New(cfg.WorkerProbeTimeout)
 
 	// Static overlay (resolver only)
@@ -280,13 +309,13 @@ func build(ctx context.Context, cfg *config.Daemon) (*builtProviders, error) {
 		bp.overlay.Store(config.EmptyOverlay())
 	}
 
-	if cfg.Mode != config.ModeResolver || cfg.Dev {
+	if cfg.Mode != config.ModeResolver || cfg.Dev || cfg.Discovery == config.DiscoveryOverlayOnly {
 		// Overlay-only / publisher / dev: discovery is the no-op.
 		bp.discovery = discovery.NewDisabled()
 	}
 
 	// Stamp build info — reflects in /metrics for dashboard panels.
-	bp.recorder.SetBuildInfo("dev", string(cfg.Mode), runtimeGoVersion())
+	bp.recorder.SetBuildInfo(version, string(cfg.Mode), runtimeGoVersion())
 	return bp, nil
 }
 
@@ -312,4 +341,48 @@ func (bp *builtProviders) Close() {
 	if k, ok := bp.signer.(*signer.Keystore); ok {
 		k.Close()
 	}
+}
+
+// chainSeed is the file shape for --chain-seed: an address to the
+// serviceURI it would carry on chain.
+type chainSeed struct {
+	Seed []struct {
+		EthAddress string `yaml:"eth_address"`
+		ServiceURI string `yaml:"service_uri"`
+	} `yaml:"seed"`
+}
+
+// seedChain preloads the in-memory chain from a seed file. A missing
+// path is not an error — an unseeded dev daemon is the previous
+// behavior and remains valid.
+func seedChain(mem *chain.InMemory, path string) ([]types.EthAddress, error) {
+	if path == "" {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(path) //nolint:gosec // operator-supplied path, same as --static-overlay
+	if err != nil {
+		return nil, fmt.Errorf("read %s: %w", path, err)
+	}
+	var cs chainSeed
+	dec := yaml.NewDecoder(bytes.NewReader(raw))
+	dec.KnownFields(true) // typos fail at boot, not at resolve time
+	if err := dec.Decode(&cs); err != nil {
+		return nil, fmt.Errorf("parse %s: %w", path, err)
+	}
+	if len(cs.Seed) == 0 {
+		return nil, fmt.Errorf("%s declares no seed entries", path)
+	}
+	addresses := make([]types.EthAddress, 0, len(cs.Seed))
+	for i, e := range cs.Seed {
+		addr, err := types.ParseEthAddress(e.EthAddress)
+		if err != nil {
+			return nil, fmt.Errorf("seed[%d].eth_address: %w", i, err)
+		}
+		if e.ServiceURI == "" {
+			return nil, fmt.Errorf("seed[%d].service_uri: empty", i)
+		}
+		mem.PreLoad(addr, e.ServiceURI)
+		addresses = append(addresses, addr)
+	}
+	return addresses, nil
 }

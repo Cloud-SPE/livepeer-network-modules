@@ -1,0 +1,8 @@
+{
+  "contract_version": "1.0",
+  "credential": { "kind": "bearer", "token": "lpc_x", "signature": "AAAA" },
+  "host_id": "h",
+  "agent_version": "a/1",
+  "hardware": [],
+  "capabilities": []
+}

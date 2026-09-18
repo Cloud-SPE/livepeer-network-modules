@@ -1,7 +1,9 @@
 # customer-portal — design
 
-The full design lives in the plan brief:
-[`../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`](../docs/exec-plans/completed/0013-shell-customer-portal-extraction.md).
+The full design lived in the plan brief
+`docs/exec-plans/completed/0013-shell-customer-portal-extraction.md`, which
+was removed from the tree in commit `9ad9898`; recover it from git history
+if needed.
 
 This file pins the per-component invariants the implementing agent must
 preserve when extending the shell.
@@ -17,7 +19,7 @@ preserve when extending the shell.
 3. **Schema namespace `app.*`.** Q6 lock. Shell migrations create
    `app.customers`, `app.api_keys`, `app.reservations`, `app.topups`,
    `app.stripe_webhook_events`, `app.admin_audit_events`,
-   `app.idempotency_requests`. Per-product migrations live alongside in
+   `app.idempotency_requests`, `app.auth_tokens`. Per-product migrations live alongside in
    their own namespace (`openai.*`, `vtuber.*`, `media.*`).
 4. **Rate-card tables stay in per-product migrations.** Q7 + OQ2 locks.
    The shell exposes `RateCardResolver` as an interface only; per-product

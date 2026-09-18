@@ -4,15 +4,17 @@ JSON Schema for the manifest format orchestrators publish at
 `/.well-known/livepeer-registry.json`. Cross-cutting; any change here forces a
 spec-wide SemVer bump (per [`../PROCESS.md`](../PROCESS.md)).
 
-**Status:** [`schema.json`](./schema.json) — **draft proposed**, pending user review.
+**Status:** [`schema.json`](./schema.json) — **active** at spec-wide `4.0.0`
+(see [`../VERSION`](../VERSION) and [`changelog.md`](./changelog.md)).
 
 ## Files
 
 - [`schema.json`](./schema.json) — the canonical JSON Schema (Draft 2020-12).
 - [`examples/`](./examples/) — concrete manifest examples.
   - [`examples/minimal.json`](./examples/minimal.json) — four capabilities (vLLM
-    chat, OpenAI-API resale, RTMP video live, a custom `kibble:doggo-bark-counter`)
-    showing the workload-agnostic shape.
+    chat, Whisper transcription, RTMP→HLS video live, a custom
+    `kibble:doggo-bark-counter`) showing the workload-agnostic shape across
+    both protocols and all three job transports.
 - [`changelog.md`](./changelog.md) — schema-change history.
 
 ## Shape in one paragraph
@@ -20,9 +22,18 @@ spec-wide SemVer bump (per [`../PROCESS.md`](../PROCESS.md)).
 A manifest is a **two-field outer envelope**: a `manifest` payload + a `signature`
 over its JCS-canonicalized form. The payload carries the orch's identity, time
 bounds, and a **flat list of capability tuples** — host is not a registration unit.
-Each tuple has `capability_id`, `offering_id`, `interaction_mode@vN`, `work_unit.name`,
-`price_per_unit_wei` (string-encoded big int), `worker_url` (HTTPS), and optional
-free-form `extra` / `constraints` for workload-specific filtering. Signature is
+Each tuple has `settlement_domain_id` (the immutable payment ledger ID), `capability_id`, `offering_id`, `protocol` (`<name>/v<major>` —
+`paid-job/v1` or `paid-session/v1`), the matching declared-axes object (`job`
+for paid-job, `session` for paid-session; see
+[`../protocols/offering-axes.md`](../protocols/offering-axes.md)),
+`work_unit.name`, `price_per_unit_wei` (string-encoded big int) with its
+optional denominator `per_units` (absent means 1 — the pair is the price,
+see [`../protocols/offering-axes.md`](../protocols/offering-axes.md) §6),
+`worker_url` (HTTPS), and optional free-form `extra` / `constraints` for
+workload-specific filtering. Beside the tuples, optional `settlement_keys[]`
+(since 2.3.0) lists the hot keys the cold key delegates settlement signing
+to, each with a validity window — the block a clearinghouse checks a
+broker-signed settlement against. Signature is
 secp256k1 (Ethereum's curve) — recovers to the orch's `eth_address`, which must
 match the on-chain `ServiceRegistry` entry.
 
@@ -30,7 +41,9 @@ match the on-chain `ServiceRegistry` entry.
 
 This manifest format covers both transcoding (`ServiceRegistry`) and AI
 (`AIServiceRegistry`) workloads in a single unified `capabilities[]` tuple list.
-Each tuple's `interaction_mode` field distinguishes the workload class. An orch
+Workload identity lives in `capability_id` (and, for session offerings, in
+`session.descriptor_schema`) — never in `protocol`, which distinguishes only
+one-shot work from a long-lived session. An orch
 may register the same well-known URL in either or both contracts; resolvers
 configure which contract address(es) to query for the orch's `serviceURI`.
 
@@ -54,9 +67,13 @@ is configured with which contract address(es) to query for a given orch's
 2. JCS-canonicalize `manifest` payload.
 3. Recover signer from `signature.value` (secp256k1).
 4. Confirm signer == `manifest.orch.eth_address`.
-5. Confirm `eth_address` matches the orch's on-chain `ServiceRegistry` entry.
-6. Confirm `now < expires_at`.
-7. Confirm `publication_seq > last_seen[eth_address]` (anti-rollback within
-   the validity window — resolver caches the last-seen value per
-   `eth_address` and rejects equal-or-lower).
+5. Confirm `eth_address` matches the expected orchestrator identity from chain
+   discovery or the operator's configured overlay entry.
+6. Confirm `issued_at <= now < expires_at` and `issued_at < expires_at`.
+7. For a new publication, require `publication_seq > last_seen[eth_address]`.
+   A refetch at the same sequence is idempotent only when its canonical signed
+   payload matches the already accepted payload. Reject lower sequences and
+   conflicting equal-sequence payloads. Persist the address-scoped high-water
+   mark across cache eviction, source changes and process restart; resetting
+   that durable state resets local replay history.
 8. Index capability tuples for `Resolver.Select(capability_id, offering_id, ...)`.

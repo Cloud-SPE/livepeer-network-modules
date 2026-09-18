@@ -1,0 +1,41 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Your payments</p>
+  <h1>Earnings</h1>
+  <p class="muted">What the pool has paid you and what it still owes, by settlement window. These are your own amounts. The portal deliberately shows no pool total and no share-of-pool figure: a share alongside a total is another member's income by subtraction.</p>
+</section>
+
+<section>
+  <h2>Totals</h2>
+  <div class="metric-grid">
+    <article class="metric-card">
+      <p class="metric-label">Paid</p>
+      <p class="metric-value"><span id="earningsPaidEth">—</span></p>
+      <p class="metric-sub"><span id="earningsPaidWei" class="mono">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Pending</p>
+      <p class="metric-value"><span id="earningsPendingEth">—</span></p>
+      <p class="metric-sub"><span id="earningsPendingWei" class="mono">—</span></p>
+    </article>
+    <article class="metric-card">
+      <p class="metric-label">Windows with a line for you</p>
+      <p class="metric-value"><span id="earningsWindowCount">—</span></p>
+      <p class="metric-sub">A window becomes a batch, a batch is approved, then it is paid.</p>
+    </article>
+  </div>
+  <p class="small muted">Pending covers every batch that carries a line for your address and has not been marked paid — drafted, awaiting approval, approved, or in flight.</p>
+</section>
+
+<section>
+  <h2>Window attribution</h2>
+  <p class="muted">One row per line item written for your address. The window is the period the work was attributed to; the status is where that payment has got to.</p>
+  <div id="earningsWindows" class="card-list"></div>
+</section>
+
+<section>
+  <h2>Payout history</h2>
+  <p class="muted">The same rows, paid only, newest first.</p>
+  <div id="earningsHistory" class="card-list"></div>
+</section>
+{{end}}

@@ -3,6 +3,7 @@ package member
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"github.com/Cloud-SPE/livepeer-network-modules/pool-commons/memberauth"
 	"net/http"
 	"sync"
 	"time"
@@ -13,9 +14,10 @@ const memberSessionCookieName = "pool_member_session"
 const memberSessionTTL = 24 * time.Hour
 
 type SessionAuth struct {
-	mu       sync.Mutex
-	sessions map[string]memberSession
-	now      func() time.Time
+	Federation *memberauth.Verifier
+	mu         sync.Mutex
+	sessions   map[string]memberSession
+	now        func() time.Time
 }
 
 type memberSession struct {
@@ -56,6 +58,29 @@ func (a *SessionAuth) MemberID(sessionID string) (string, bool) {
 		return "", false
 	}
 	return session.memberID, true
+}
+
+// Delete ends a session. Signing out has to invalidate the session
+// server-side and not merely drop the cookie: a cookie the browser
+// forgot is still a valid credential to anyone who captured it.
+func (a *SessionAuth) Delete(sessionID string) {
+	if a == nil || sessionID == "" {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.sessions, sessionID)
+}
+
+func clearMemberSessionCookie(w http.ResponseWriter) {
+	http.SetCookie(w, &http.Cookie{
+		Name:     memberSessionCookieName,
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 }
 
 func setMemberSessionCookie(w http.ResponseWriter, id string) {

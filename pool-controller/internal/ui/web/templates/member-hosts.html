@@ -1,0 +1,30 @@
+{{define "content"}}
+<section class="summary">
+  <p class="eyebrow">Your hardware</p>
+  <h1>Hosts</h1>
+  <p class="muted">Every host you have enrolled, the GPUs it reported, and what each GPU is running. A placement always carries the reason it is in the state it is in — a verdict on its own would tell you nothing you could act on.</p>
+</section>
+
+<section>
+  <h2>Reading a placement</h2>
+  <div class="workflow-banner">
+    <article class="workflow-step">
+      <strong>State</strong>
+      <span>Where the placement sits on the ladder: pending, testing, probationary, active, throttled, draining, suspended, retired.</span>
+    </article>
+    <article class="workflow-step">
+      <strong>Reason</strong>
+      <span>The code for the last transition. It is the pool's answer to "why is it here", recorded when the transition was made.</span>
+    </article>
+    <article class="workflow-step">
+      <strong>Evidence</strong>
+      <span>The measurement behind the reason — the failure, the score, the count. This is what you would have to change.</span>
+    </article>
+  </div>
+</section>
+
+<section>
+  <h2>Enrolled hosts</h2>
+  <div id="memberHosts" class="card-list"></div>
+</section>
+{{end}}

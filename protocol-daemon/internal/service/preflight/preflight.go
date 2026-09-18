@@ -59,10 +59,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	if cfg.Controller == nil {
 		return nil, errors.New("preflight: Controller is required")
 	}
-	if cfg.Keystore == nil {
+	if cfg.Mode != types.ModeReadOnly && cfg.Keystore == nil {
 		return nil, errors.New("preflight: Keystore is required")
 	}
-	if cfg.GasOracle == nil {
+	if cfg.Mode != types.ModeReadOnly && cfg.GasOracle == nil {
 		return nil, errors.New("preflight: GasOracle is required")
 	}
 
@@ -115,6 +115,10 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 		if err := requireCode(ctx, cfg.RPC, addrs.BondingManager, "BondingManager"); err != nil {
 			return out, err
 		}
+	}
+
+	if cfg.Mode == types.ModeReadOnly {
+		return out, nil
 	}
 
 	// 4. Keystore: just stamp the derived address. Mismatch with

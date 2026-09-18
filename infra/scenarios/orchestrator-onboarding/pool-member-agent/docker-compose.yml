@@ -1,0 +1,88 @@
+# Scenario: runner host — pool member agent, attach-only.
+#
+# Runs beside the runner containers on a GPU host and attaches them to a
+# capability broker: fetches each runner's GET /.well-known/livepeer-runner,
+# adds local_id / devices, and relays the document over an outbound
+# connection. The broker never dials the host. No inbound port is needed.
+#
+# Works as a plain compose file or a Portainer stack. Everything the agent
+# needs is an environment variable, so the Portainer env editor is enough:
+# the attach credential is passed inline and the runner list is written to
+# a tmpfs file at start from LIVEPEER_RUNNERS_JSON.
+#
+# Prerequisites:
+#   - the host is enrolled on the broker (POST /admin/v1/enroll, or the
+#     coordinator's Enroll page) and you hold the token it showed once;
+#   - the runner stack is up and its network name is known
+#     (`docker network ls`; a Portainer stack named livepeer-transcode-nvidia
+#     creates livepeer-transcode-nvidia_runners);
+#   - nvidia-container-toolkit, so the agent can run nvidia-smi and report
+#     the card in the host inventory.
+#
+# Leave every POOL_* variable unset: with none of them the agent runs
+# attach-only against the runners declared here. Set all three and the pool
+# controller replaces the runner set on the first reconcile.
+
+services:
+  pool-member-agent:
+    image: ${REGISTRY:-tztcloud}/livepeer-pool-member-agent:${TAG:-v2.0.0}
+    container_name: pool-member-agent
+    restart: unless-stopped
+    # Write the runner declarations to a private tmpfs file, then hand off
+    # to the agent binary. Keeps the whole configuration in the environment.
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        umask 077
+        printf '%s' "$$LIVEPEER_RUNNERS_JSON" > /run/livepeer/runners.json
+        exec /usr/local/bin/pool-member-agent
+    environment:
+      # --- broker ---------------------------------------------------------
+      LIVEPEER_BROKER_URL: ${LIVEPEER_BROKER_URL:?set LIVEPEER_BROKER_URL to the broker base URL, e.g. https://eu-central-broker.xode.app}
+      # Optional: the broker's QUIC attach address (host:8443/udp). Preferred
+      # when set; the WebSocket on LIVEPEER_BROKER_URL is the fallback. Leave
+      # unset behind a CDN or TLS proxy that does not pass UDP.
+      LIVEPEER_BROKER_QUIC_ADDR: ${LIVEPEER_BROKER_QUIC_ADDR:-}
+      # --- identity -------------------------------------------------------
+      # Must equal the host_id used at enrollment.
+      LIVEPEER_HOST_ID: ${LIVEPEER_HOST_ID:?set LIVEPEER_HOST_ID to the enrolled host id}
+      # The attach credential from the enroll bundle (shown once). Inline
+      # here so a Portainer stack needs no file on the host; to use a file
+      # instead, mount it and set LIVEPEER_ATTACH_CREDENTIAL_FILE.
+      LIVEPEER_ATTACH_CREDENTIAL: ${LIVEPEER_ATTACH_CREDENTIAL:?set LIVEPEER_ATTACH_CREDENTIAL to the token from the enroll bundle}
+      # --- runners --------------------------------------------------------
+      # JSON array of { local_id, url, devices[] }. URLs are what THIS
+      # container can dial: service names on the runner stack's network.
+      LIVEPEER_RUNNERS_JSON: ${LIVEPEER_RUNNERS_JSON:?set LIVEPEER_RUNNERS_JSON to the runner declarations (see .env.example)}
+      LIVEPEER_RUNNERS_FILE: /run/livepeer/runners.json
+      LIVEPEER_REFRESH_EVERY: ${LIVEPEER_REFRESH_EVERY:-1m}
+      # nvidia-smi is injected by the toolkit with the utility capability;
+      # that is how the agent inventories the GPU it reports for the host.
+      NVIDIA_DRIVER_CAPABILITIES: utility
+    tmpfs:
+      - /run/livepeer:mode=0700
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - runners
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+networks:
+  # The runner stack's network, so service names in LIVEPEER_RUNNERS_JSON
+  # resolve. Change the name if your stack is called something else.
+  runners:
+    external: true
+    name: ${RUNNERS_NETWORK:?set RUNNERS_NETWORK to the runner stack's network, e.g. livepeer-transcode-nvidia_runners}

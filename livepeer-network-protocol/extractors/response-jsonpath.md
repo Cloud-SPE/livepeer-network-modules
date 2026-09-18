@@ -59,7 +59,7 @@ suggest a different extractor is needed.
 
 ## Streaming caveat
 
-For `http-stream` mode: by default, the extractor evaluates against the
+For the `stream` transport: by default, the extractor evaluates against the
 **concatenated final body** (all chunks). For SSE, "final body" means the last
 JSON-shaped event. If the capability emits multiple events that each contain a
 count, use `request-formula` or a custom extractor instead.

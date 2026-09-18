@@ -1,0 +1,47 @@
+{
+  "contract": "regional-source-work/v1",
+  "description": "Receiver cumulative billing produces monetary deltas once; terminal settlement never duplicates prior advances.",
+  "operations": [
+    {
+      "kind": "advance",
+      "sequence": 1,
+      "cumulative_units": 10,
+      "cumulative_billed_wei": "7"
+    },
+    {
+      "kind": "advance",
+      "sequence": 2,
+      "cumulative_units": 20,
+      "cumulative_billed_wei": "11"
+    },
+    {
+      "kind": "settle",
+      "sequence": 3,
+      "cumulative_units": 20,
+      "cumulative_billed_wei": "11"
+    }
+  ],
+  "expected_receipt_count": 2,
+  "expected_total_wei": "11",
+  "revision_baseline": {
+    "predecessor_billed_wei": "7",
+    "predecessor_units": 5,
+    "successor_billed_wei": "11",
+    "successor_units": 8,
+    "expected_new_weight_wei": "4"
+  },
+  "revision_recovery": {
+    "persist_before_admit": [
+      "signed_authorization",
+      "payment_batch",
+      "reservation",
+      "lease"
+    ],
+    "lost_response": "replay_before_usage_or_settlement",
+    "commit_atomically": [
+      "successor_authority",
+      "idempotent_response"
+    ],
+    "drain_replay": "identical_bound_already_admitted_only"
+  }
+}

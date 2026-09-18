@@ -15,9 +15,11 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 - **The proto is the contract.** When code disagrees with
   `../livepeer-network-protocol/proto/`, the proto wins. File a plan if
   the proto needs to change.
-- **The daemon is stubbed.** v0.2 accepts any non-empty `ticket` and
-  records it. Don't add ticket-format validation here without a plan;
-  that is the chain-integration workstream's domain.
+- **Dev mode is chain-stubbed; validation is not.** Without
+  `--chain-rpc-urls` the chain providers are in-memory fakes and the key
+  is a published throwaway, but tickets are still fully validated
+  (`internal/service/receiver/validator`: recipient, recipient-rand,
+  signature, nonce replay). Don't loosen validation without a plan.
 - **State is durable.** BoltDB is the session ledger. Tests should not
   reach in and mutate the file directly — use the gRPC surface.
 
@@ -38,12 +40,28 @@ Inherited from the repo root (agent-first harness pattern). Plus:
 
 ```
 cmd/livepeer-payment-daemon/   — entrypoint (flag parsing + boot)
+cmd/payout-sim/                — offline payout/pricing simulator
+cmd/livepeer-chain-probe/      — manual real-chain wholesale probe (never in CI)
 internal/
-  proto/livepeer/payments/v1/  — generated gRPC bindings (committed)
   server/                      — grpc.Server lifecycle + listener
-  service/                     — PayerDaemon / PayeeDaemon / PayeeAdmin RPC implementation
-  store/                       — BoltDB session ledger
+  service/                     — PayerDaemon / PayerAdmin (sender/),
+                                 PayeeDaemon / PayeeAdmin (receiver/), plus
+                                 escrow, settlement, revenuereport
+  spendauth/                   — spend-authorization digest + signer verification
+  store/                       — BoltDB ledger: sessions, wholesale accounts,
+                                 redemptions, sender mints + nonce watermark
+  providers/                   — chain, keystore, devbroker, metrics adapters
+  types/                       — shared payment domain values
+  payoutsim/                   — simulator engine behind cmd/payout-sim
+  compat/                      — go-livepeer wire-compat round-trip fixture
+lint/no-secrets-in-logs/       — custom analyzer (see lint/README.md)
+lint/coverage-gate/            — 75% per-package coverage floor (`make coverage-check`)
 ```
+
+The generated gRPC bindings are **not** vendored here — they live in
+[`../livepeer-network-protocol/proto-go/livepeer/payments/v1/`](../livepeer-network-protocol/proto-go/livepeer/payments/v1/)
+and are pulled in via a `replace` directive in `go.mod`. `make proto`
+regenerates them into that directory.
 
 ## Code-of-conduct
 

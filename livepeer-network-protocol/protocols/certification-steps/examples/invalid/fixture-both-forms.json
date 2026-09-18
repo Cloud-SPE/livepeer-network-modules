@@ -1,0 +1,1 @@
+[ { "name": "smoke", "type": "request", "config": { "transport": "multipart", "parts": [ { "name": "file", "fixture": { "ref": "a/b", "inline_base64": "AAAA", "content_type": "audio/wav" } } ] } } ]

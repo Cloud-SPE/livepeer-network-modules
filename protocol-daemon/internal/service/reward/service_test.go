@@ -350,7 +350,7 @@ func (c *stubCaller) SuggestGasPrice(_ context.Context) (*big.Int, error) {
 	return c.gasPrice, nil
 }
 
-func mustNewSvcWithCaller(t *testing.T, bm BondingManager, sub TxSubmitter, cache PoolHintsCache, orch chain.Address, caller RewardCaller) *Service {
+func mustNewSvcWithCaller(t *testing.T, bm BondingManager, sub TxSubmitter, cache PoolHintsCache, orch chain.Address, caller Caller) *Service {
 	t.Helper()
 	svc, err := New(Config{
 		BondingManager: bm,

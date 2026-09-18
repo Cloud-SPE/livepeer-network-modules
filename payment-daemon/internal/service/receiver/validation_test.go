@@ -27,7 +27,7 @@ func chainStandAtPaths(t *testing.T, dbPath, sockPath string, recipient []byte) 
 	if err != nil {
 		t.Fatalf("store.Open: %v", err)
 	}
-	svc := receiver.New(st, receiver.Config{
+	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient:        recipient,
 		DefaultFaceValue: big.NewInt(1_000_000),
 		DefaultWinProb:   types.MaxWinProb,

@@ -2,9 +2,10 @@
 //
 // The PayeeDaemon runs next to a payee application — a Livepeer
 // orchestrator or any consumer app accepting payment for work. It
-// validates incoming payment blobs, tracks per-(sender, work_id)
-// balances, and (post chain integration) redeems winning tickets
-// on-chain via the TicketBroker.
+// validates incoming payment blobs, funds stable payer-payee wholesale
+// accounts, enforces single-purpose spend authorizations, and redeems winning
+// tickets on-chain via the TicketBroker. Per-(sender, work_id) balances are a
+// legacy ticket-crediting implementation detail and MUST NOT authorize work.
 //
 // Mounted only when the daemon is started with `--mode=receiver`.
 // Calls to it in sender mode return UNIMPLEMENTED.
@@ -34,19 +35,28 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	PayeeDaemon_GetQuote_FullMethodName               = "/livepeer.payments.v1.PayeeDaemon/GetQuote"
-	PayeeDaemon_GetTicketParams_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetTicketParams"
-	PayeeDaemon_ListCapabilities_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/ListCapabilities"
-	PayeeDaemon_OpenSession_FullMethodName            = "/livepeer.payments.v1.PayeeDaemon/OpenSession"
-	PayeeDaemon_ProcessPayment_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
-	PayeeDaemon_DebitBalance_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/DebitBalance"
-	PayeeDaemon_SufficientBalance_FullMethodName      = "/livepeer.payments.v1.PayeeDaemon/SufficientBalance"
-	PayeeDaemon_GetBalance_FullMethodName             = "/livepeer.payments.v1.PayeeDaemon/GetBalance"
-	PayeeDaemon_CloseSession_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/CloseSession"
-	PayeeDaemon_ListPendingRedemptions_FullMethodName = "/livepeer.payments.v1.PayeeDaemon/ListPendingRedemptions"
-	PayeeDaemon_GetRedemptionStatus_FullMethodName    = "/livepeer.payments.v1.PayeeDaemon/GetRedemptionStatus"
-	PayeeDaemon_GetRoundRevenue_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetRoundRevenue"
-	PayeeDaemon_Health_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/Health"
+	PayeeDaemon_GetQuote_FullMethodName                     = "/livepeer.payments.v1.PayeeDaemon/GetQuote"
+	PayeeDaemon_GetTicketParams_FullMethodName              = "/livepeer.payments.v1.PayeeDaemon/GetTicketParams"
+	PayeeDaemon_ListCapabilities_FullMethodName             = "/livepeer.payments.v1.PayeeDaemon/ListCapabilities"
+	PayeeDaemon_OpenSession_FullMethodName                  = "/livepeer.payments.v1.PayeeDaemon/OpenSession"
+	PayeeDaemon_ProcessPayment_FullMethodName               = "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
+	PayeeDaemon_FundWholesaleAccount_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/FundWholesaleAccount"
+	PayeeDaemon_AdmitAuthorization_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/AdmitAuthorization"
+	PayeeDaemon_AdvanceAuthorization_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/AdvanceAuthorization"
+	PayeeDaemon_SettleAuthorization_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/SettleAuthorization"
+	PayeeDaemon_GetWholesaleAccount_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/GetWholesaleAccount"
+	PayeeDaemon_GetSpendAuthorization_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetSpendAuthorization"
+	PayeeDaemon_DebitBalance_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/DebitBalance"
+	PayeeDaemon_SufficientBalance_FullMethodName            = "/livepeer.payments.v1.PayeeDaemon/SufficientBalance"
+	PayeeDaemon_GetBalance_FullMethodName                   = "/livepeer.payments.v1.PayeeDaemon/GetBalance"
+	PayeeDaemon_CloseSession_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/CloseSession"
+	PayeeDaemon_ListPendingRedemptions_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/ListPendingRedemptions"
+	PayeeDaemon_GetRedemptionStatus_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/GetRedemptionStatus"
+	PayeeDaemon_GetRoundRevenue_FullMethodName              = "/livepeer.payments.v1.PayeeDaemon/GetRoundRevenue"
+	PayeeDaemon_FreezeRevenueSource_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/FreezeRevenueSource"
+	PayeeDaemon_GetRevenueSourceStatus_FullMethodName       = "/livepeer.payments.v1.PayeeDaemon/GetRevenueSourceStatus"
+	PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName = "/livepeer.payments.v1.PayeeDaemon/CloseUnexecutedAuthorization"
+	PayeeDaemon_Health_FullMethodName                       = "/livepeer.payments.v1.PayeeDaemon/Health"
 )
 
 // PayeeDaemonClient is the client API for PayeeDaemon service.
@@ -75,25 +85,41 @@ type PayeeDaemonClient interface {
 	// Return the daemon's full configured capability catalog. Drives
 	// the worker's `/capabilities` HTTP response.
 	ListCapabilities(ctx context.Context, in *ListCapabilitiesRequest, opts ...grpc.CallOption) (*ListCapabilitiesResponse, error)
-	// Open a payee-side session and bind authoritative pricing metadata
-	// to `work_id`. The worker later seals the session's sender on the
-	// first successful ProcessPayment.
+	// Legacy ticket-funding primitive used while validating and transferring a
+	// payment into the wholesale account. It is not workload admission.
 	OpenSession(ctx context.Context, in *OpenSessionRequest, opts ...grpc.CallOption) (*OpenSessionResponse, error)
-	// Validate an incoming payment blob, credit the sender's balance by
-	// the payment's expected value, and queue any winning tickets for
-	// redemption. Requires a previously-opened session for `work_id`.
+	// Legacy ticket-funding primitive used internally by account funding.
+	// Calling it never authorizes a workload.
 	ProcessPayment(ctx context.Context, in *ProcessPaymentRequest, opts ...grpc.CallOption) (*ProcessPaymentResponse, error)
+	// Credit a validated ticket batch to the stable payer-payee account without
+	// admitting work. This lets an out-of-path payer replenish aggregate float
+	// independently of the caller or SDK that invokes a live session.
+	FundWholesaleAccount(ctx context.Context, in *FundWholesaleAccountRequest, opts ...grpc.CallOption) (*FundWholesaleAccountResponse, error)
+	// Apply optional account funding and atomically reserve a single-purpose
+	// authorization before backend work starts.
+	AdmitAuthorization(ctx context.Context, in *AdmitAuthorizationRequest, opts ...grpc.CallOption) (*AdmitAuthorizationResponse, error)
+	// Advance cumulative session usage and atomically restore a bounded runway
+	// reservation. Optional payment funds only an aggregate account shortfall.
+	AdvanceAuthorization(ctx context.Context, in *AdvanceAuthorizationRequest, opts ...grpc.CallOption) (*AdvanceAuthorizationResponse, error)
+	// Settle actual delivered units and release the unused reservation.
+	SettleAuthorization(ctx context.Context, in *SettleAuthorizationRequest, opts ...grpc.CallOption) (*SettleAuthorizationResponse, error)
+	GetWholesaleAccount(ctx context.Context, in *GetWholesaleAccountRequest, opts ...grpc.CallOption) (*GetWholesaleAccountResponse, error)
+	GetSpendAuthorization(ctx context.Context, in *GetSpendAuthorizationRequest, opts ...grpc.CallOption) (*GetSpendAuthorizationResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
 	// after the payee has actually done the work. Retries are
 	// idempotent by `(sender, work_id, debit_seq)`. Returns the new
 	// balance.
 	DebitBalance(ctx context.Context, in *DebitBalanceRequest, opts ...grpc.CallOption) (*DebitBalanceResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it.
 	// Check whether a (sender, work_id) balance covers a minimum number
 	// of session-priced work units, without debiting.
 	SufficientBalance(ctx context.Context, in *SufficientBalanceRequest, opts ...grpc.CallOption) (*SufficientBalanceResponse, error)
-	// Get the current balance for a (sender, work_id) pair.
+	// Deprecated legacy accounting RPC. Use GetWholesaleAccount.
 	GetBalance(ctx context.Context, in *GetBalanceRequest, opts ...grpc.CallOption) (*GetBalanceResponse, error)
-	// Close and garbage-collect a work session. Any residual credit is
+	// Deprecated legacy accounting RPC. Workload close settles its
+	// authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
 	// forfeited.
 	CloseSession(ctx context.Context, in *CloseSessionRequest, opts ...grpc.CallOption) (*CloseSessionResponse, error)
 	// Admin / observability: list winning tickets currently queued for
@@ -106,6 +132,11 @@ type PayeeDaemonClient interface {
 	// for a single Livepeer round. Revenue is recognized only for
 	// confirmed on-chain redemptions, not merely queued winners.
 	GetRoundRevenue(ctx context.Context, in *GetRoundRevenueRequest, opts ...grpc.CallOption) (*GetRoundRevenueResponse, error)
+	// Local administrative fence; never exposed directly to external callers.
+	FreezeRevenueSource(ctx context.Context, in *FreezeRevenueSourceRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error)
+	GetRevenueSourceStatus(ctx context.Context, in *GetRevenueSourceStatusRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error)
+	// Broker restart recovery, only for durable evidence of no runner binding.
+	CloseUnexecutedAuthorization(ctx context.Context, in *CloseUnexecutedAuthorizationRequest, opts ...grpc.CallOption) (*CloseUnexecutedAuthorizationResponse, error)
 	// Health returns "ok" if the daemon is ready to accept sessions.
 	// The broker calls this once at startup before binding its paid
 	// listener.
@@ -164,6 +195,66 @@ func (c *payeeDaemonClient) ProcessPayment(ctx context.Context, in *ProcessPayme
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(ProcessPaymentResponse)
 	err := c.cc.Invoke(ctx, PayeeDaemon_ProcessPayment_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) FundWholesaleAccount(ctx context.Context, in *FundWholesaleAccountRequest, opts ...grpc.CallOption) (*FundWholesaleAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FundWholesaleAccountResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_FundWholesaleAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) AdmitAuthorization(ctx context.Context, in *AdmitAuthorizationRequest, opts ...grpc.CallOption) (*AdmitAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdmitAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_AdmitAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) AdvanceAuthorization(ctx context.Context, in *AdvanceAuthorizationRequest, opts ...grpc.CallOption) (*AdvanceAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdvanceAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_AdvanceAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) SettleAuthorization(ctx context.Context, in *SettleAuthorizationRequest, opts ...grpc.CallOption) (*SettleAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(SettleAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_SettleAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) GetWholesaleAccount(ctx context.Context, in *GetWholesaleAccountRequest, opts ...grpc.CallOption) (*GetWholesaleAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetWholesaleAccountResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_GetWholesaleAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) GetSpendAuthorization(ctx context.Context, in *GetSpendAuthorizationRequest, opts ...grpc.CallOption) (*GetSpendAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetSpendAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_GetSpendAuthorization_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -240,6 +331,36 @@ func (c *payeeDaemonClient) GetRoundRevenue(ctx context.Context, in *GetRoundRev
 	return out, nil
 }
 
+func (c *payeeDaemonClient) FreezeRevenueSource(ctx context.Context, in *FreezeRevenueSourceRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevenueSourceStatus)
+	err := c.cc.Invoke(ctx, PayeeDaemon_FreezeRevenueSource_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) GetRevenueSourceStatus(ctx context.Context, in *GetRevenueSourceStatusRequest, opts ...grpc.CallOption) (*RevenueSourceStatus, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RevenueSourceStatus)
+	err := c.cc.Invoke(ctx, PayeeDaemon_GetRevenueSourceStatus_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) CloseUnexecutedAuthorization(ctx context.Context, in *CloseUnexecutedAuthorizationRequest, opts ...grpc.CallOption) (*CloseUnexecutedAuthorizationResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CloseUnexecutedAuthorizationResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *payeeDaemonClient) Health(ctx context.Context, in *HealthRequest, opts ...grpc.CallOption) (*HealthResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(HealthResponse)
@@ -276,25 +397,41 @@ type PayeeDaemonServer interface {
 	// Return the daemon's full configured capability catalog. Drives
 	// the worker's `/capabilities` HTTP response.
 	ListCapabilities(context.Context, *ListCapabilitiesRequest) (*ListCapabilitiesResponse, error)
-	// Open a payee-side session and bind authoritative pricing metadata
-	// to `work_id`. The worker later seals the session's sender on the
-	// first successful ProcessPayment.
+	// Legacy ticket-funding primitive used while validating and transferring a
+	// payment into the wholesale account. It is not workload admission.
 	OpenSession(context.Context, *OpenSessionRequest) (*OpenSessionResponse, error)
-	// Validate an incoming payment blob, credit the sender's balance by
-	// the payment's expected value, and queue any winning tickets for
-	// redemption. Requires a previously-opened session for `work_id`.
+	// Legacy ticket-funding primitive used internally by account funding.
+	// Calling it never authorizes a workload.
 	ProcessPayment(context.Context, *ProcessPaymentRequest) (*ProcessPaymentResponse, error)
+	// Credit a validated ticket batch to the stable payer-payee account without
+	// admitting work. This lets an out-of-path payer replenish aggregate float
+	// independently of the caller or SDK that invokes a live session.
+	FundWholesaleAccount(context.Context, *FundWholesaleAccountRequest) (*FundWholesaleAccountResponse, error)
+	// Apply optional account funding and atomically reserve a single-purpose
+	// authorization before backend work starts.
+	AdmitAuthorization(context.Context, *AdmitAuthorizationRequest) (*AdmitAuthorizationResponse, error)
+	// Advance cumulative session usage and atomically restore a bounded runway
+	// reservation. Optional payment funds only an aggregate account shortfall.
+	AdvanceAuthorization(context.Context, *AdvanceAuthorizationRequest) (*AdvanceAuthorizationResponse, error)
+	// Settle actual delivered units and release the unused reservation.
+	SettleAuthorization(context.Context, *SettleAuthorizationRequest) (*SettleAuthorizationResponse, error)
+	GetWholesaleAccount(context.Context, *GetWholesaleAccountRequest) (*GetWholesaleAccountResponse, error)
+	GetSpendAuthorization(context.Context, *GetSpendAuthorizationRequest) (*GetSpendAuthorizationResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
+	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
 	// after the payee has actually done the work. Retries are
 	// idempotent by `(sender, work_id, debit_seq)`. Returns the new
 	// balance.
 	DebitBalance(context.Context, *DebitBalanceRequest) (*DebitBalanceResponse, error)
+	// Deprecated legacy accounting RPC. Brokers MUST NOT call it.
 	// Check whether a (sender, work_id) balance covers a minimum number
 	// of session-priced work units, without debiting.
 	SufficientBalance(context.Context, *SufficientBalanceRequest) (*SufficientBalanceResponse, error)
-	// Get the current balance for a (sender, work_id) pair.
+	// Deprecated legacy accounting RPC. Use GetWholesaleAccount.
 	GetBalance(context.Context, *GetBalanceRequest) (*GetBalanceResponse, error)
-	// Close and garbage-collect a work session. Any residual credit is
+	// Deprecated legacy accounting RPC. Workload close settles its
+	// authorization. Close and garbage-collect a ticket-funding session. Any residual credit is
 	// forfeited.
 	CloseSession(context.Context, *CloseSessionRequest) (*CloseSessionResponse, error)
 	// Admin / observability: list winning tickets currently queued for
@@ -307,6 +444,11 @@ type PayeeDaemonServer interface {
 	// for a single Livepeer round. Revenue is recognized only for
 	// confirmed on-chain redemptions, not merely queued winners.
 	GetRoundRevenue(context.Context, *GetRoundRevenueRequest) (*GetRoundRevenueResponse, error)
+	// Local administrative fence; never exposed directly to external callers.
+	FreezeRevenueSource(context.Context, *FreezeRevenueSourceRequest) (*RevenueSourceStatus, error)
+	GetRevenueSourceStatus(context.Context, *GetRevenueSourceStatusRequest) (*RevenueSourceStatus, error)
+	// Broker restart recovery, only for durable evidence of no runner binding.
+	CloseUnexecutedAuthorization(context.Context, *CloseUnexecutedAuthorizationRequest) (*CloseUnexecutedAuthorizationResponse, error)
 	// Health returns "ok" if the daemon is ready to accept sessions.
 	// The broker calls this once at startup before binding its paid
 	// listener.
@@ -336,6 +478,24 @@ func (UnimplementedPayeeDaemonServer) OpenSession(context.Context, *OpenSessionR
 func (UnimplementedPayeeDaemonServer) ProcessPayment(context.Context, *ProcessPaymentRequest) (*ProcessPaymentResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ProcessPayment not implemented")
 }
+func (UnimplementedPayeeDaemonServer) FundWholesaleAccount(context.Context, *FundWholesaleAccountRequest) (*FundWholesaleAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method FundWholesaleAccount not implemented")
+}
+func (UnimplementedPayeeDaemonServer) AdmitAuthorization(context.Context, *AdmitAuthorizationRequest) (*AdmitAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdmitAuthorization not implemented")
+}
+func (UnimplementedPayeeDaemonServer) AdvanceAuthorization(context.Context, *AdvanceAuthorizationRequest) (*AdvanceAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdvanceAuthorization not implemented")
+}
+func (UnimplementedPayeeDaemonServer) SettleAuthorization(context.Context, *SettleAuthorizationRequest) (*SettleAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method SettleAuthorization not implemented")
+}
+func (UnimplementedPayeeDaemonServer) GetWholesaleAccount(context.Context, *GetWholesaleAccountRequest) (*GetWholesaleAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWholesaleAccount not implemented")
+}
+func (UnimplementedPayeeDaemonServer) GetSpendAuthorization(context.Context, *GetSpendAuthorizationRequest) (*GetSpendAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetSpendAuthorization not implemented")
+}
 func (UnimplementedPayeeDaemonServer) DebitBalance(context.Context, *DebitBalanceRequest) (*DebitBalanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DebitBalance not implemented")
 }
@@ -356,6 +516,15 @@ func (UnimplementedPayeeDaemonServer) GetRedemptionStatus(context.Context, *GetR
 }
 func (UnimplementedPayeeDaemonServer) GetRoundRevenue(context.Context, *GetRoundRevenueRequest) (*GetRoundRevenueResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetRoundRevenue not implemented")
+}
+func (UnimplementedPayeeDaemonServer) FreezeRevenueSource(context.Context, *FreezeRevenueSourceRequest) (*RevenueSourceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method FreezeRevenueSource not implemented")
+}
+func (UnimplementedPayeeDaemonServer) GetRevenueSourceStatus(context.Context, *GetRevenueSourceStatusRequest) (*RevenueSourceStatus, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetRevenueSourceStatus not implemented")
+}
+func (UnimplementedPayeeDaemonServer) CloseUnexecutedAuthorization(context.Context, *CloseUnexecutedAuthorizationRequest) (*CloseUnexecutedAuthorizationResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CloseUnexecutedAuthorization not implemented")
 }
 func (UnimplementedPayeeDaemonServer) Health(context.Context, *HealthRequest) (*HealthResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method Health not implemented")
@@ -467,6 +636,114 @@ func _PayeeDaemon_ProcessPayment_Handler(srv interface{}, ctx context.Context, d
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PayeeDaemonServer).ProcessPayment(ctx, req.(*ProcessPaymentRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_FundWholesaleAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FundWholesaleAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).FundWholesaleAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_FundWholesaleAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).FundWholesaleAccount(ctx, req.(*FundWholesaleAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_AdmitAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdmitAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).AdmitAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_AdmitAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).AdmitAuthorization(ctx, req.(*AdmitAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_AdvanceAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdvanceAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).AdvanceAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_AdvanceAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).AdvanceAuthorization(ctx, req.(*AdvanceAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_SettleAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SettleAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).SettleAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_SettleAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).SettleAuthorization(ctx, req.(*SettleAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_GetWholesaleAccount_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWholesaleAccountRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).GetWholesaleAccount(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_GetWholesaleAccount_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).GetWholesaleAccount(ctx, req.(*GetWholesaleAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_GetSpendAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetSpendAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).GetSpendAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_GetSpendAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).GetSpendAuthorization(ctx, req.(*GetSpendAuthorizationRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -597,6 +874,60 @@ func _PayeeDaemon_GetRoundRevenue_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PayeeDaemon_FreezeRevenueSource_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(FreezeRevenueSourceRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).FreezeRevenueSource(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_FreezeRevenueSource_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).FreezeRevenueSource(ctx, req.(*FreezeRevenueSourceRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_GetRevenueSourceStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetRevenueSourceStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).GetRevenueSourceStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_GetRevenueSourceStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).GetRevenueSourceStatus(ctx, req.(*GetRevenueSourceStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_CloseUnexecutedAuthorization_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CloseUnexecutedAuthorizationRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).CloseUnexecutedAuthorization(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_CloseUnexecutedAuthorization_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).CloseUnexecutedAuthorization(ctx, req.(*CloseUnexecutedAuthorizationRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PayeeDaemon_Health_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(HealthRequest)
 	if err := dec(in); err != nil {
@@ -643,6 +974,30 @@ var PayeeDaemon_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _PayeeDaemon_ProcessPayment_Handler,
 		},
 		{
+			MethodName: "FundWholesaleAccount",
+			Handler:    _PayeeDaemon_FundWholesaleAccount_Handler,
+		},
+		{
+			MethodName: "AdmitAuthorization",
+			Handler:    _PayeeDaemon_AdmitAuthorization_Handler,
+		},
+		{
+			MethodName: "AdvanceAuthorization",
+			Handler:    _PayeeDaemon_AdvanceAuthorization_Handler,
+		},
+		{
+			MethodName: "SettleAuthorization",
+			Handler:    _PayeeDaemon_SettleAuthorization_Handler,
+		},
+		{
+			MethodName: "GetWholesaleAccount",
+			Handler:    _PayeeDaemon_GetWholesaleAccount_Handler,
+		},
+		{
+			MethodName: "GetSpendAuthorization",
+			Handler:    _PayeeDaemon_GetSpendAuthorization_Handler,
+		},
+		{
 			MethodName: "DebitBalance",
 			Handler:    _PayeeDaemon_DebitBalance_Handler,
 		},
@@ -669,6 +1024,18 @@ var PayeeDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRoundRevenue",
 			Handler:    _PayeeDaemon_GetRoundRevenue_Handler,
+		},
+		{
+			MethodName: "FreezeRevenueSource",
+			Handler:    _PayeeDaemon_FreezeRevenueSource_Handler,
+		},
+		{
+			MethodName: "GetRevenueSourceStatus",
+			Handler:    _PayeeDaemon_GetRevenueSourceStatus_Handler,
+		},
+		{
+			MethodName: "CloseUnexecutedAuthorization",
+			Handler:    _PayeeDaemon_CloseUnexecutedAuthorization_Handler,
 		},
 		{
 			MethodName: "Health",

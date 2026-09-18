@@ -78,4 +78,4 @@ copying markup and CSS into each consumer app.
 
 ## Reference
 
-- [UI design system](/home/mazup/git-repos/livepeer-cloud-spe/livepeer-network-modules/docs/design-docs/ui-design-system.md)
+- [UI design system](../../../docs/design-docs/ui-design-system.md)

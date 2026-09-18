@@ -60,6 +60,26 @@ func validate(cfg *Config) error {
 	if cfg.PoolController.BearerTokenRef != "" && !strings.HasPrefix(cfg.PoolController.BearerTokenRef, "env://") {
 		return fmt.Errorf("pool_controller.bearer_token_ref must use env://")
 	}
+	if cfg.PoolController.PoolID != "" || cfg.PoolController.TokenFile != "" || cfg.PoolController.CAFile != "" {
+		if cfg.PoolController.PoolID == "" || cfg.PoolController.TokenFile == "" || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+			return fmt.Errorf("regional pool_controller requires pool_id, token_file and an HTTPS origin")
+		}
+		if cfg.PoolController.BearerTokenRef != "" {
+			return fmt.Errorf("scoped token_file cannot be combined with legacy bearer credentials")
+		}
+	}
+	seenSources := map[string]bool{}
+	seenBrokers := map[string]bool{}
+	for _, source := range cfg.RevenueSources {
+		if err := source.Validate(); err != nil {
+			return err
+		}
+		if source.PoolID != cfg.PoolController.PoolID || source.TokenFile == "" || seenSources[source.SourceID] || seenBrokers[source.BrokerID] {
+			return fmt.Errorf("regional source requires same pool, credentials and unique receiver/broker identity")
+		}
+		seenSources[source.SourceID] = true
+		seenBrokers[source.BrokerID] = true
+	}
 	if cfg.PoolController.TimeoutMS < 0 {
 		return fmt.Errorf("pool_controller.timeout_ms must be >= 0")
 	}

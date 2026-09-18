@@ -1,0 +1,19 @@
+{
+  "contract_version": "1.0",
+  "credential": { "kind": "bearer", "token": "lpc_x" },
+  "host_id": "h",
+  "agent_version": "a/1",
+  "hardware": [],
+  "capabilities": [
+    {
+      "capability_id": "c",
+      "protocol": "paid-job/v1",
+      "transports": ["unary"],
+      "work_unit": { "name": "tokens", "extractor": { "type": "openai-usage" } },
+      "paths": { "invoke": "/v1/x" },
+      "readiness": { "type": "command-exit-0", "config": { "argv": ["true"] } },
+      "identity": {},
+      "schema_versions": { "paid-job/v1": "1.0.0" }
+    }
+  ]
+}

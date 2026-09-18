@@ -1,15 +1,13 @@
-# Product specs
+# Product specifications
 
-Specs in this directory describe **the contract this daemon offers to consumers**. They are stable: changing one is a breaking change.
+These documents describe the current consumer-facing implementation and its
+limits. The proto package name is not a substitute for checking the coordinated
+modules release, especially across the removed publisher/old-manifest migration.
 
-## Index
+- [gRPC surface](grpc-surface.md): methods, selected-route fields, policy and diagnostics.
+- [Manifest contract](manifest-contract.md): signed format, verification and outstanding protocol checks.
+- [Legacy compatibility](legacy-compat.md): endpoint-only fallback and CSV behavior.
 
-- [grpc-surface.md](grpc-surface.md) — gRPC RPC list, request/response shapes, error codes, stability rules
-- [manifest-contract.md](manifest-contract.md) — what an operator publishes; what a consumer can rely on
-- [legacy-compat.md](legacy-compat.md) — guarantees for old `go-livepeer` clients
-
-## Convention
-
-- A product-spec begins with a stability label (`v1-stable`, `experimental`, `deprecated-since-vX`).
-- Every observable behavior is documented as either guaranteed-forever or experimental.
-- Anything not documented here is **not** part of the contract.
+Observable contract changes require code, tests and documentation in the same
+change. Protocol requirements may be stricter than current enforcement; those
+gaps are called out explicitly and tracked in beads.

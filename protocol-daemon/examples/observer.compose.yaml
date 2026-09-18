@@ -1,0 +1,18 @@
+services:
+  protocol-observer:
+    image: ${PROTOCOL_DAEMON_IMAGE:?set an explicit tested image reference}
+    command:
+      - --mode=read-only
+      - --chain-rpc-urls=${CHAIN_RPC_URLS:?set Arbitrum One RPC URLs}
+      - --socket=/var/run/livepeer/protocol.sock
+      - --store-path=/var/lib/livepeer/observer.db
+    restart: unless-stopped
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    volumes:
+      - observer-data:/var/lib/livepeer
+      - observer-socket:/var/run/livepeer
+volumes:
+  observer-data:
+  observer-socket:

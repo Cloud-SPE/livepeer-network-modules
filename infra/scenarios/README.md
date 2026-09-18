@@ -16,6 +16,9 @@ Operator-facing deployment examples, organized by audience.
   separate secure-orch/protocol host.
 - **[`pool-node/`](./pool-node/)** — Pool control-plane-only stack for
   controller/reconciler/executor without the full broker/coordinator surface.
+- **[`shared-resource-admission/`](./shared-resource-admission/)** — reproducible
+  placement, inode-lifecycle, broker-accounting, certification, and consumer
+  corroboration evidence for generic host-shared admission domains.
 - **[`archive/`](./archive/)** — earlier multi-module scenarios preserved
   for reference. Not maintained against the current onboarding flow; see
   [`archive/README.md`](./archive/README.md) for context.

@@ -1,15 +1,17 @@
 # Frontend DOM and CSS invariants
 
 **Status:** accepted  
-**Last updated:** 2026-05-09  
+**Last updated:** 2026-09-17
 **Related:** [`./ui-design-system.md`](./ui-design-system.md), [`../references/modern-css-2026.md`](../references/modern-css-2026.md), [`../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md`](../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md)
 
 ## Purpose
 
 This repo ships browser UIs that must all obey the same frontend
-authoring contract. Today that contract applies to shared UI packages
-such as `customer-portal/frontend/shared` and to any future browser UI
-that lands in this repo.
+authoring contract. Today that contract applies to the
+`customer-portal/frontend` workspaces (`shared`, `portal`, `admin`), the
+`member-portal` static UI, the Go-template operator UIs
+(`secure-orch-console`, `orch-coordinator`, `pool-controller`), and to any
+future browser UI that lands in this repo.
 
 The visual language still comes from [`ui-design-system.md`](./ui-design-system.md).
 This document defines the DOM, HTML, and CSS implementation rules that every UI must
@@ -112,6 +114,16 @@ The repo-wide steady state is:
 - zero `.shadowRoot` usage in frontend tests
 - semantic landmarks and metadata patterns across all UIs
 
+The automated check is
+[`scripts/check-frontend-invariants.mjs`](../../scripts/check-frontend-invariants.mjs)
+(`pnpm check:frontend-invariants`). It scans `customer-portal/frontend` and
+`member-portal/internal/portal/web` for the pattern rules above (inline
+`style=`, `static styles = css`, `.shadowRoot`, `createRenderRoot(`,
+`LitElement`, and the four semantic checks) and fails on any count above the
+baseline in `scripts/frontend-invariants-allowlist.json`, which is empty. The
+Go-template operator UIs are not scanned by the script; review enforces the
+contract there.
+
 Temporary migration allowlists were permitted only during
 [`0023-strict-frontend-dom-and-css-invariants.md`](../exec-plans/completed/0023-strict-frontend-dom-and-css-invariants.md).
 That migration is now complete and the steady-state bar applies repo-wide.
@@ -127,5 +139,5 @@ If a change introduces:
 - non-semantic layout markup where semantic HTML exists
 - new CSS-in-JS patterns
 
-the change is incorrect unless it is part of the active migration plan and explicitly
-removes more debt than it adds.
+the change is incorrect. (The plan-0023 migration exception no longer applies;
+that plan is completed and the allowlist is empty.)

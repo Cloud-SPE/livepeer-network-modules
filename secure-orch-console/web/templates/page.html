@@ -427,7 +427,7 @@
 {{end}}
 
 {{if .Candidate}}
-{{if or (not .Candidate.Diff.Header.SeqMonotonic) (not .Candidate.Diff.Header.EthAddressStable) .Candidate.Diff.Removed .Candidate.Diff.Changed}}
+{{if or (not .Candidate.Diff.Header.SeqMonotonic) (not .Candidate.Diff.Header.EthAddressStable) (not .Candidate.Diff.Header.SettlementKeysStable) .Candidate.Diff.Removed .Candidate.Diff.Changed}}
 <section>
   <h2>Review attention points</h2>
   <div class="alert-list">
@@ -441,6 +441,12 @@
     <article class="alert-item alert-warn">
       <strong>orch identity changed</strong>
       <span>Current candidate advertises a different <code>orch.eth_address</code> than the last signed manifest. <a href="#header-orch-eth-address" class="alert-link">Jump to header check</a></span>
+    </article>
+    {{end}}
+    {{if not .Candidate.Diff.Header.SettlementKeysStable}}
+    <article class="alert-item alert-warn">
+      <strong>settlement delegation changed</strong>
+      <span>Signing authorizes the listed <code>settlement_keys</code> to sign settlements on the orch's behalf. Confirm each key against the broker that holds it. <a href="#header-settlement-keys" class="alert-link">Jump to header check</a></span>
     </article>
     {{end}}
     {{range .Candidate.Diff.Removed}}
@@ -606,6 +612,24 @@
       {{if $d.Header.BeforeExpiresAt}}<code>{{$d.Header.BeforeExpiresAt}}</code> &rarr; {{end}}
       <code>{{$d.Header.AfterExpiresAt}}</code>
     </div>
+    <div id="header-settlement-keys">
+      <span class="label">settlement_keys</span>
+      {{if not $d.Header.SettlementKeysStable}}<strong class="warn">delegation changed - {{len $d.Header.BeforeSettlementKeys}} &rarr; {{len $d.Header.AfterSettlementKeys}} keys</strong>{{end}}
+      {{if $d.Header.AfterSettlementKeys}}
+      <ul class="tuples">
+        {{range $d.Header.AfterSettlementKeys}}
+        <li class="{{if not $d.Header.SettlementKeysStable}}chg{{end}}"><code>{{index . "public_key"}}</code> <span class="muted">{{index . "not_before"}} &rarr; {{index . "expires_at"}}</span></li>
+        {{end}}
+      </ul>
+      {{if not $d.Header.SettlementKeysStable}}
+      <p class="muted">Verify each key against the broker that holds it, over a path the coordinator does not control. From your workstation, for every broker in this candidate:</p>
+      <ul class="tuples">
+        {{range $d.Header.WorkerURLs}}<li><code>curl -s {{.}}/registry/settlement-keys | jq '.keys[].statement.public_key'</code></li>{{end}}
+      </ul>
+      <p class="muted">A key listed above that no broker announces is either pinned in coordinator-config on purpose or should not be here.</p>
+      {{end}}
+      {{else}}<code>none</code>{{end}}
+    </div>
   </div>
 
   <p class="summary">
@@ -660,6 +684,21 @@
   {{end}}
 </section>
 
+{{if .AutoSignPaused}}
+<section class="warn">
+  <h2>Auto-signing is paused</h2>
+  <p>
+    The agent signed more candidates in an hour than the policy allows, so it
+    latched rather than throttling — a burst usually means something upstream
+    is republishing, not that the bound is too low. Candidates still reach this
+    queue; nothing signs itself until you clear this.
+  </p>
+  <form action="/agent/rate-limit/clear" method="post">
+    <button type="submit">Clear the pause</button>
+  </form>
+</section>
+{{end}}
+
 <section class="confirm">
   <h2>Tap to sign</h2>
   <p>
@@ -669,6 +708,16 @@
   <form action="/sign" method="post">
     <label for="confirm_last4">Last 4 hex chars:</label>
     <input type="text" id="confirm_last4" name="confirm_last4" maxlength="4" pattern="[0-9a-fA-F]{4}" autocomplete="off" required>
+    {{if and $d (not $d.Header.SpecVersionStable)}}
+    <p class="warn">
+      This candidate changes <code>spec_version</code> from
+      <code>{{$d.Header.BeforeSpecVersion}}</code> to
+      <code>{{$d.Header.AfterSpecVersion}}</code>. That changes the contract
+      every consumer reads this manifest under, so confirm it separately.
+    </p>
+    <label for="confirm_spec_version">Type the new spec_version:</label>
+    <input type="text" id="confirm_spec_version" name="confirm_spec_version" autocomplete="off" required>
+    {{end}}
     <button type="submit">Sign &amp; download</button>
   </form>
   <form action="/discard" method="post" class="discard">

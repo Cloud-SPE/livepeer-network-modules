@@ -1,0 +1,34 @@
+[
+  {
+    "name": "ready",
+    "type": "readiness",
+    "required": true,
+    "config": {
+      "attempts": 3,
+      "interval_ms": 2000
+    }
+  },
+  {
+    "name": "smoke",
+    "type": "request",
+    "required": true,
+    "config": {
+      "body": {
+        "input": "ping",
+        "model": "{{identity.openai.model}}",
+        "voice": "{{offer.extra.audio.voices.default}}"
+      },
+      "expect_content_type": "audio/",
+      "max_response_bytes": 4194304,
+      "transport": "unary"
+    }
+  },
+  {
+    "name": "usage",
+    "type": "usage",
+    "required": true,
+    "config": {
+      "min_units": 1
+    }
+  }
+]

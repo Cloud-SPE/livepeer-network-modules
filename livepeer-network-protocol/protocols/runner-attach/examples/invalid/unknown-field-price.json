@@ -1,0 +1,9 @@
+{
+  "contract_version": "1.0",
+  "credential": { "kind": "bearer", "token": "lpc_x" },
+  "host_id": "h",
+  "agent_version": "a/1",
+  "hardware": [],
+  "price": { "amount_wei": "1" },
+  "capabilities": []
+}

@@ -35,9 +35,6 @@ func TestCounter(t *testing.T) {
 	c.ObserveChainRead(time.Millisecond)
 	c.SetChainLastSuccess(time.Now())
 	c.SetManifestFetcherLastSuccess(time.Now())
-	c.IncPublisherBuild()
-	c.IncPublisherSign("ok")
-	c.IncPublisherProbe("ok")
 	c.SetUptimeSeconds(10)
 	c.SetBuildInfo("v0.0.0", "test", "go1.25")
 

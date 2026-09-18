@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/secure-orch-console/internal/policy"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -149,8 +150,7 @@ func policyJSON(renewal, benign bool, stabilitySeconds, maxPerHour int) string {
     "worker_url_domain_allowlist": ["workers.example-orch.net"]
   },
   "rate_limit": {"max_auto_signs_per_hour": %d, "on_breach": "pause"},
-  "stability_window_seconds": %d,
-  "renewal_threshold_fraction": 0.3333
+  "stability_window_seconds": %d
 }`, renewal, benign, maxPerHour, stabilitySeconds)
 }
 
@@ -220,7 +220,8 @@ func testManifest(t *testing.T, seq uint64, issued, expires time.Time, price str
 	caps := []any{map[string]any{
 		"capability_id":      "openai:chat-completions",
 		"offering_id":        "vllm-h100",
-		"interaction_mode":   "http-stream@v1",
+		"protocol":           "paid-job/v1",
+		"job":                map[string]any{"transports": []any{"unary", "stream"}},
 		"work_unit":          map[string]any{"name": "tokens"},
 		"price_per_unit_wei": price,
 		"worker_url":         "https://a.workers.example-orch.net/",
@@ -229,7 +230,8 @@ func testManifest(t *testing.T, seq uint64, issued, expires time.Time, price str
 		caps = append(caps, map[string]any{
 			"capability_id":      "video:transcode",
 			"offering_id":        "default",
-			"interaction_mode":   "rtmp@v0",
+			"protocol":           "paid-session/v1",
+			"session":            map[string]any{"descriptor_schema": "rtmp-hls/v1", "metering": "runner-reported"},
 			"work_unit":          map[string]any{"name": "minutes"},
 			"price_per_unit_wei": "5",
 			"worker_url":         "https://b.example/",
@@ -599,5 +601,73 @@ func TestClient_RejectsUnexpectedTarMember(t *testing.T) {
 	_ = gw.Close()
 	if _, err := parseCandidateTarball(buf.Bytes()); err == nil {
 		t.Fatal("unexpected tar member must be rejected")
+	}
+}
+
+// The renewal threshold comes from the candidate the coordinator built,
+// not from a console-side copy an operator had to keep in sync
+// (plan 0043 §3.7).
+func TestRenewalThresholdComesFromCandidateMetadata(t *testing.T) {
+	ttl := 24 * time.Hour
+	cases := []struct {
+		name     string
+		metadata string
+		want     time.Duration
+	}{
+		{"published threshold wins", `{"renewal_threshold_seconds":5400}`, 90 * time.Minute},
+		{"absent falls back to the coordinator's own default", `{"manifest_ttl_seconds":86400}`, ttl / 3},
+		{"zero is absent", `{"renewal_threshold_seconds":0}`, ttl / 3},
+		{"malformed metadata is not fatal", `{ not json`, ttl / 3},
+		{"no metadata at all", "", ttl / 3},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cand := &Candidate{}
+			if tc.metadata != "" {
+				cand.MetadataBytes = []byte(tc.metadata)
+			}
+			if got := renewalThresholdFor(cand, ttl); got != tc.want {
+				t.Fatalf("threshold = %s, want %s", got, tc.want)
+			}
+		})
+	}
+	// A nil candidate must not panic on the expiry-warning path.
+	if got := renewalThresholdFor(nil, ttl); got != ttl/3 {
+		t.Fatalf("nil candidate threshold = %s", got)
+	}
+}
+
+// Clearing is an operator gesture, and it is audited with the actor.
+func TestClearRateLimit(t *testing.T) {
+	log, err := audit.Open(filepath.Join(t.TempDir(), "audit.jsonl"), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{rl: policy.NewRateLimiter(1), log: log, logger: slog.Default()}
+	now := time.Now()
+	if !a.rl.Allow(now) {
+		t.Fatal("first sign should be allowed")
+	}
+	a.rl.RecordSign(now)
+	if a.rl.Allow(now) {
+		t.Fatal("second sign should breach the bound")
+	}
+	if !a.RateLimitPaused() {
+		t.Fatal("limiter did not latch")
+	}
+	if !a.ClearRateLimit("operator@example") {
+		t.Fatal("ClearRateLimit reported nothing to clear")
+	}
+	if a.RateLimitPaused() {
+		t.Fatal("still paused after clear")
+	}
+	// The window is forgotten, so the next breach latches on fresh
+	// evidence rather than on signatures already accounted for.
+	if !a.rl.Allow(now) {
+		t.Fatal("cleared limiter still refuses")
+	}
+	// Clearing an unlatched limiter is a no-op, not an error.
+	if a.ClearRateLimit("operator@example") {
+		t.Fatal("clearing an unlatched limiter reported a change")
 	}
 }

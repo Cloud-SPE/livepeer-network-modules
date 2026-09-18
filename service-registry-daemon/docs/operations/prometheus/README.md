@@ -1,6 +1,6 @@
 # Prometheus alert rules
 
-Production-ready alert rules pairing the [metrics catalog](../../design-docs/observability.md) with the [Grafana dashboard](../grafana/). Three severity tiers, twelve alerts.
+Production-ready alert rules pairing the [metrics catalog](../../design-docs/observability.md) with the [Grafana dashboard](../grafana/). Three severity tiers, fourteen alerts.
 
 ## Files
 
@@ -64,7 +64,7 @@ The `severity` label rides on every alert; route on it in your Alertmanager `rou
 promtool check rules docs/operations/prometheus/alerts.yaml
 ```
 
-The CI for this repo runs the same check (queued under `tech-debt-tracker.md` `prometheus-rules-ci-check`).
+Run this check before publishing alert changes; there is no checked-in CI workflow for it.
 
 ### Kubernetes (kube-prometheus / Prometheus Operator)
 
@@ -128,3 +128,17 @@ route:
 - Prometheus 2.x (LTS or latest).
 - Alertmanager 0.27+ for the `matchers` syntax in the README's routing example. Older Alertmanager uses `match:` / `match_re:`.
 - All PromQL is standard; no recording rules required.
+
+## Runtime interpretation (2026-09-14)
+
+Chain and manifest last-success timestamps can age while an instance is idle.
+Overlay-only constructs no chain provider. Correlate age panels with failed
+attempts; the shipped alerts match those attempts per job and instance.
+Overlay loading happens once at startup and an invalid file prevents startup;
+there is no previous overlay retained by a hot-reload loop. Some metrics reserve
+labels for operations not implemented by this daemon; see the
+[metrics catalog](../../design-docs/observability.md).
+
+Run `promtool test rules alerts.test.yaml` in this directory to check that an
+idle overlay instance does not page and a healthy instance cannot mask a failed
+instance's chain reads.

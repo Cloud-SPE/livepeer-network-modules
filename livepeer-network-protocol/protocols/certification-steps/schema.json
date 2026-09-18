@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://livepeer-network-protocol.example/protocols/certification-steps/schema.json",
+  "title": "Certification step list",
+  "description": "The `certification[]` array an offer or pool template carries (protocols/certification-steps.md). Shape only; which transports a runner declared, which fixtures a broker ships, and substitution-token resolution are checked by the broker at load or run time.",
+  "type": "array",
+  "maxItems": 32,
+  "items": { "$ref": "#/$defs/step" },
+  "$defs": {
+    "name": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$" },
+    "relative_path": { "type": "string", "minLength": 1, "maxLength": 512, "pattern": "^/(?!.*(\\.\\.|\\?|#|://)).*$" },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "ref": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-z0-9-]+/[A-Za-z0-9._-]+$" },
+        "inline_base64": { "type": "string", "minLength": 1, "maxLength": 349528 },
+        "content_type": { "type": "string", "minLength": 1, "maxLength": 128 }
+      },
+      "oneOf": [
+        { "required": ["ref"], "not": { "required": ["inline_base64"] } },
+        { "required": ["inline_base64", "content_type"], "not": { "required": ["ref"] } }
+      ]
+    },
+    "assertion": {
+      "oneOf": [
+        { "type": "string", "minLength": 1, "maxLength": 512, "description": "JSONPath that must exist and be non-null." },
+        {
+          "type": "object",
+          "required": ["path"],
+          "additionalProperties": false,
+          "properties": {
+            "path": { "type": "string", "minLength": 1, "maxLength": 512 },
+            "equals": {},
+            "matches": { "type": "string", "maxLength": 512 },
+            "min": { "type": "number" }
+          }
+        }
+      ]
+    },
+    "headers": {
+      "type": "object",
+      "maxProperties": 16,
+      "propertyNames": { "pattern": "^(?![Ll]ivepeer-)[A-Za-z0-9-]+$" },
+      "additionalProperties": { "type": "string", "maxLength": 1024 }
+    },
+    "request_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "transport": { "enum": ["unary", "stream", "multipart"] },
+        "path": { "$ref": "#/$defs/relative_path" },
+        "method": { "enum": ["GET", "POST", "PUT"] },
+        "headers": { "$ref": "#/$defs/headers" },
+        "body": {},
+        "parts": {
+          "type": "array", "minItems": 1, "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1, "maxLength": 64 },
+              "value": { "type": "string", "maxLength": 65536 },
+              "fixture": { "$ref": "#/$defs/fixture" },
+              "filename": { "type": "string", "maxLength": 128 },
+              "content_type": { "type": "string", "maxLength": 128 }
+            },
+            "oneOf": [
+              { "required": ["value"], "not": { "required": ["fixture"] } },
+              { "required": ["fixture"], "not": { "required": ["value"] } }
+            ]
+          }
+        },
+        "expect_status": {
+          "oneOf": [
+            { "type": "integer", "minimum": 100, "maximum": 599 },
+            { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 100, "maximum": 599 } }
+          ]
+        },
+        "expect_content_type": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "assert": { "type": "array", "maxItems": 32, "items": { "$ref": "#/$defs/assertion" } },
+        "max_response_bytes": { "type": "integer", "minimum": 1, "maximum": 67108864 },
+        "session_params": { "type": "object" },
+        "expect_descriptor_schema": { "type": "string", "pattern": "^[a-z][a-z0-9-]*/v[0-9]+$" },
+        "hold_ms": { "type": "integer", "minimum": 0, "maximum": 300000 },
+        "expect_status_after_terminate": { "type": "string", "minLength": 1, "maxLength": 64 }
+      },
+      "allOf": [
+        { "if": { "properties": { "transport": { "const": "multipart" } }, "required": ["transport"] },
+          "then": { "not": { "required": ["body"] } } },
+        { "if": { "required": ["parts"] },
+          "then": { "properties": { "transport": { "const": "multipart" } }, "required": ["transport"], "not": { "required": ["body"] } } },
+        { "if": { "required": ["session_params"] },
+          "then": { "not": { "anyOf": [ { "required": ["transport"] }, { "required": ["body"] }, { "required": ["parts"] } ] } } }
+      ]
+    },
+    "source": {
+      "oneOf": [
+        { "const": "previous_request" },
+        { "$ref": "#/$defs/request_config" }
+      ]
+    },
+    "step": {
+      "type": "object",
+      "required": ["name", "type"],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "$ref": "#/$defs/name" },
+        "type": { "enum": ["readiness", "request", "usage", "latency"] },
+        "required": { "type": "boolean", "default": true },
+        "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 600000 },
+        "config": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "type": { "const": "readiness" } } },
+          "then": { "properties": { "config": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "attempts": { "type": "integer", "minimum": 1, "maximum": 20 },
+              "interval_ms": { "type": "integer", "minimum": 100, "maximum": 60000 },
+              "consecutive": { "type": "integer", "minimum": 1, "maximum": 10 }
+            } } } } },
+        { "if": { "properties": { "type": { "const": "request" } } },
+          "then": { "properties": { "config": { "$ref": "#/$defs/request_config" } } } },
+        { "if": { "properties": { "type": { "const": "usage" } } },
+          "then": { "properties": { "config": {
+            "type": "object", "additionalProperties": false,
+            "properties": {
+              "source": { "$ref": "#/$defs/source" },
+              "min_units": { "type": "integer", "minimum": 1 },
+              "window_ms": { "type": "integer", "minimum": 100, "maximum": 300000 }
+            } } } } },
+        { "if": { "properties": { "type": { "const": "latency" } } },
+          "then": { "properties": { "config": {
+            "type": "object", "additionalProperties": false,
+            "anyOf": [ { "required": ["p50_max_ms"] }, { "required": ["p95_max_ms"] } ],
+            "properties": {
+              "request": { "$ref": "#/$defs/source" },
+              "samples": { "type": "integer", "minimum": 1, "maximum": 20 },
+              "warmup": { "type": "integer", "minimum": 0, "maximum": 10 },
+              "concurrency": { "type": "integer", "minimum": 1, "maximum": 4 },
+              "p50_max_ms": { "type": "integer", "minimum": 1 },
+              "p95_max_ms": { "type": "integer", "minimum": 1 },
+              "measure": { "enum": ["total", "first_byte"] }
+            } } }, "required": ["config"] } }
+      ]
+    }
+  }
+}

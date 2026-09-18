@@ -1,101 +1,89 @@
 ---
-title: ServiceURI resolver modes
-status: accepted
-last-reviewed: 2026-05-01
+title: Discovery sources and resolver modes
+status: verified
+last-reviewed: 2026-09-14
 ---
 
-# ServiceURI resolver modes
+# Discovery sources and resolver modes
 
-The on-chain `serviceURI` is a single string per registry contract. Resolver deployments read the primary `ServiceRegistry` contract from Controller by default and may optionally override it, plus they may carry an AI registry fallback; the resolver queries the primary first, then the AI registry when the primary has no pointer for the address. The string returned by the first match is interpreted per-resolve. The primary production path is a fully qualified manifest URL; compatibility code paths remain for already-published CSV values, plus a chainless static-overlay mode when the chain has no entry.
+Source selection happens before wire-format detection. An overlay
+`manifest_url` overrides the chain pointer for that address. In overlay-only
+mode, YAML supplies the enabled candidate list and no chain provider is built.
+In chain mode, addresses are seeded from the active pool on round events and
+may also be resolved explicitly by callers.
 
-## Mode A — well-known manifest (default for new orchestrators)
+## Signed manifest URLs
 
-`serviceURI` is a full manifest URL such as `https://orch.example.com/.well-known/livepeer-registry.json` or `https://orch.example.com/.well-known/livepeer-ai-registry.json`.
+The resolver fetches the configured URL first. If it does not contain
+`/.well-known/`, it also tries the same origin's
+`/.well-known/livepeer-registry.json` and
+`/.well-known/livepeer-ai-registry.json`, in that order, until a valid signed
+manifest is found. This supports both full document pointers and older base
+URLs. A malformed candidate does not become a trusted manifest; validation
+errors are preserved if later candidates are merely unreachable.
 
-Resolver behavior:
+Envelope decoding and signature recovery are identical for overlay and chain
+sources. Successful results use domain mode `well-known`, and manifest nodes
+use source `manifest`, even when the URL came from YAML. No unsigned option
+allows an unsigned coordinator envelope. See [manifest contract](../product-specs/manifest-contract.md).
 
-1. Fetch `serviceURI` verbatim (HTTP GET, size-capped, timeout-capped).
-2. JSON-decode and validate per [manifest-schema.md](manifest-schema.md).
-3. Verify signature per [signature-scheme.md](signature-scheme.md).
-4. Cache and return the parsed `[]Node`.
+## Chain lookup and detection
 
-If the manifest fetch fails (404, timeout, parse error, signature mismatch):
-- The resolver does NOT silently fall back to legacy. It records the failure in the audit log and returns a `manifest_unavailable` error UNLESS the caller explicitly passes `allow_legacy_fallback=true` in the gRPC request.
-- This is intentional: a misconfigured operator who shipped a broken manifest must see it fail, not silently degrade.
+When `--ai-service-registry-address` is nonempty, that contract is the sole
+pointer source. Its default is the Arbitrum AI registry. Set the flag to an
+empty string to use primary `ServiceRegistry`, whose address comes from
+Controller unless overridden. There is no fallback between the two contracts.
+All configured production discovery RPC endpoints must match `--chain-id`
+at startup. A provider error is not the same as not-found.
 
-## Mode B — CSV-fallback (read-only, accommodating)
+`internal/service/resolver/mode.go` trims the pointer and counts commas:
 
-If the on-chain `serviceURI` happens to be a comma-delimited string of the form `<url>,<version>,<base64_json>` (the format from the rejected on-chain CSV proposal — see [csv-proposal-review.md](../references/csv-proposal-review.md)), the resolver decodes it best-effort and produces `[]Node`.
+- Zero commas: accepted URL → signed-manifest mode.
+- Exactly two commas: accepted first URL, numeric nonnegative middle segment,
+  and nonempty final segment → CSV mode.
+- Anything else: `unknown_mode`.
 
-Resolver behavior:
+The URL helper accepts HTTPS and a localhost/127.0.0.1-prefixed HTTP host.
+Overlay `manifest_url` is stricter: absolute HTTPS with no userinfo or fragment.
+Use HTTPS outside test fixtures. The shared fetcher's insecure-redirect switch
+is enabled only in dev; it is not a complete source URL validation boundary.
 
-1. `strings.SplitN(value, ",", 3)` — exactly 3 parts.
-2. `parts[0]` is treated as the legacy URL (used as the synthesized fallback URL if the rest fails to parse).
-3. `parts[1]` is parsed as a non-negative integer schema-version.
-4. `parts[2]` is base64-decoded; the result is JSON-decoded into a CSV-payload struct.
-5. The structured nodes are returned.
+## CSV compatibility
 
-The CSV mode is **read-only**. The publisher in this repo will never *produce* a CSV `serviceURI`. The mode exists solely to interoperate with anyone who already shipped a CSV-format value.
+A CSV pointer has `<url>,<version>,<base64-json>` shape. The resolver accepts
+standard base64 and raw URL-safe base64. The JSON payload has `nodes[]` with
+`url`, or `ip` plus positive `port`; nodes with no usable URL are skipped.
+`capabilitiesUrl` is parsed but never fetched. Capabilities/prices are not
+synthesized from CSV. Bad base64/JSON returns a parse error; it does not silently
+fall back to the first URL. Returned nodes are unsigned with `csv-fallback`
+source. This daemon never writes CSV or any other chain pointer.
 
-CSV manifests are not signed. They are returned with a `signature_status: unsigned` flag on each node so consumers can apply their own trust policy (e.g., bridges may only accept unsigned data from operators whitelisted in `nodes.yaml`).
+## Legacy synthesis
 
-## Mode C — legacy URL synthesis (fallback)
+For a chain URL, `allow_legacy_fallback=true` permits synthesis when manifest
+fetching is unavailable or too large and no usable signed last-good result
+was returned. The node has ID `legacy`, URL equal to the original chain
+pointer, signature status `legacy`, and no capabilities or settlement keys.
+It cannot satisfy capability/offering selection on its own. Invalid
+publications do not authorize this fallback.
 
-If `serviceURI` is a URL (no CSV structure) and the manifest fetch is unavailable, AND the caller passed `allow_legacy_fallback=true`, the resolver synthesizes a single `Node`:
+## Static pins
 
-```go
-Node{
-    ID:               "legacy",
-    URL:              serviceURI,
-    Capabilities:     nil,         // unknown
-    SignatureStatus:  "unsigned",  // by definition
-    Source:           "legacy",
-}
-```
+When no explicit manifest URL exists and the chain has no entry (or is bypassed
+in overlay-only mode), an enabled overlay with pins can synthesize static
+nodes. Pins carry unsigned status and static-overlay source; policy decides
+whether they may be returned. Without usable configuration the result is
+`not_found`.
 
-This is what old `go-livepeer` transcoding clients effectively get today (a URL to dial). The synthesized `[]Node` of length 1 lets a new resolver-aware consumer treat legacy and modern orchestrators uniformly.
+Domain mode `static-overlay` currently maps to wire enum
+`RESOLVE_MODE_UNSPECIFIED`, because the proto has no static-overlay mode enum.
+Consumers can distinguish pins using node source `SOURCE_STATIC_OVERLAY`.
+This does not affect overlay-fetched signed manifests, which use WELL_KNOWN.
 
-## Mode D — static-overlay synth (chainless fallback)
+## Policy and failure handling
 
-If `getServiceURI(addr)` returns `not_found` AND the operator overlay carries an enabled entry for the address with at least one pin node, the resolver synthesizes a result from the overlay alone:
-
-```go
-ResolveResult{
-    Mode:  "static-overlay",
-    Nodes: applyOverlay(addr, nil, overlay), // pin nodes only
-}
-```
-
-Use cases:
-
-- **Bootstrap.** No orchestrator has published manifests yet, but the operator wants the resolver to serve a curated pool.
-- **Static-overlay-only deployments.** A consumer running with `--discovery=overlay-only` against an empty or nonexistent chain (e.g. `--dev` mode, `examples/static-overlay-only/`).
-
-Pin nodes default to `signature_status: unsigned`, so this mode requires `unsigned_allowed: true` on the overlay entry — otherwise the signature policy filter drops every node and the resolver returns an empty result.
-
-This mode is reached only after a chain `not_found`. If the overlay has no entry for the address, or the entry is disabled, or the entry has no pin nodes, the resolver returns `not_found` (current behavior).
-
-## Mode-detection algorithm
-
-```
-function detectMode(uri):
-    if uri starts with "http://" or "https://":
-        if uri contains "," :
-            return CSV   // ambiguous: URLs may technically contain ",", but we accept the false-positive risk because a non-CSV URL with a "," is malformed-on-chain
-        return WellKnown
-    if uri contains exactly two "," separators:
-        return CSV
-    return Unknown   // logged, returned as resolver_error
-```
-
-The CSV-vs-WellKnown disambiguation is defensive: if a URL accidentally contains a comma (uncommon but RFC 3986-permitted in path segments), the CSV split will yield 1 part, and we'll re-classify as WellKnown. The actual implementation in `service/resolver/mode.go` uses `strings.Count(uri, ",")` to cheaply pre-classify.
-
-## Static overlay precedence
-
-After the manifest (or legacy synthesis) produces `[]Node`, the static overlay is merged. (For Mode D, the overlay *is* the source — there is no manifest to merge into.) See [static-overlay.md](static-overlay.md) for rules. Briefly:
-
-- Static overlay wins on policy fields: `enabled`, `tier_allowed`, `weight`, `unsigned_allowed`.
-- Manifest wins on advertised fields: `capabilities`, `offerings`, and
-  node-level `extra`.
-- Static overlay can add nodes that aren't in the manifest (operator-managed off-chain nodes).
-- Static overlay cannot remove nodes from the manifest (the operator publishing is canonical for "what they advertise").
+[Static overlay](static-overlay.md) defines policy and pin behavior.
+[Resolver cache](resolver-cache.md) defines TTL, refresh and bounded last-good
+reuse. A loaded overlay does not by itself guarantee selectable routes: signed
+publication, matching capability/offering, local policy, usable prices and
+broker health all matter.

@@ -1,0 +1,34 @@
+{
+  "routes": [
+    {
+      "worker_url": "https://ai2-rig-broker.xode.app",
+      "eth_address": "0xd00354656922168815fcd1e51cbddb9e359e3c7f",
+      "capability": "openai:chat-completions",
+      "offering": "qwen3.6-27b",
+      "price_per_work_unit_wei": "830000000000",
+      "work_unit": "tokens",
+      "extra_json": "eyJiYWNrZW5kX21vZGVsIjoic2FrYW1ha2lzbWlsZS9Rd2VuMy42LTI3Qi1UZXh0LU5WRlA0LU1UUCIsImpvYiI6eyJ0cmFuc3BvcnRzIjpbInN0cmVhbSIsInVuYXJ5Il19LCJvcGVuYWkiOnsibW9kZWwiOiJRd2VuMy42LTI3QiJ9LCJwcm90b2NvbCI6InBhaWQtam9iL3YxIiwicHJvdmlkZXIiOiJ2bGxtIiwicmVhc29uaW5nX3BhcnNlciI6InF3ZW4zIiwidG9vbF9jYWxsX3BhcnNlciI6InF3ZW4zX2NvZGVyIiwieC1xdWFudGl6YXRpb24iOiJudmZwNCJ9",
+      "constraints_json": "eyJncHUiOiI1MDkwIiwidGllciI6InN0YW5kYXJkIn0=",
+      "quote_id": "resolver:v1:66672e5f970b140584dbcf4472d05f0490096996135ff3fda4dc327612f13b76",
+      "quote_version": "10",
+      "constraint_fingerprint": "yM/8sN2OOr7358bbhfDA9GgGRottY3hMUPBD3FNf5FQ=",
+      "route_fingerprint": "2gDGWVN3AKA9AMLavaRN5vG/ykNmg0I/u6a+mDCM9SI=",
+      "units_per_price": "1000",
+      "protocol": "paid-job/v1",
+      "settlement_keys": [
+        {
+          "public_key": "0x0453180efc760bdd8a7ba16997caa23e1a173e4e45deb8f1b5b379e4eab21cf9eb0e1a2d48eb7d47ae60fdc76b61210f9423d4387eaec5787ed136fefc51c935ef",
+          "not_before": "2026-09-07T22:05:37Z",
+          "expires_at": "2027-09-07T22:05:37Z",
+          "introduced_in_publication_seq": "10"
+        },
+        {
+          "public_key": "0x049d2193d32d9379271df49fcdd6d2b53dad719371ddfb77009494d2c08ceca2bbea717657d9e62d49f11ac13f8ee3ae9dbeea45c1db363ed200edd9618f027f48",
+          "not_before": "2026-09-07T22:05:37Z",
+          "expires_at": "2027-09-07T22:05:37Z",
+          "introduced_in_publication_seq": "10"
+        }
+      ]
+    }
+  ]
+}

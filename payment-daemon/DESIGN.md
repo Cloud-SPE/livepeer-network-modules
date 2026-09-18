@@ -13,40 +13,79 @@ and the gateway. That separation is load-bearing for two reasons:
 Both sides need stable lifecycle and explicit contracts that survive
 caller restarts and component extraction.
 
+Tickets now fund a stable `(chain, payer, payee, settlement_domain_id, denomination)` wholesale
+account. `work_id` remains a replaceable ticket-validation generation, not the
+economic owner. A separately signed, single-purpose authorization reserves
+account credit for one exact job or session; actual cumulative work is debited
+and unused reservation returns to the account.
+
 ## Boundaries
 
 - **Inbound, sender mode:** `PayerDaemon` gRPC over a unix socket. A
   sender-side client or the conformance runner calls `CreatePayment`,
+  `CreateSpendAuthorization`,
   `ReportPaymentResult`, `GetDepositInfo`, and `Health`.
+  `GetSessionDebits` is on the wire but returns `Unimplemented` — the
+  payee's ledger is the only one. On a dev clock the token-gated
+  `PayerAdmin.AdvanceDevRound` is co-mounted; a chain clock never mounts
+  it.
 - **Inbound, receiver mode:** `PayeeDaemon` plus operator-only
   `PayeeAdmin` gRPC over a unix socket. The broker calls
-  `GetTicketParams`, `OpenSession`, `ProcessPayment`, debit/balance
-  methods, and `Health`. Operators use `PayeeAdmin.ResetSession`.
+  `GetTicketParams`, `OpenSession`, `ProcessPayment`, debit/balance and
+  wholesale authorization methods, the revenue-reporting and source-fence
+  reads (`GetRoundRevenue`, `FreezeRevenueSource`,
+  `GetRevenueSourceStatus`), `CloseUnexecutedAuthorization`, and `Health`.
+  Operators use `PayeeAdmin.ResetSession`.
 - **Outbound, sender mode:** HTTP `POST /v1/payment/ticket-params`
   against the selected broker URL to fetch authoritative payee-issued
   `TicketParams`.
 - **Outbound, receiver mode:** optional Arbitrum JSON-RPC when
-  `--chain-rpc` is set.
-- **State:** BoltDB on receiver side only. Sender-side sessions remain
-  process-local memory.
+  `--chain-rpc-urls` is set.
+- **State:** BoltDB on both sides. The receiver keeps the session and
+  wholesale-account ledger; the sender keeps mint-idempotency records and
+  a per-`work_id` nonce watermark, so a retry after an uncertain response
+  replays rather than signing a second batch and a restart never reissues
+  a nonce. Only the
+  sender's ticket-session cache is process-local memory — it is
+  reconstructible from the payee, and losing it costs a round trip, not
+  money.
 
 ## Load-bearing session contracts
 
+### Wholesale account funding
+
+`CreatePayment.account_funding` computes
+`max(0, target_available - observed_available)`. Zero shortfall returns no
+ticket. The trusted local caller chooses a bounded aggregate float; workload
+maximums are authorization limits, never mint amounts. The circuit breaker is
+checked again against actual ticket EV after indivisible sizing.
+
+Jobs reserve their signed maximum. Sessions reserve only bounded runway,
+advance one cumulative billing curve, and atomically replace that runway.
+Authorization revisions retire their predecessor while carrying cumulative
+usage and billing forward.
+
 ### Sender-side minted-payment sessions
 
-Sender mode caches sessions by stable route/funding identity:
+Sender mode caches sessions by stable route identity:
 
 - recipient
 - capability
 - offering
-- funded value / target spend
 - ticket-params base URL
+- expected settlement domain ID
 
 Each cached session owns:
 
 - the authoritative `TicketParams`
-- the monotonic sender nonce stream
+- the monotonic sender nonce stream (allocated from the durable store,
+  not process memory)
 - the current `work_id = hex(recipient_rand_hash)`
+
+Ticket economics are mutable sizing state inside cached `TicketParams`, not
+part of identity. `CreatePayment` serializes each route and re-quotes exact
+target EV in both directions. The payee retains a redeemable winning face and
+varies win probability, while recipient rand and `work_id` remain stable.
 
 `CreatePayment` returns that `work_id` to the caller.
 
@@ -117,8 +156,21 @@ Receiver-side BoltDB owns:
 - redemption queue / redeemed-ticket metadata
 - stable ticket-session index keyed by
   `(sender, recipient, capability, offering)`
+- wholesale accounts, spend authorizations, and aggregate account totals
+- the immutable settlement-domain identity record
+- the revenue-source fence and unexecuted-authorization tombstones
+
+Sender-side BoltDB owns mint-idempotency records, their permanent
+tombstones, and the per-`work_id` nonce watermark.
 
 The store package is the only owner of these buckets.
+
+The redemption *transactions* live in a second BoltDB file
+(`--txintent-db`), owned by chain-commons's transaction-intent store:
+one intent per ticket hash, with its nonce, attempts and terminal
+outcome. The store package never touches that file; the ticket broker
+files intents and waits on them, and the daemon resumes non-terminal
+intents at boot.
 
 ## Failure modes
 

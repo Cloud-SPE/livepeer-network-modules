@@ -1,0 +1,175 @@
+identity:
+  orch_eth_address: "0xDef1C70578B2B5e8589a42e26980687fc5153079"
+  label: "speedy-lab-broker"
+  settlement_key_file: /etc/livepeer/broker-settlement.key
+listen:
+  paid: ":8080"
+  metrics: ":9090"
+  attach_quic: ":8443"
+
+external_base_url: "https://broker-us-east.speedybird.xyz"
+
+admin_auth:
+  method: bearer
+  secret_ref: env://BROKER_ADMIN_TOKEN
+
+credential_store:
+  path: /var/lib/livepeer/credentials.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+
+session_store:
+  path: /var/lib/livepeer/state.db
+  sealing_key_file: /etc/livepeer/broker-seal.key
+
+offers_state_path: /var/lib/livepeer/offers.db
+
+certification_fixtures_dir: /etc/livepeer/fixtures
+
+payment_daemon:
+  socket: /var/run/livepeer/payment-daemon.sock
+
+offers:
+  - offering_id: "qwen3.8-27b"
+    capability: "openai:chat-completions"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "Qwen3.8-27B"
+    price:
+      amount_wei: "830000000000"
+      per_units: 1000
+    capacity:
+      max_in_flight: 4
+      queue_limit: 8
+    extra:
+      provider: "openai-chat-runner"
+      backend_model: "sakamakismile/Qwen3.8-27B-MTP-NVFP4"
+      reasoning_parser: "qwen3"
+      tool_call_parser: "qwen3_xml"
+    extra_from_runner: [x-quantization]
+    constraints:
+      tier: "standard"
+      gpu: "5090"
+    recertify_every_seconds: 3600
+    certification:
+      - { name: ready, type: readiness, config: { attempts: 10, interval_ms: 3000 } }
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            messages: [ { role: user, content: "ping" } ]
+            max_tokens: 8
+          assert:
+            - "$.choices[0].message.content"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - { name: usage, type: usage, config: { min_units: 1 } }
+      - name: stream
+        type: request
+        required: false
+        config:
+          transport: stream
+          body:
+            model: "{{identity.openai.model}}"
+            messages: [ { role: user, content: "ping" } ]
+            stream: true
+            max_tokens: 8
+          assert:
+            - "$[0].choices[0].delta"
+      - { name: latency, type: latency, required: false, config: { samples: 3, p50_max_ms: 4000, measure: first_byte } }
+  - offering_id: "qwen3-embedding:latest"
+    capability: "openai:embeddings"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "qwen3-embedding:latest"
+    price:
+      amount_wei: "6000000000"
+      per_units: 1000
+    extra:
+      provider: ollama
+      served_model_name: "qwen3-embedding:latest"
+      backend_model: "qwen3-embedding:latest"
+    constraints:
+      tier: standard
+      gpu: "1070"
+    certification:
+      - name: ready
+        type: readiness
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            input: "a probe"
+          assert:
+            - "$.data[0].embedding"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - name: usage
+        type: usage
+        config:
+          min_units: 1
+  - offering_id: "nomic-embed-text:latest"
+    capability: "openai:embeddings"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "nomic-embed-text:latest"
+    price:
+      amount_wei: "6000000000"
+      per_units: 1000
+    extra:
+      provider: ollama
+      served_model_name: "nomic-embed-text:latest"
+      backend_model: "nomic-embed-text:latest"
+    constraints:
+      tier: standard
+      gpu: "1070"
+    certification:
+      - name: ready
+        type: readiness
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            input: "a probe"
+          assert:
+            - "$.data[0].embedding"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - name: usage
+        type: usage
+        config:
+          min_units: 1
+  - offering_id: "nomic-embed-text-v2-moe:latest"
+    capability: "openai:embeddings"
+    protocol: "paid-job/v1"
+    match:
+      identity.openai.model: "nomic-embed-text-v2-moe:latest"
+    price:
+      amount_wei: "6000000000"
+      per_units: 1000
+    extra:
+      provider: ollama
+      served_model_name: "nomic-embed-text-v2-moe:latest"
+      backend_model: "nomic-embed-text-v2-moe:latest"
+    constraints:
+      tier: standard
+      gpu: "1070"
+    certification:
+      - name: ready
+        type: readiness
+      - name: smoke
+        type: request
+        config:
+          transport: unary
+          body:
+            model: "{{identity.openai.model}}"
+            input: "a probe"
+          assert:
+            - "$.data[0].embedding"
+            - { path: "$.usage.total_tokens", min: 1 }
+      - name: usage
+        type: usage
+        config:
+          min_units: 1

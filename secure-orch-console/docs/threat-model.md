@@ -14,12 +14,22 @@ Component-local, abbreviated. The full discussion lives in plan 0019
    sign a new manifest — cold key is on a different host. The
    console's diff renderer is the catch.
 3. **secure-orch network reachability.** Should be impossible by the
-   hard rule. Application contract: console + web UI bind `127.0.0.1`
-   only (plan 0019 §6.1.1).
+   hard rule. Application contract: `--listen` must be an explicit
+   `host:port` (all-interface shorthand such as `:8080` is rejected);
+   `127.0.0.1` is the default and the recommended bind (plan 0019
+   §6.1.1).
 4. **Coordinator-host compromise (candidate poisoning).** The
    principal reason the sign cycle is operator-driven. The diff
    renderer surfaces extra capabilities, silent `price` /
-   `worker_url` changes, eth_address swaps. Auto-sign is forbidden.
+   `worker_url` changes, eth_address swaps, and any change to
+   `settlement_keys` — the highest-value move for a compromised
+   coordinator, since an attacker-controlled key there redirects
+   settlement authority without touching a tuple; it is held critical
+   under every policy and the page shows, per broker, how to read the
+   key over a path the coordinator does not control. Auto-sign exists
+   only under `--agent` (plan 0042), strictly inside the sign policy's
+   `renewal` / `benign` envelope; everything else is held for the
+   operator.
 5. **Cold-key compromise.** Game over for this orch's identity until
    rotation. Defense in depth: V3 keystore (password-protected,
    eager-decrypt + zero on shutdown). Hardware-backed signers are
@@ -30,8 +40,9 @@ Component-local, abbreviated. The full discussion lives in plan 0019
 
 ## Console-local invariants
 
-- The HTTP server binds `127.0.0.1` only. A startup test asserts the
-  bound address.
+- The HTTP server binds only an explicit `host:port` (default
+  `127.0.0.1:8080`); an empty host is refused at boot. A test asserts
+  the loopback bind.
 - The `Signer` interface is the only path that emits a signature.
 - Every console gesture (load_candidate, view_diff, sign,
   write_signed, abort) emits a JSONL audit entry.

@@ -15,6 +15,9 @@ import (
 )
 
 type WorkReceipt struct {
+	TermsVersion         string    `json:"terms_version,omitempty"`
+	PoolID               string    `json:"pool_id,omitempty"`
+	SourceID             string    `json:"source_id,omitempty"`
 	ID                   string    `json:"id"`
 	CreatedAt            time.Time `json:"created_at,omitempty"`
 	RoundID              string    `json:"round_id,omitempty"`
@@ -56,9 +59,13 @@ func NewHTTPClient(baseURL string, timeout time.Duration, cfg config.AuthConfig,
 		return nil, err
 	}
 	endpoint := u.ResolveReference(&url.URL{Path: "/admin/v1/work-receipts"}).String()
+	client, err := cfg.ServiceClient(baseURL, timeout)
+	if err != nil {
+		return nil, err
+	}
 	return &HTTPClient{
 		endpoint: endpoint,
-		client:   &http.Client{Timeout: timeout},
+		client:   client,
 		auth:     auth,
 		cfg:      cfg,
 	}, nil
@@ -74,7 +81,7 @@ func (c *HTTPClient) UpsertWorkReceipt(ctx context.Context, receipt WorkReceipt)
 		return fmt.Errorf("build request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if c.auth != nil {
+	if c.auth != nil && c.cfg.Method != "scoped" {
 		if err := c.auth.Apply(req.Header, c.cfg); err != nil {
 			return fmt.Errorf("apply auth: %w", err)
 		}

@@ -84,23 +84,40 @@ func (q *QUICSessionForwarder) Forward(ctx context.Context, req backend.ForwardR
 }
 
 func ReadQUICRegister(ctx context.Context, conn *quic.Conn) (TunnelMessage, error) {
-	stream, err := conn.AcceptStream(ctx)
+	msg, stream, err := AcceptQUICRegister(ctx, conn)
 	if err != nil {
 		return TunnelMessage{}, err
 	}
 	defer func() { _ = stream.Close() }()
-	var msg TunnelMessage
-	if err := json.NewDecoder(stream).Decode(&msg); err != nil {
-		return TunnelMessage{}, err
-	}
-	if msg.Type != MessageTypeRegister {
-		return TunnelMessage{}, fmt.Errorf("expected register message, got %q", msg.Type)
-	}
 	if err := json.NewEncoder(stream).Encode(TunnelMessage{Type: MessageTypeResponse, ID: msg.ID, StatusCode: http.StatusOK}); err != nil {
 		return TunnelMessage{}, err
 	}
 	return msg, nil
 }
+
+// AcceptQUICRegister accepts one runner-opened stream and decodes a
+// register frame, leaving the reply to the caller (the attach path
+// answers with a register_result body). The caller closes the stream.
+func AcceptQUICRegister(ctx context.Context, conn *quic.Conn) (TunnelMessage, *quic.Stream, error) {
+	stream, err := conn.AcceptStream(ctx)
+	if err != nil {
+		return TunnelMessage{}, nil, err
+	}
+	var msg TunnelMessage
+	if err := json.NewDecoder(stream).Decode(&msg); err != nil {
+		_ = stream.Close()
+		return TunnelMessage{}, nil, err
+	}
+	if msg.Type != MessageTypeRegister {
+		_ = stream.Close()
+		return TunnelMessage{}, nil, fmt.Errorf("expected register message, got %q", msg.Type)
+	}
+	return msg, stream, nil
+}
+
+// IsAttachRegister reports whether a register frame carries an attach
+// document rather than the legacy backend-ids header.
+func IsAttachRegister(msg TunnelMessage) bool { return len(msg.Body) > 0 }
 
 func WriteQUICFrameHeader(w io.Writer, msg TunnelMessage) error {
 	raw, err := json.Marshal(msg)

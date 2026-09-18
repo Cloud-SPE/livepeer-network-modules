@@ -192,3 +192,20 @@ func TestRunWithLogger(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestReadOnlyPreflightWithoutSigningProviders(t *testing.T) {
+	cfg := ok(t)
+	cfg.Mode = types.ModeReadOnly
+	cfg.Keystore, cfg.GasOracle = nil, nil
+	cfg.RPC.(*chaintesting.FakeRPC).BalanceAtFunc = func(context.Context, chain.Address, *big.Int) (*big.Int, error) {
+		t.Fatal("observer queried wallet balance")
+		return nil, nil
+	}
+	if _, err := Run(context.Background(), cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.ExpectedChain = 1
+	if _, err := Run(context.Background(), cfg); err == nil {
+		t.Fatal("observer accepted wrong chain")
+	}
+}

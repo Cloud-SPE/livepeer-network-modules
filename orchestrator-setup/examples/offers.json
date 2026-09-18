@@ -1,0 +1,19 @@
+[
+  {
+    "offering_id": "chat-example",
+    "capability": "openai:chat-completions",
+    "protocol": "paid-job/v1",
+    "match": {"identity.openai.model": "replace-with-your-model"},
+    "price": {"amount_wei": "210000000", "per_units": 1},
+    "capacity": {"max_in_flight": 4},
+    "certification": [
+      {"name": "ready", "type": "readiness"},
+      {"name": "smoke", "type": "request", "config": {
+        "transport": "unary",
+        "body": {"model": "{{identity.openai.model}}", "messages": [{"role": "user", "content": "ping"}], "max_tokens": 8},
+        "assert": ["$.choices[0].message.content", {"path": "$.usage.total_tokens", "min": 1}]
+      }},
+      {"name": "usage", "type": "usage", "config": {"min_units": 1}}
+    ]
+  }
+]

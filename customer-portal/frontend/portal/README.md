@@ -8,7 +8,7 @@ video-portal) extend it with their own routes and Vite config.
 
 - `#/signup` — render `<portal-signup>`
 - `#/login` — render `<portal-login>`
-- `#/account` — render balance + nav
+- `#/account` — render `<portal-balance>`
 - `#/api-keys` — render `<portal-api-keys>`
 - `#/billing` — render `<portal-checkout-button>`
 

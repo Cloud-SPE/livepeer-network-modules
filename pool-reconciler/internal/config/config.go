@@ -1,14 +1,20 @@
 package config
 
+import "github.com/Cloud-SPE/livepeer-network-modules/pool-commons/revenue"
+
 type Config struct {
-	PoolController PoolController `yaml:"pool_controller"`
-	PaymentDaemon  PaymentDaemon  `yaml:"payment_daemon,omitempty"`
-	Pool           Pool           `yaml:"pool,omitempty"`
-	Reconcile      Reconcile      `yaml:"reconcile,omitempty"`
-	RoundSource    RoundSource    `yaml:"round_source,omitempty"`
+	RevenueSources []revenue.Source `yaml:"revenue_sources,omitempty"`
+	PoolController PoolController   `yaml:"pool_controller"`
+	PaymentDaemon  PaymentDaemon    `yaml:"payment_daemon,omitempty"`
+	Pool           Pool             `yaml:"pool,omitempty"`
+	Reconcile      Reconcile        `yaml:"reconcile,omitempty"`
+	RoundSource    RoundSource      `yaml:"round_source,omitempty"`
 }
 
 type PoolController struct {
+	PoolID         string `yaml:"pool_id,omitempty"`
+	TokenFile      string `yaml:"token_file,omitempty"`
+	CAFile         string `yaml:"ca_file,omitempty"`
 	URL            string `yaml:"url"`
 	BearerTokenRef string `yaml:"bearer_token_ref,omitempty"`
 	TimeoutMS      int    `yaml:"timeout_ms,omitempty"`

@@ -20,36 +20,31 @@ import (
 )
 
 // Row is one roster entry. Fields are 1:1 with the columns in plan
-// 0018 §8: capability/offering, mode, price, brokers, published?,
+// 0018 §8: capability/offering, protocol, price, brokers, published?,
 // drift.
 type Row struct {
-	CapabilityID    string
-	OfferingID      string
-	InteractionMode string
-	PriceWei        string
-	Brokers         []BrokerCell
-	WorkerURL       string
-	Published       bool
-	PublishedTuple  *types.CapabilityTuple
-	Drift           string
-	OldPriceWei     string
-	NewPriceWei     string
+	CapabilityID   string
+	OfferingID     string
+	Protocol       string
+	PriceWei       string
+	Brokers        []BrokerCell
+	WorkerURL      string
+	Published      bool
+	PublishedTuple *types.CapabilityTuple
+	Drift          string
+	OldPriceWei    string
+	NewPriceWei    string
 }
 
 // BrokerCell describes one broker that advertises this row's tuple,
 // with its current freshness and any error.
 type BrokerCell struct {
-	Name               string
-	Freshness          string
-	Error              string
-	LiveStatus         string
-	LiveReason         string
-	HealthStale        bool
-	MetadataState      string
-	MetadataResult     string
-	MetadataError      string
-	MetadataAgeSeconds float64
-	MetadataFailures   int
+	Name        string
+	Freshness   string
+	Error       string
+	LiveStatus  string
+	LiveReason  string
+	HealthStale bool
 }
 
 // View is the rendered roster.
@@ -63,7 +58,7 @@ type View struct {
 // Filter narrows the roster output. Empty fields mean "no filter".
 type Filter struct {
 	CapabilitySubstring string
-	Mode                string
+	Protocol            string
 	BrokerName          string
 	DriftKind           string
 }
@@ -88,7 +83,7 @@ func BuildView(orchEthAddress string, cand, pub *types.ManifestPayload, snap scr
 			NewPriceWei:  dr.NewPriceWei,
 		}
 		if dr.Candidate != nil {
-			row.InteractionMode = dr.Candidate.InteractionMode
+			row.Protocol = dr.Candidate.Protocol
 			row.PriceWei = dr.Candidate.PricePerUnitWei
 			row.WorkerURL = dr.Candidate.WorkerURL
 		}
@@ -96,7 +91,7 @@ func BuildView(orchEthAddress string, cand, pub *types.ManifestPayload, snap scr
 			row.Published = true
 			row.PublishedTuple = dr.Published
 			if dr.Candidate == nil {
-				row.InteractionMode = dr.Published.InteractionMode
+				row.Protocol = dr.Published.Protocol
 				row.PriceWei = dr.Published.PricePerUnitWei
 				row.WorkerURL = dr.Published.WorkerURL
 			}
@@ -134,7 +129,7 @@ func (v *View) Apply(f Filter) *View {
 		if f.CapabilitySubstring != "" && !strings.Contains(r.CapabilityID, f.CapabilitySubstring) {
 			continue
 		}
-		if f.Mode != "" && r.InteractionMode != f.Mode {
+		if f.Protocol != "" && r.Protocol != f.Protocol {
 			continue
 		}
 		if f.DriftKind != "" && r.Drift != f.DriftKind {
@@ -169,7 +164,7 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 	}
 	seenPerKey := make(map[string]map[string]struct{})
 	for _, st := range snap.SourceTuples {
-		k := uniquenessKey(st.Offering.CapabilityID, st.Offering.OfferingID, st.Offering.Extra, st.Offering.Constraints)
+		k := uniquenessKey(st.Offering.CapabilityID, st.Offering.OfferingID, st.Offering.SettlementDomainID, st.Offering.Extra, st.Offering.Constraints)
 		if _, ok := seenPerKey[k]; !ok {
 			seenPerKey[k] = map[string]struct{}{}
 		}
@@ -187,16 +182,6 @@ func brokersByUniquenessKey(snap scrape.Snapshot) map[string][]BrokerCell {
 				if !h.StaleAfter.IsZero() && h.StaleAfter.Before(stampNow()) {
 					cell.HealthStale = true
 				}
-				if h.Metadata != nil {
-					cell.MetadataState, cell.MetadataAgeSeconds = types.ClassifyBrokerHealthMetadata(
-						h.Metadata,
-						snap.MetadataWarningAfter,
-						snap.MetadataStaleAfter,
-					)
-					cell.MetadataResult = h.Metadata.LastResult
-					cell.MetadataError = h.Metadata.LastError
-					cell.MetadataFailures = h.Metadata.ConsecutiveFailures
-				}
 			}
 		}
 		out[k] = append(out[k], cell)
@@ -213,10 +198,11 @@ func tupleHealthKey(capabilityID, offeringID string) string {
 	return capabilityID + "|" + offeringID
 }
 
-func uniquenessKey(capID, offeringID string, extra, constraints map[string]any) string {
+func uniquenessKey(capID, offeringID, domain string, extra, constraints map[string]any) string {
 	root := map[string]any{
-		"capability_id": capID,
-		"offering_id":   offeringID,
+		"settlement_domain_id": domain,
+		"capability_id":        capID,
+		"offering_id":          offeringID,
 	}
 	if len(extra) > 0 {
 		root["extra"] = extra

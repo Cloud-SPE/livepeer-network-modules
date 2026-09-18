@@ -61,6 +61,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 
 	sigC := make(chan os.Signal, 2)
 	signal.Notify(sigC, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(sigC)
 
 	// Start the gRPC listener if present.
 	var serveErr chan error
@@ -95,13 +96,16 @@ func Run(ctx context.Context, cfg RunConfig) error {
 	case s := <-sigC:
 		cfg.Logger.Info("signal received, shutting down", "signal", s.String())
 	case err := <-serveErr:
+		serveErr = nil
 		cfg.Logger.Error("listener exited unexpectedly", "err", err)
 		cancel()
 		// Allow Listener.Stop() to clean up before falling through.
 	case err := <-metricsErr:
+		metricsErr = nil
 		cfg.Logger.Error("metrics listener exited unexpectedly", "err", err)
 		cancel()
 	case err := <-seederErr:
+		seederErr = nil
 		// Seeder exited before we asked it to — likely Subscribe
 		// failed at startup. Tear down so the operator notices.
 		cfg.Logger.Error("seeder exited unexpectedly", "err", err)

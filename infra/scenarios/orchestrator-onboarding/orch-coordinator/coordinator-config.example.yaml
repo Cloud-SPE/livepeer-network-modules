@@ -25,3 +25,22 @@ brokers:
 publish:
   # How long downstream consumers should treat a published manifest as fresh.
   manifest_ttl: 24h
+  # Window assigned to a settlement key a broker announces without one.
+  # Default one year, minimum 24h. Re-anchors at two thirds elapsed.
+  # settlement_key_validity: 8760h
+
+# Settlement key delegation is discovered, not authored: each broker
+# announces its key at GET /registry/settlement-keys, signed by the key
+# itself, and the coordinator carries a proven key into the candidate with
+# a window of publish.settlement_key_validity from first sight (remembered
+# in <data-dir>/settlement-keys.json). Rotation happens on the broker;
+# nothing here changes. Pin a key below only for a broker that cannot
+# announce one (older build), or to choose the window yourself. Pinned
+# keys win over announced ones; keys the live manifest still delegates are
+# carried until their window closes.
+#
+# settlement_keys:
+#   - label: rig-1
+#     public_key: "0x04..."          # 0x04 + 128 hex
+#     not_before: 2026-09-07T00:00:00Z
+#     expires_at: 2027-09-07T00:00:00Z

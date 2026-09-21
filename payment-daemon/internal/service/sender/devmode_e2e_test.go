@@ -75,25 +75,15 @@ func TestDevModeSenderAndReceiverExchangeAPayment(t *testing.T) {
 		t.Fatalf("OpenSession: %v", err)
 	}
 
-	resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: createResp.GetPaymentBytes(),
-		WorkId:       workID,
 	})
 	if err != nil {
 		t.Fatalf("ProcessPayment: %v", err)
 	}
 	// The failure mode being pinned is a ticket the receiver refuses, so
 	// assert on what it accepted rather than on the call returning.
-	received := len(resp.GetTicketStatus())
-	if received == 0 {
-		t.Fatal("receiver saw no tickets")
-	}
-	if resp.GetTicketsRejected() != 0 {
-		t.Fatalf("receiver rejected %d of %d tickets (%s) — a dev-mode signature "+
-			"must satisfy the same EIP-191 recovery a production one does",
-			resp.GetTicketsRejected(), received, resp.GetDominantRejection())
-	}
-	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() == 0 {
+	if got := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue()); got.Sign() == 0 {
 		t.Fatal("credited zero: a payment that credits nothing funds no work")
 	}
 	pend, err := st.PendingRedemptions()
@@ -119,7 +109,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 
 	mintReq := devModeCreateRequest(recipient, "account-float-1", baseURL)
 	mintReq.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(100_000).Bytes()}
-	mintReq.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	mintReq.AccountFunding = &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100_000).Bytes()},
 		ObservedAvailableWei: &pb.BigUInt{},
 	}
@@ -133,12 +123,12 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 	if _, err := payee.OpenSession(ctx, &pb.OpenSessionRequest{WorkId: minted.GetWorkId(), Capability: "openai:chat-completions", Offering: "model-a", PricePerWorkUnitWei: big.NewInt(1000).Bytes(), PerUnits: 1, WorkUnit: "tokens"}); err != nil {
 		t.Fatalf("price funding generation: %v", err)
 	}
-	funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
+	funded, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
 	if err != nil || new(big.Int).SetBytes(funded.GetCreditedValueWei().GetValue()).Sign() <= 0 {
 		t.Fatalf("fund stable account: result=%+v err=%v", funded, err)
 	}
-	fundingReplay, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
-	if err != nil || !fundingReplay.GetReplayed() || new(big.Int).SetBytes(fundingReplay.GetCreditedValueWei().GetValue()).Sign() != 0 {
+	fundingReplay, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: minted.GetPaymentBytes()})
+	if err != nil || !fundingReplay.GetReplayed() || new(big.Int).SetBytes(fundingReplay.GetCreditedValueWei().GetValue()).Cmp(new(big.Int).SetBytes(funded.GetCreditedValueWei().GetValue())) != 0 {
 		t.Fatalf("funding replay=%+v err=%v", fundingReplay, err)
 	}
 
@@ -146,7 +136,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 		t.Helper()
 		now := time.Now().UTC()
 		bodyDigest := sha256.Sum256([]byte("exact-job-body"))
-		res, err := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		res, err := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Payee: recipient, AuthorizationId: id, RequestId: "request-" + id,
 			Protocol: "paid-job/v1", AcceptedPrice: proto.Clone(mintReq.GetAcceptedPrice()).(*pb.AcceptedPrice),
 			MaxDebitWei:   &pb.BigUInt{Value: new(big.Int).Mul(big.NewInt(1000), new(big.Int).SetUint64(maxUnits)).Bytes()},
@@ -168,7 +158,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 		t.Fatal("funding-free admission reported new ticket value")
 	}
 	credited := new(big.Int).SetBytes(first.GetAccount().GetCreditedValueWei().GetValue())
-	if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: first.GetAccount().GetPayer(), AuthorizationId: "job-one", ActualUnits: 1, SettlementSeq: 1}); err != nil {
+	if _, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: first.GetAccount().GetPayer(), AuthorizationId: "job-one", ActualUnits: 1, SettlementSeq: 1}); err != nil {
 		t.Fatalf("settle first authorization: %v", err)
 	}
 
@@ -179,7 +169,7 @@ func TestWholesaleCreditIsReusedAcrossAuthorizations(t *testing.T) {
 	if new(big.Int).SetBytes(second.GetCreditedValueWei().GetValue()).Sign() != 0 {
 		t.Fatal("funding-free admission reported new ticket value")
 	}
-	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: second.GetAccount().GetPayer(), AuthorizationId: "job-two", ActualUnits: 1, SettlementSeq: 1})
+	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: second.GetAccount().GetPayer(), AuthorizationId: "job-two", ActualUnits: 1, SettlementSeq: 1})
 	if err != nil {
 		t.Fatalf("settle second authorization: %v", err)
 	}
@@ -241,22 +231,14 @@ func TestDevModeTamperedSignatureIsRejected(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	_, err = payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: tampered,
-		WorkId:       workID,
 	})
 	if err != nil {
 		// A hard error is an acceptable refusal too.
 		return
 	}
-	received := int32(len(resp.GetTicketStatus()))
-	if resp.GetTicketsRejected() != received {
-		t.Fatalf("receiver accepted %d of %d tickets carrying a forged signature",
-			received-resp.GetTicketsRejected(), received)
-	}
-	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() != 0 {
-		t.Fatalf("credited %s wei for a forged signature", got)
-	}
+	t.Fatal("forged funding was accepted")
 	pend, err := st.PendingRedemptions()
 	if err != nil {
 		t.Fatal(err)
@@ -297,6 +279,8 @@ func devModeSenderStandOn(t *testing.T, payeeFor func() pb.PayeeDaemonClient, re
 
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			WholesaleAccountID  string `json:"wholesale_account_id"`
+			TicketStreamID      string `json:"ticket_stream_id"`
 			SenderETHAddress    string `json:"sender_eth_address"`
 			RecipientETHAddress string `json:"recipient_eth_address"`
 			FaceValueWei        string `json:"face_value_wei"`
@@ -308,7 +292,7 @@ func devModeSenderStandOn(t *testing.T, payeeFor func() pb.PayeeDaemonClient, re
 			return
 		}
 		faceValue, _ := new(big.Int).SetString(req.FaceValueWei, 10)
-		resp, err := payeeFor().GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{
+		resp, err := payeeFor().GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{WholesaleAccountId: req.WholesaleAccountID, TicketStreamId: req.TicketStreamID,
 			Sender:     mustDecodeHexAddress(t, req.SenderETHAddress),
 			Recipient:  mustDecodeHexAddress(t, req.RecipientETHAddress),
 			FaceValue:  faceValue.Bytes(),
@@ -324,6 +308,7 @@ func devModeSenderStandOn(t *testing.T, payeeFor func() pb.PayeeDaemonClient, re
 			// lost its nonce counter resumes above the payee's mark.
 			"highest_seen_nonce":   resp.GetHighestSeenNonce(),
 			"has_seen_nonces":      resp.GetHasSeenNonces(),
+			"wholesale_account_id": req.WholesaleAccountID, "ticket_stream_id": req.TicketStreamID, "isolation_version": 1,
 			"settlement_domain_id": receiverDomain(t, payeeFor()), "ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
@@ -396,7 +381,7 @@ func devModeCreateRequest(recipient []byte, mintID, baseURL string) *pb.CreatePa
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
-		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
+		AccountFunding: &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	}
 }
 
@@ -413,7 +398,7 @@ func TestSmallTargetEVKeepsRedeemableFaceAndCreditsExactly(t *testing.T) {
 
 	quote := func(target int64) *pb.GetTicketParamsResponse {
 		t.Helper()
-		got, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		got, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 			Sender: bytes20(0x01), Recipient: recipient, FaceValue: big.NewInt(target).Bytes(),
 			Capability: "openai:chat-completions", Offering: "model-a",
 		})
@@ -457,7 +442,7 @@ func TestZeroTargetEVIsRejected(t *testing.T) {
 	defer cleanup()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	_, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+	_, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     bytes20(0x01),
 		Recipient:  recipient,
 		FaceValue:  []byte{0},
@@ -584,19 +569,14 @@ func TestFundingIntentIsActuallyFunded(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("OpenSession: %v", err)
 			}
-			resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+			resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				PaymentBytes: created.GetPaymentBytes(),
-				WorkId:       workID,
 			})
 			if err != nil {
 				t.Fatalf("ProcessPayment: %v", err)
 			}
-			if resp.GetTicketsRejected() != 0 {
-				t.Fatalf("payee rejected %d of %d tickets (%s)",
-					resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
-					resp.GetDominantRejection())
-			}
-			credited := new(big.Int).SetBytes(resp.GetCreditedEv())
+
+			credited := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue())
 			if credited.Cmp(big.NewInt(funded)) < 0 {
 				t.Fatalf("payee credited %s for a %d wei intent across %d tickets — "+
 					"the sender's promise and the ledger disagree",
@@ -654,20 +634,14 @@ func TestCachedSessionFundsALargerLaterRequest(t *testing.T) {
 		}); err != nil {
 			t.Fatalf("OpenSession: %v", err)
 		}
-		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       workID,
 		})
 		if err != nil {
 			t.Fatalf("ProcessPayment(%d): %v", funded, err)
 		}
-		if resp.GetTicketsRejected() != 0 {
-			t.Fatalf("payee rejected %d of %d tickets funding %d wei (%s) — the batch did not "+
-				"fit the session's remaining nonce budget",
-				resp.GetTicketsRejected(), len(resp.GetTicketStatus()), funded,
-				resp.GetDominantRejection())
-		}
-		return workID, new(big.Int).SetBytes(resp.GetCreditedEv())
+
+		return workID, new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue())
 	}
 
 	firstWorkID, firstCredit := issueAndProcess("loc-small", 1025)
@@ -734,20 +708,14 @@ func TestSessionRollsOverAtTheNonceBudget(t *testing.T) {
 			}
 			opened[workID] = true
 		}
-		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       workID,
 		})
 		if err != nil {
 			t.Fatalf("ProcessPayment %d: %v", i, err)
 		}
-		if resp.GetTicketsRejected() != 0 {
-			t.Fatalf("payment %d rejected %d of %d tickets (%s) — a payment the payer signed "+
-				"and the payee refused whole",
-				i, resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
-				resp.GetDominantRejection())
-		}
-		if credited := new(big.Int).SetBytes(resp.GetCreditedEv()); credited.Sign() == 0 {
+
+		if credited := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue()); credited.Sign() == 0 {
 			t.Fatalf("payment %d credited nothing", i)
 		}
 		return workID, predecessor
@@ -832,20 +800,14 @@ func TestVariableRefillRotatesAfterDelayedReceiverExhaustion(t *testing.T) {
 			}
 			opened[workID] = true
 		}
-		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       workID,
 		})
 		if err != nil {
 			t.Fatalf("ProcessPayment %d: %v", i, err)
 		}
-		if resp.GetTicketsRejected() != 0 {
-			t.Fatalf("payment %d rejected %d of %d tickets (%s) — a payment the payer signed "+
-				"and the payee refused whole",
-				i, resp.GetTicketsRejected(), len(resp.GetTicketStatus()),
-				resp.GetDominantRejection())
-		}
-		if credited := new(big.Int).SetBytes(resp.GetCreditedEv()); credited.Cmp(big.NewInt(int64(2000+i))) != 0 {
+
+		if credited := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue()); credited.Cmp(big.NewInt(int64(2000+i))) != 0 {
 			t.Fatalf("payment %d credited %s; want %d", i, credited, 2000+i)
 		}
 		return workID, predecessor
@@ -931,9 +893,8 @@ func TestConcurrentBoundaryMintsProduceOneSuccessor(t *testing.T) {
 	}
 	process := func(created *pb.CreatePaymentResponse) {
 		t.Helper()
-		if _, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		if _, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       created.GetWorkId(),
 		}); err != nil {
 			t.Fatalf("ProcessPayment: %v", err)
 		}
@@ -1042,9 +1003,8 @@ func TestRolloverSurvivesAPayeeRestartAtTheBoundary(t *testing.T) {
 	// and the payee is entitled to ignore that.
 	process := func(created *pb.CreatePaymentResponse) {
 		t.Helper()
-		if _, err := live.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		if _, err := live.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       created.GetWorkId(),
 		}); err != nil {
 			t.Fatalf("ProcessPayment: %v", err)
 		}
@@ -1157,11 +1117,10 @@ func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.
 		}
 		return created
 	}
-	process := func(created *pb.CreatePaymentResponse) *pb.ProcessPaymentResponse {
+	process := func(created *pb.CreatePaymentResponse) *pb.FundWholesaleAccountResponse {
 		t.Helper()
-		resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+		resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			PaymentBytes: created.GetPaymentBytes(),
-			WorkId:       created.GetWorkId(),
 		})
 		if err != nil {
 			t.Fatalf("ProcessPayment: %v", err)
@@ -1189,12 +1148,8 @@ func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.
 	// a gateway retrying delivery would otherwise churn work_id every
 	// time, and every consumer keying evidence on it would follow.
 	dup := process(first)
-	if dup.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY {
-		t.Fatalf("duplicate delivery reported %s; a re-sent payment is a plain replay",
-			dup.GetDominantRejection())
-	}
-	if credited := new(big.Int).SetBytes(dup.GetCreditedEv()); credited.Sign() != 0 {
-		t.Fatalf("a duplicate delivery credited %s a second time", credited)
+	if !dup.GetReplayed() || new(big.Int).SetBytes(dup.GetCreditedValueWei().GetValue()).Cmp(big.NewInt(2000)) != 0 {
+		t.Fatal("replay did not return exact receipt")
 	}
 
 	// Now lose the payer's durable counter and restart it on the same
@@ -1219,12 +1174,8 @@ func TestDuplicateDeliveryStaysAReplayAndAPayerRecoversFromStateLoss(t *testing.
 	// high-water mark at quote time and the payer resumed above it, so
 	// this payment is accepted rather than replayed into a rejection.
 	recovered := process(created)
-	if recovered.GetTicketsRejected() != 0 {
-		t.Fatalf("after state loss the payer was refused %s — it rewound into nonces the "+
-			"payee had already seen and cannot recover on its own",
-			recovered.GetDominantRejection())
-	}
-	if credited := new(big.Int).SetBytes(recovered.GetCreditedEv()); credited.Sign() == 0 {
+
+	if credited := new(big.Int).SetBytes(recovered.GetCreditedValueWei().GetValue()); credited.Sign() == 0 {
 		t.Fatal("the recovered payment credited nothing")
 	}
 	// Same session: recovery must not cost the route its identity.
@@ -1294,31 +1245,21 @@ func TestReactiveRotationWhenTheLedgerIsAlreadyAtCapacity(t *testing.T) {
 		t.Fatalf("filling the ledger: %v", err)
 	}
 
-	resp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	resp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: first.GetPaymentBytes(),
-		WorkId:       workID,
 	})
-	if err != nil {
-		t.Fatalf("ProcessPayment: %v", err)
+	if err == nil {
+		t.Fatalf("full nonce ledger accepted funding: %v", resp)
 	}
-	if resp.GetTicketsRejected() == 0 {
-		t.Fatal("a payment against a full ledger was accepted")
-	}
-	// Normalized onto the rotation contract, NOT surfaced as a cap a
-	// caller has nothing to do with.
-	if got := resp.GetDominantRejection(); got != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
-		t.Fatalf("rejection = %s; want INVALID_RECIPIENT_RAND so the existing eviction and "+
-			"rebind path engages", got)
-	}
-	// And the rand is retired, not merely refused once.
-	after, err := payeeStore.GetByWorkID(workID)
+	// A new quote detects and retires the exhausted generation.
+	params, err := payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: sess.TicketStreamID, Sender: sess.Sender, Recipient: recipient, Capability: sess.Capability, Offering: sess.Offering, FaceValue: big.NewInt(2000).Bytes()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if after != nil && !after.Closed {
-		t.Fatal("the exhausted rand was refused but not retired; the next payment would " +
-			"be refused identically, forever")
+	if hex.EncodeToString(params.GetTicketParams().GetRecipientRandHash()) == workID {
+		t.Fatal("exhausted generation was not rotated")
 	}
+
 }
 
 // predecessor_work_id is set only when the work id actually MOVED.
@@ -1399,7 +1340,7 @@ func TestConcurrentQuotesAtAnExhaustedBudgetKeepOneSuccessor(t *testing.T) {
 	defer cancel()
 
 	quote := func() (*pb.GetTicketParamsResponse, error) {
-		return payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+		return payee.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 			Sender:     bytes20(0x0c),
 			Recipient:  recipient,
 			FaceValue:  big.NewInt(4_000_000).Bytes(),

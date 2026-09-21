@@ -28,7 +28,7 @@ func (e *Engine) resumeRevisionLocked(ctx context.Context, id string) (*TopUpRes
 		return nil, err
 	}
 	p := authorization.GetPayload()
-	if p == nil || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID {
+	if p == nil || p.GetWholesaleAccountId() != rec.WholesaleAccountID || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID {
 		return nil, fmt.Errorf("persisted revision authority mismatch")
 	}
 	reservation, ok := new(big.Int).SetString(intent.ReservationWei, 10)

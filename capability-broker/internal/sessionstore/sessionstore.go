@@ -102,6 +102,7 @@ type GrantAudit struct {
 // Record is the on-disk session record — the paid-session/v1 §9.1
 // persistence list, field for field.
 type Record struct {
+	WholesaleAccountID   string          `json:"wholesale_account_id,omitempty"`
 	RevisionIntent       *RevisionIntent `json:"-"`
 	RevisionIntentSealed []byte          `json:"revision_intent_sealed,omitempty"`
 	// Identifiers.
@@ -691,11 +692,12 @@ const (
 // OpenReservation is an open in flight: the request id is claimed and the
 // side effects performed so far are recorded.
 type OpenReservation struct {
-	RequestID   string `json:"request_id"`
-	Fingerprint []byte `json:"fingerprint"`
-	Stage       string `json:"stage"`
-	WorkID      string `json:"work_id,omitempty"`
-	Sender      []byte `json:"sender,omitempty"`
+	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
+	RequestID          string `json:"request_id"`
+	Fingerprint        []byte `json:"fingerprint"`
+	Stage              string `json:"stage"`
+	WorkID             string `json:"work_id,omitempty"`
+	Sender             []byte `json:"sender,omitempty"`
 	// AccountAuthorization is retained as a durable cutover marker. Startup
 	// refuses paid reservations written without it; no legacy recovery path
 	// remains.

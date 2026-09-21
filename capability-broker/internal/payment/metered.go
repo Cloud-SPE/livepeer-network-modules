@@ -69,14 +69,14 @@ func (m *metered) AdmitAuthorization(ctx context.Context, req AdmitAuthorization
 	return res, err
 }
 
-func (m *metered) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+func (m *metered) FundWholesaleAccount(ctx context.Context, paymentBytes []byte, wholesaleAccountID string) (*FundWholesaleAccountResult, error) {
 	done := observability.StartPaymentClientCall("fund_wholesale_account")
 	a, err := m.accountClient()
 	if err != nil {
 		done(resultLabel(err))
 		return nil, err
 	}
-	res, err := a.FundWholesaleAccount(ctx, paymentBytes)
+	res, err := a.FundWholesaleAccount(ctx, paymentBytes, wholesaleAccountID)
 	done(resultLabel(err))
 	return res, err
 }
@@ -105,26 +105,26 @@ func (m *metered) SettleAuthorization(ctx context.Context, req SettleAuthorizati
 	return res, err
 }
 
-func (m *metered) GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error) {
+func (m *metered) GetWholesaleAccount(ctx context.Context, payer []byte, wholesaleAccountID string) (*WholesaleAccount, error) {
 	done := observability.StartPaymentClientCall("get_wholesale_account")
 	a, err := m.accountClient()
 	if err != nil {
 		done(resultLabel(err))
 		return nil, err
 	}
-	res, err := a.GetWholesaleAccount(ctx, payer)
+	res, err := a.GetWholesaleAccount(ctx, payer, wholesaleAccountID)
 	done(resultLabel(err))
 	return res, err
 }
 
-func (m *metered) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+func (m *metered) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string, wholesaleAccountID string) (*SpendAuthorizationStatus, error) {
 	done := observability.StartPaymentClientCall("get_spend_authorization")
 	a, err := m.accountClient()
 	if err != nil {
 		done(resultLabel(err))
 		return nil, err
 	}
-	res, err := a.GetSpendAuthorization(ctx, payer, authorizationID)
+	res, err := a.GetSpendAuthorization(ctx, payer, authorizationID, wholesaleAccountID)
 	done(resultLabel(err))
 	return res, err
 }

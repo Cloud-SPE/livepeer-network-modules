@@ -14,7 +14,7 @@ import (
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 )
 
-const Domain = "livepeer-spend-authorization/v2"
+const Domain = "livepeer-spend-authorization/v3"
 
 var (
 	ErrMalformedSignature = errors.New("spend authorization signature is malformed")

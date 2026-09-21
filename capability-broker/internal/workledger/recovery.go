@@ -35,7 +35,7 @@ func (c *Client) RecoverUnbound(ctx context.Context) error {
 		if payload == nil || payload.GetAuthorizationId() == "" || len(payload.GetPayer()) != 20 || payload.GetSettlementDomainId() != c.Store.SourceID {
 			return fmt.Errorf("unbound authorization source identity invalid")
 		}
-		if err := receiver.CloseUnexecutedAuthorization(ctx, payload.GetPayer(), payload.GetAuthorizationId(), "broker restart: durable admission has no runner binding"); err != nil {
+		if err := receiver.CloseUnexecutedAuthorization(ctx, payload.GetPayer(), payload.GetAuthorizationId(), "broker restart: durable admission has no runner binding", payload.GetWholesaleAccountId()); err != nil {
 			return fmt.Errorf("unbound admission %s recovery held: %w", payload.GetAuthorizationId(), err)
 		}
 		if err := c.Store.db.Update(func(tx *bolt.Tx) error {

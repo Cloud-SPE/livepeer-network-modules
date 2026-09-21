@@ -26,7 +26,7 @@ type transferFixtureAccount struct {
 	settled string
 }
 
-func (a transferFixtureAccount) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+func (a transferFixtureAccount) GetSpendAuthorization(context.Context, []byte, string, string) (*payment.SpendAuthorizationStatus, error) {
 	state := pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED
 	if _, err := os.Stat(a.settled); err == nil {
 		state = pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED
@@ -63,7 +63,7 @@ func TestRegionalTransferBrokerProcess(t *testing.T) {
 	}
 	defer creds.Close()
 	if os.IsNotExist(statErr) {
-		auth, err := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{AuthorizationId: "active-transfer-work", SettlementDomainId: c.SourceID, Payer: make([]byte, 20)}})
+		auth, err := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", AuthorizationId: "active-transfer-work", SettlementDomainId: c.SourceID, Payer: make([]byte, 20)}})
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -312,3 +312,33 @@ admission tombstones or rewrite old terminal records from HTTP logs: historical
 ambiguous outcomes lack the new durable refusal evidence. This change does not
 automatically repair those records or change deployed image tags. The associated
 implementation bead is lnm-9da.
+
+
+## Shared-wallet account cutover
+
+Coordinate broker, receiver, sender and payer-application upgrades. Stop new
+admissions and drain active sessions, open reservations, pending settlements and
+work-ledger operations using the old version before upgrading. The new session
+engine refuses active records without a wholesale account identity. Do not edit
+saved authorizations or assign old balances to a product automatically; retain
+legacy records for audit and reconcile their ownership explicitly.
+
+Each product/environment configures its own stable `wholesale_account_id`.
+Independent payer daemons have distinct persisted ticket streams, even when they
+share an account. Multiple replicas using one account still coordinate funding
+and admission through their application database. Independent development
+installations use distinct accounts. Preserve each payer database and never clone
+an active stream into another running daemon.
+
+`POST /v1/payment/account` requires `wholesale_account_id`, including authorization
+status queries. `POST /v1/payment/account/fund` requires
+`Livepeer-Wholesale-Account-Id`. Account, status and funding replies echo the
+account and `isolation_version: 1`. Funding replies also identify the exact
+payment bytes with `funding_id` (lowercase SHA-256 hex without a prefix). Retrying
+returns the original credit and account snapshot; query the account separately
+for current availability. A receipt is not permission to execute work.
+
+Request and authorization IDs must remain globally unique at a broker: account
+isolation does not make reused job IDs safe. New signed evidence carries the
+account; a payer must reject evidence for another account. The on-chain deposit
+is still shared and account labels do not limit a holder of the wallet key.

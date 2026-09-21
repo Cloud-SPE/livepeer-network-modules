@@ -1177,8 +1177,10 @@ func (x *FundingIntent) GetTopUpAllowed() bool {
 // hashed with keccak256 and signed with Ethereum personal_sign (EIP-191).
 type SpendAuthorizationPayload struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId string `protobuf:"bytes,23,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
 	// Domain/version tag. Producers MUST set
-	// "livepeer-spend-authorization/v2".
+	// "livepeer-spend-authorization/v3".
 	Domain                     string         `protobuf:"bytes,1,opt,name=domain,proto3" json:"domain,omitempty"`
 	Payer                      []byte         `protobuf:"bytes,2,opt,name=payer,proto3" json:"payer,omitempty"`
 	Payee                      []byte         `protobuf:"bytes,3,opt,name=payee,proto3" json:"payee,omitempty"`
@@ -1233,6 +1235,13 @@ func (x *SpendAuthorizationPayload) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SpendAuthorizationPayload.ProtoReflect.Descriptor instead.
 func (*SpendAuthorizationPayload) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SpendAuthorizationPayload) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *SpendAuthorizationPayload) GetDomain() string {
@@ -1446,9 +1455,11 @@ func (x *SpendAuthorization) GetSignature() []byte {
 // The caller is the payer application on the sender daemon's trusted socket;
 // untrusted end callers never supply these values directly.
 type AccountFundingIntent struct {
-	state                protoimpl.MessageState `protogen:"open.v1"`
-	TargetAvailableWei   *BigUInt               `protobuf:"bytes,1,opt,name=target_available_wei,json=targetAvailableWei,proto3" json:"target_available_wei,omitempty"`
-	ObservedAvailableWei *BigUInt               `protobuf:"bytes,2,opt,name=observed_available_wei,json=observedAvailableWei,proto3" json:"observed_available_wei,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId   string   `protobuf:"bytes,4,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	TargetAvailableWei   *BigUInt `protobuf:"bytes,1,opt,name=target_available_wei,json=targetAvailableWei,proto3" json:"target_available_wei,omitempty"`
+	ObservedAvailableWei *BigUInt `protobuf:"bytes,2,opt,name=observed_available_wei,json=observedAvailableWei,proto3" json:"observed_available_wei,omitempty"`
 	// Must match the cold-signed route and the observed account.
 	SettlementDomainId string `protobuf:"bytes,3,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
@@ -1485,6 +1496,13 @@ func (*AccountFundingIntent) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{15}
 }
 
+func (x *AccountFundingIntent) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
+}
+
 func (x *AccountFundingIntent) GetTargetAvailableWei() *BigUInt {
 	if x != nil {
 		return x.TargetAvailableWei
@@ -1507,18 +1525,20 @@ func (x *AccountFundingIntent) GetSettlementDomainId() string {
 }
 
 type WholesaleAccountView struct {
-	state              protoimpl.MessageState `protogen:"open.v1"`
-	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
-	Payee              []byte                 `protobuf:"bytes,2,opt,name=payee,proto3" json:"payee,omitempty"`
-	CreditedValueWei   *BigUInt               `protobuf:"bytes,3,opt,name=credited_value_wei,json=creditedValueWei,proto3" json:"credited_value_wei,omitempty"`
-	ReservedValueWei   *BigUInt               `protobuf:"bytes,4,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
-	DebitedValueWei    *BigUInt               `protobuf:"bytes,5,opt,name=debited_value_wei,json=debitedValueWei,proto3" json:"debited_value_wei,omitempty"`
-	AvailableValueWei  *BigUInt               `protobuf:"bytes,6,opt,name=available_value_wei,json=availableValueWei,proto3" json:"available_value_wei,omitempty"`
-	Version            uint64                 `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
-	ObservedAt         string                 `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
-	ChainId            uint64                 `protobuf:"varint,9,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
-	Denomination       string                 `protobuf:"bytes,10,opt,name=denomination,proto3" json:"denomination,omitempty"`
-	SettlementDomainId string                 `protobuf:"bytes,11,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId string   `protobuf:"bytes,12,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	Payer              []byte   `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	Payee              []byte   `protobuf:"bytes,2,opt,name=payee,proto3" json:"payee,omitempty"`
+	CreditedValueWei   *BigUInt `protobuf:"bytes,3,opt,name=credited_value_wei,json=creditedValueWei,proto3" json:"credited_value_wei,omitempty"`
+	ReservedValueWei   *BigUInt `protobuf:"bytes,4,opt,name=reserved_value_wei,json=reservedValueWei,proto3" json:"reserved_value_wei,omitempty"`
+	DebitedValueWei    *BigUInt `protobuf:"bytes,5,opt,name=debited_value_wei,json=debitedValueWei,proto3" json:"debited_value_wei,omitempty"`
+	AvailableValueWei  *BigUInt `protobuf:"bytes,6,opt,name=available_value_wei,json=availableValueWei,proto3" json:"available_value_wei,omitempty"`
+	Version            uint64   `protobuf:"varint,7,opt,name=version,proto3" json:"version,omitempty"`
+	ObservedAt         string   `protobuf:"bytes,8,opt,name=observed_at,json=observedAt,proto3" json:"observed_at,omitempty"`
+	ChainId            uint64   `protobuf:"varint,9,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	Denomination       string   `protobuf:"bytes,10,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	SettlementDomainId string   `protobuf:"bytes,11,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields      protoimpl.UnknownFields
 	sizeCache          protoimpl.SizeCache
 }
@@ -1551,6 +1571,13 @@ func (x *WholesaleAccountView) ProtoReflect() protoreflect.Message {
 // Deprecated: Use WholesaleAccountView.ProtoReflect.Descriptor instead.
 func (*WholesaleAccountView) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *WholesaleAccountView) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *WholesaleAccountView) GetPayer() []byte {
@@ -1632,15 +1659,17 @@ func (x *WholesaleAccountView) GetSettlementDomainId() string {
 
 // SettlementRecord is the broker-authoritative accounting result for a request/session.
 type SettlementRecord struct {
-	state            protoimpl.MessageState             `protogen:"open.v1"`
-	AcceptedQuoteRef *QuoteRef                          `protobuf:"bytes,1,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
-	WorkUnitName     string                             `protobuf:"bytes,2,opt,name=work_unit_name,json=workUnitName,proto3" json:"work_unit_name,omitempty"`
-	EstimatedUnits   uint64                             `protobuf:"varint,3,opt,name=estimated_units,json=estimatedUnits,proto3" json:"estimated_units,omitempty"`
-	ActualUnits      uint64                             `protobuf:"varint,4,opt,name=actual_units,json=actualUnits,proto3" json:"actual_units,omitempty"`
-	BilledUnits      uint64                             `protobuf:"varint,5,opt,name=billed_units,json=billedUnits,proto3" json:"billed_units,omitempty"`
-	FundedValueWei   *BigUInt                           `protobuf:"bytes,6,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
-	BilledValueWei   *BigUInt                           `protobuf:"bytes,7,opt,name=billed_value_wei,json=billedValueWei,proto3" json:"billed_value_wei,omitempty"`
-	Outcome          SettlementRecord_SettlementOutcome `protobuf:"varint,8,opt,name=outcome,proto3,enum=livepeer.payments.v1.SettlementRecord_SettlementOutcome" json:"outcome,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId string                             `protobuf:"bytes,35,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	AcceptedQuoteRef   *QuoteRef                          `protobuf:"bytes,1,opt,name=accepted_quote_ref,json=acceptedQuoteRef,proto3" json:"accepted_quote_ref,omitempty"`
+	WorkUnitName       string                             `protobuf:"bytes,2,opt,name=work_unit_name,json=workUnitName,proto3" json:"work_unit_name,omitempty"`
+	EstimatedUnits     uint64                             `protobuf:"varint,3,opt,name=estimated_units,json=estimatedUnits,proto3" json:"estimated_units,omitempty"`
+	ActualUnits        uint64                             `protobuf:"varint,4,opt,name=actual_units,json=actualUnits,proto3" json:"actual_units,omitempty"`
+	BilledUnits        uint64                             `protobuf:"varint,5,opt,name=billed_units,json=billedUnits,proto3" json:"billed_units,omitempty"`
+	FundedValueWei     *BigUInt                           `protobuf:"bytes,6,opt,name=funded_value_wei,json=fundedValueWei,proto3" json:"funded_value_wei,omitempty"`
+	BilledValueWei     *BigUInt                           `protobuf:"bytes,7,opt,name=billed_value_wei,json=billedValueWei,proto3" json:"billed_value_wei,omitempty"`
+	Outcome            SettlementRecord_SettlementOutcome `protobuf:"varint,8,opt,name=outcome,proto3,enum=livepeer.payments.v1.SettlementRecord_SettlementOutcome" json:"outcome,omitempty"`
 	// Optional workload-specific metadata. Not part of canonical arithmetic.
 	Breakdown map[string]string `protobuf:"bytes,9,rep,name=breakdown,proto3" json:"breakdown,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	// Stable broker-local session id.
@@ -1744,6 +1773,13 @@ func (x *SettlementRecord) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SettlementRecord.ProtoReflect.Descriptor instead.
 func (*SettlementRecord) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{17}
+}
+
+func (x *SettlementRecord) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *SettlementRecord) GetAcceptedQuoteRef() *QuoteRef {
@@ -2005,6 +2041,8 @@ func (x *SettlementRecord) GetSettlementDomainId() string {
 // key, which is why both MUST be retained.
 type NonAdmissionRecord struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId string `protobuf:"bytes,12,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
 	// Always "paid-job/v1" or "paid-session/v1". Present so a record
 	// cannot be replayed across protocols.
 	Protocol string `protobuf:"bytes,1,opt,name=protocol,proto3" json:"protocol,omitempty"`
@@ -2081,6 +2119,13 @@ func (x *NonAdmissionRecord) ProtoReflect() protoreflect.Message {
 // Deprecated: Use NonAdmissionRecord.ProtoReflect.Descriptor instead.
 func (*NonAdmissionRecord) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_types_proto_rawDescGZIP(), []int{18}
+}
+
+func (x *NonAdmissionRecord) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *NonAdmissionRecord) GetProtocol() string {
@@ -2381,8 +2426,9 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x0festimated_units\x18\x01 \x01(\x04R\x0eestimatedUnits\x12G\n" +
 	"\x10funded_value_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x0efundedValueWei\x12&\n" +
 	"\x0fmax_total_units\x18\x03 \x01(\x04R\rmaxTotalUnits\x12$\n" +
-	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\xd6\x06\n" +
-	"\x19SpendAuthorizationPayload\x12\x16\n" +
+	"\x0etop_up_allowed\x18\x04 \x01(\bR\ftopUpAllowed\"\x88\a\n" +
+	"\x19SpendAuthorizationPayload\x120\n" +
+	"\x14wholesale_account_id\x18\x17 \x01(\tR\x12wholesaleAccountId\x12\x16\n" +
 	"\x06domain\x18\x01 \x01(\tR\x06domain\x12\x14\n" +
 	"\x05payer\x18\x02 \x01(\fR\x05payer\x12\x14\n" +
 	"\x05payee\x18\x03 \x01(\fR\x05payee\x12)\n" +
@@ -2415,12 +2461,14 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x14settlement_domain_id\x18\x16 \x01(\tR\x12settlementDomainId\"}\n" +
 	"\x12SpendAuthorization\x12I\n" +
 	"\apayload\x18\x01 \x01(\v2/.livepeer.payments.v1.SpendAuthorizationPayloadR\apayload\x12\x1c\n" +
-	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xee\x01\n" +
-	"\x14AccountFundingIntent\x12O\n" +
+	"\tsignature\x18\x02 \x01(\fR\tsignature\"\xa0\x02\n" +
+	"\x14AccountFundingIntent\x120\n" +
+	"\x14wholesale_account_id\x18\x04 \x01(\tR\x12wholesaleAccountId\x12O\n" +
 	"\x14target_available_wei\x18\x01 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x12targetAvailableWei\x12S\n" +
 	"\x16observed_available_wei\x18\x02 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x14observedAvailableWei\x120\n" +
-	"\x14settlement_domain_id\x18\x03 \x01(\tR\x12settlementDomainId\"\xa2\x04\n" +
-	"\x14WholesaleAccountView\x12\x14\n" +
+	"\x14settlement_domain_id\x18\x03 \x01(\tR\x12settlementDomainId\"\xd4\x04\n" +
+	"\x14WholesaleAccountView\x120\n" +
+	"\x14wholesale_account_id\x18\f \x01(\tR\x12wholesaleAccountId\x12\x14\n" +
 	"\x05payer\x18\x01 \x01(\fR\x05payer\x12\x14\n" +
 	"\x05payee\x18\x02 \x01(\fR\x05payee\x12K\n" +
 	"\x12credited_value_wei\x18\x03 \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x10creditedValueWei\x12K\n" +
@@ -2433,8 +2481,9 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\bchain_id\x18\t \x01(\x04R\achainId\x12\"\n" +
 	"\fdenomination\x18\n" +
 	" \x01(\tR\fdenomination\x120\n" +
-	"\x14settlement_domain_id\x18\v \x01(\tR\x12settlementDomainId\"\x83\x10\n" +
-	"\x10SettlementRecord\x12L\n" +
+	"\x14settlement_domain_id\x18\v \x01(\tR\x12settlementDomainId\"\xb5\x10\n" +
+	"\x10SettlementRecord\x120\n" +
+	"\x14wholesale_account_id\x18# \x01(\tR\x12wholesaleAccountId\x12L\n" +
 	"\x12accepted_quote_ref\x18\x01 \x01(\v2\x1e.livepeer.payments.v1.QuoteRefR\x10acceptedQuoteRef\x12$\n" +
 	"\x0ework_unit_name\x18\x02 \x01(\tR\fworkUnitName\x12'\n" +
 	"\x0festimated_units\x18\x03 \x01(\x04R\x0eestimatedUnits\x12!\n" +
@@ -2484,8 +2533,9 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"OVERFUNDED\x10\x03\x12\x15\n" +
 	"\x11STOPPED_AT_BUDGET\x10\x04\x12\r\n" +
 	"\tTOPPED_UP\x10\x05\x12\x10\n" +
-	"\fDEBIT_FAILED\x10\x06\"\x9f\x04\n" +
-	"\x12NonAdmissionRecord\x12\x1a\n" +
+	"\fDEBIT_FAILED\x10\x06\"\xd1\x04\n" +
+	"\x12NonAdmissionRecord\x120\n" +
+	"\x14wholesale_account_id\x18\f \x01(\tR\x12wholesaleAccountId\x12\x1a\n" +
 	"\bprotocol\x18\x01 \x01(\tR\bprotocol\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x02 \x01(\tR\trequestId\x12\x17\n" +

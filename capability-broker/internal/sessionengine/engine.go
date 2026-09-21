@@ -209,7 +209,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	var legacySessions, legacyReservations int
 	if err := cfg.Store.ForEach(func(r *sessionstore.Record) error {
-		if !r.Terminal() && r.AccountAuthorizationID == "" {
+		if !r.Terminal() && (r.AccountAuthorizationID == "" || r.WholesaleAccountID == "") {
 			legacySessions++
 		}
 		return nil
@@ -217,7 +217,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("sessionengine: inspect session store for authorization-only cutover: %w", err)
 	}
 	if err := cfg.Store.ForEachReservation(func(r sessionstore.OpenReservation) error {
-		if (r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated) && !r.AccountAuthorization {
+		if (r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated) && (!r.AccountAuthorization || r.WholesaleAccountID == "") {
 			legacyReservations++
 		}
 		return nil
@@ -359,7 +359,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			releaseReservation()
 			return nil, protoErr("payment_invalid", "authorization admission rejected: %v", err)
 		}
-		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
+		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.WholesaleAccountID != accountPayload.GetWholesaleAccountId() || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
 			releaseReservation()
 			return nil, &RetryableError{Err: errors.New("payment daemon returned an invalid account admission")}
 		}
@@ -368,8 +368,9 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		if err := recordStage(func(r *sessionstore.OpenReservation) {
 			r.Stage, r.WorkID, r.CapacityRef, r.BackendRef, r.Sender = sessionstore.ReservationPaid, workID, req.CapacityRef, req.Spec.BackendRef, sender
 			r.AccountAuthorization = true
+			r.WholesaleAccountID = accountPayload.GetWholesaleAccountId()
 		}); err != nil {
-			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
+			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: accountPayload.GetWholesaleAccountId(), Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
 			releaseReservation()
 			return nil, &RetryableError{Err: fmt.Errorf("record account admission: %w", err)}
 		}
@@ -379,7 +380,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, runnerSessionID, ReasonOpenFailed)
 		}
 		if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
-			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: accountPayload.GetAuthorizationId(), ActualUnits: 0, SettlementSeq: 1})
+			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: accountPayload.GetWholesaleAccountId(), Payer: sender, AuthorizationID: accountPayload.GetAuthorizationId(), ActualUnits: 0, SettlementSeq: 1})
 		}
 		e.release(req.CapacityRef)
 		releaseReservation()
@@ -415,7 +416,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 				ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
 				RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
 				Sender:                sender, OpenFingerprint: fingerprint,
-				SettlementDomainID:       accountPayload.GetSettlementDomainId(),
+				WholesaleAccountID: accountPayload.GetWholesaleAccountId(), SettlementDomainID: accountPayload.GetSettlementDomainId(),
 				AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 				AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 				AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -454,22 +455,22 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	}
 
 	rec := &sessionstore.Record{
-		SessionID:                sessionID,
-		GatewaySessionID:         req.GatewaySessionID,
-		RunnerSessionID:          created.RunnerSessionID,
-		WorkID:                   workID,
-		Capability:               req.Spec.Capability,
-		Offering:                 req.Spec.Offering,
-		BackendRef:               req.Spec.BackendRef,
-		QuoteID:                  req.AcceptedQuoteRef.GetQuoteId(),
-		QuoteVersion:             req.AcceptedQuoteRef.GetQuoteVersion(),
-		ConstraintFingerprint:    append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
-		RouteFingerprint:         append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
-		Sender:                   sender,
-		CredentialHash:           sessionstore.HashSecret(credential),
-		CallbackTokenHash:        sessionstore.HashSecret(callbackToken),
-		OpenFingerprint:          fingerprint,
-		SettlementDomainID:       accountPayload.GetSettlementDomainId(),
+		SessionID:             sessionID,
+		GatewaySessionID:      req.GatewaySessionID,
+		RunnerSessionID:       created.RunnerSessionID,
+		WorkID:                workID,
+		Capability:            req.Spec.Capability,
+		Offering:              req.Spec.Offering,
+		BackendRef:            req.Spec.BackendRef,
+		QuoteID:               req.AcceptedQuoteRef.GetQuoteId(),
+		QuoteVersion:          req.AcceptedQuoteRef.GetQuoteVersion(),
+		ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
+		RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
+		Sender:                sender,
+		CredentialHash:        sessionstore.HashSecret(credential),
+		CallbackTokenHash:     sessionstore.HashSecret(callbackToken),
+		OpenFingerprint:       fingerprint,
+		WholesaleAccountID:    accountPayload.GetWholesaleAccountId(), SettlementDomainID: accountPayload.GetSettlementDomainId(),
 		AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 		AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 		AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -496,7 +497,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 		if errors.Is(err, sessionstore.ErrGatewaySessionExists) {
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)
 			if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
-				_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
+				_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: accountPayload.GetWholesaleAccountId(), Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
 			}
 			releaseReservation()
 			e.release(req.CapacityRef)
@@ -507,7 +508,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			// Concurrent open with the same request id won; converge.
 			_ = e.runnerFor(req.Spec.BackendRef).TerminateSession(ctx, created.RunnerSessionID, ReasonOpenFailed)
 			if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
-				_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
+				_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: accountPayload.GetWholesaleAccountId(), Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
 			}
 			e.release(req.CapacityRef)
 			if id, lerr := e.cfg.Store.SessionIDForRequest(req.RequestID); lerr == nil {
@@ -791,7 +792,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		} else if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { r.PendingDebitSeq = advanceSeq; return nil }); err != nil {
 			return nil, &RetryableError{Err: err}
 		}
-		advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: authorizationCumulative, TargetReserved: target, AdvanceSeq: advanceSeq})
+		advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{WholesaleAccountID: rec.WholesaleAccountID, Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: authorizationCumulative, TargetReserved: target, AdvanceSeq: advanceSeq})
 		if err != nil {
 			return nil, &RetryableError{Err: fmt.Errorf("advance account authorization: %w", err)}
 		}
@@ -971,7 +972,7 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		return nil, protoErr("payment_invalid", "authorization revision is malformed")
 	}
 	p := auth.GetPayload()
-	if p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
+	if p.GetWholesaleAccountId() != rec.WholesaleAccountID || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
 		return nil, protoErr("refill_refused", "authorization revision does not continue this session")
 	}
 	oldMaxDebit, _ := new(big.Int).SetString(rec.AuthorizationMaxDebitWei, 10)
@@ -1104,7 +1105,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		var closeErr error
 		if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
 			var settled *payment.SettleAuthorizationResult
-			settled, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: rec.DebitedTotal, SettlementSeq: rec.DebitSeq + 1})
+			settled, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: rec.WholesaleAccountID, Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: rec.DebitedTotal, SettlementSeq: rec.DebitSeq + 1})
 			if closeErr == nil && (settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
 				closeErr = errors.New("payment daemon returned invalid authorization settlement state")
 			}
@@ -1296,7 +1297,7 @@ func (e *Engine) Recover(ctx context.Context) {
 			var authStatus *payment.SpendAuthorizationStatus
 			var authErr error
 			if ok {
-				authStatus, authErr = ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+				authStatus, authErr = ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID, rec.WholesaleAccountID)
 			} else {
 				authErr = errors.New("wholesale account payment extension unavailable")
 			}
@@ -1400,7 +1401,7 @@ func (e *Engine) recoverReservations(ctx context.Context) {
 		if r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated {
 			var closeErr error
 			if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
-				_, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: r.Sender, AuthorizationID: r.WorkID, ActualUnits: 0, SettlementSeq: 1})
+				_, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: r.WholesaleAccountID, Payer: r.Sender, AuthorizationID: r.WorkID, ActualUnits: 0, SettlementSeq: 1})
 			} else {
 				closeErr = errors.New("wholesale account payment extension unavailable")
 			}

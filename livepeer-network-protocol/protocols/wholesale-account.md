@@ -1,8 +1,8 @@
 ---
 spec_name: wholesale-account
-version: 2.0.0-draft
+version: 3.0.0-draft
 status: draft
-last_updated: 2026-09-14
+last_updated: 2026-09-21
 ---
 
 # Wholesale account and spend authorization
@@ -16,7 +16,7 @@ The key words MUST, MUST NOT, SHOULD, and MAY are interpreted as in RFC 2119.
 ## 1. Stable account
 
 The receiver maintains one economic account per `(chain, payer, payee,
-settlement_domain_id, denomination)`. Tickets credit this account. Requests, sessions, capabilities,
+settlement_domain_id, denomination, wholesale_account_id)`. Tickets credit this account. Requests, sessions, capabilities,
 offerings, quotes, and recipient-random `work_id` generations do not own the
 balance.
 
@@ -59,11 +59,38 @@ credit MUST NOT be silently merged or transferred. The exact canonical URI rules
 bootstrap/restore requirements and migration procedure are defined in
 [settlement-domain identity](../../docs/design-docs/settlement-domain-identity.md).
 
+### 1.2 Shared wallet, separate accounts and streams
+
+`wholesale_account_id` is required and consists of 1–128 ASCII letters, digits,
+`.`, `_`, `:`, or `-`. It identifies an application/environment's service credit;
+for example `loc-prod` and `blueclaw-dev-alice`. There is no implicit default account.
+Signed spend authorization, settlement, and non-admission payloads bind this field.
+A shared private key remains one trust boundary; labels do not restrict a key holder
+or isolate the common on-chain deposit from other applications' spending.
+
+Each independent sender database generates one persistent random `ticket_stream_id`.
+Do not clone an active sender database into another concurrently running daemon.
+Ticket generation identity is `(sender, recipient, capability, offering,
+wholesale_account_id, ticket_stream_id)` within one settlement domain. The receiver
+binds the account and stream before returning recipient-random parameters. Account
+labels cannot redirect an already-issued generation. Independent streams may fund
+the same account without sharing nonce allocation; the application's funding
+coordination remains per account.
+
+`POST /v1/payment/ticket-params` requires both fields and returns them with
+`isolation_version: 1`. Senders MUST reject missing or mismatched echoes before
+signing. `POST /v1/payment/account` requires `wholesale_account_id` alongside
+`payer_eth_address` and optional `authorization_id`; account and authorization-status
+responses echo the account, payer, payee, settlement domain, and `isolation_version: 1`.
+Standalone funding requires `Livepeer-Wholesale-Account-Id`; its receipt likewise
+returns `isolation_version: 1` and the account. Workload requests derive account
+identity from their signed authorization, including inline funding.
+
 ## 2. Single-purpose authorization
 
 `SpendAuthorization` is deterministic protobuf signed by the payer using
 keccak256 plus Ethereum personal-sign (EIP-191). Its domain is exactly
-`livepeer-spend-authorization/v2`.
+`livepeer-spend-authorization/v3`.
 
 The signed bytes are unambiguous:
 
@@ -118,11 +145,21 @@ user's session credential. Replaying the same ticket batch returns the
 recorded account without crediting it twice.
 
 The mint intent is idempotent independently of the workload authorization.
-If a receiver credits a ticket and crashes before moving the credited
-generation balance into the stable account, replay may report
-`NONCE_REPLAY`; the receiver MUST recover the already-credited generation
-balance rather than require a replacement ticket. A payment sender different
-from the authorization payer MUST be refused.
+Each funding operation is identified by `funding_id`, the lowercase 64-character
+SHA-256 hex digest of the exact protobuf payment bytes (without `0x`). The
+receiver MUST atomically persist accepted nonces, winning-ticket queue entries,
+account credit, and its funding receipt. A batch containing any invalid or
+already-consumed ticket MUST fail without partial credit or nonce consumption.
+The receipt contains `wholesale_account_id`, the original `credited_value_wei`,
+`available_value_wei`, and `account_version`. A retry MUST return the same original
+amount and account snapshot with `replayed=true`, even after later account changes.
+It MUST NOT return zero merely because the batch was previously accepted, sweep
+another batch's generation balance, or reconstruct a receipt from account deltas.
+Changing the bytes of an already-consumed ticket batch does not create new credit.
+Standalone and inline funding use the same receipt ledger. A payment sender different
+from the authorization payer or a generation bound to a different account MUST be
+refused. Inline funding credit may persist even when subsequent admission fails;
+retrying the exact payment recovers its receipt without charging twice.
 
 ## 4. States and idempotency
 
@@ -132,7 +169,10 @@ issued -> admitted -> settled
    \-> expired_unused
 ```
 
-`authorization_id` is scoped to the complete account tuple and is idempotent. Reuse with different
+Receivers scope authorization state to the complete account tuple. Callers MUST
+generate globally unique `authorization_id`, request IDs, and gateway session IDs
+across accounts on a broker (for example UUIDs): broker workload indexes do not
+promise reuse of those IDs between accounts. Reuse with different
 content MUST fail. Repeated admission or settlement with identical content
 MUST replay the recorded result without a second reservation, execution, or
 debit.
@@ -208,7 +248,7 @@ An account observation does not reserve funds. Consumers sharing a payer account
 MUST coordinate observation and funding preparation until the preceding admission
 is visible at that receiver (or signed terminal evidence has been reconciled).
 This coordination must survive client cancellation/restart and cover every replica
-that can prepare funding for the same domain/payer/payee tuple. It need not wait
+that can prepare funding for the same domain/payer/payee/account tuple. It need not wait
 for inference completion. An unknown admission must not silently release the fence
 or cause a duplicate paid invocation. TLS account views remain unsuitable for
 customer refunds.
@@ -226,7 +266,31 @@ optional shortfall funding alongside a valid authorization. Mixed-version
 peers fail closed. Implementations MUST NOT silently fall back to a
 ticket-session workload path.
 
+### 7.1 Coordinated shared-wallet cutover
+
+Stop new paid work and funding, settle or reconcile every active authorization, and
+drain/reconcile the old wallet-wide service credit using the old release before
+upgrading. Existing legacy rows MUST remain intact. Upgrading MUST NOT assign their
+balances or authorization history to a newly named account. New named accounts
+start with zero credit. This release has no automatic reallocation or legacy-drain
+RPC; retain a ledger backup and complete the drain before cutover. All serving
+brokers, receiver daemons, payer daemons and consuming applications upgrade together;
+older peers lacking identity echoes fail closed.
+
+`PayeeAdmin.ResetSession` requires the specific account and ticket stream; it retires
+only that generation. After an operator reset, senders may need explicit
+`ReportPaymentResult(INVALID_RECIPIENT_RAND)` or a restart to invalidate cached
+parameters. Never remint an uncertain payment merely because a response was lost:
+first replay the exact funding bytes to recover its durable receipt.
+
 ## 8. Conformance
+
+The [shared-wallet executable fixture](../../payment-daemon/internal/service/sender/isolation_e2e_test.go)
+requires independent daemon databases with the same wallet to start at nonce one
+on distinct generations, concurrently fund, reject cross-account funding and debit,
+and replay immutable funding receipts after later funding/debit. The
+[store restart fixture](../../payment-daemon/internal/store/isolation_test.go) checks
+atomic rollback, durable stream and receipt identity, and retention of legacy credit.
 
 Conformance additionally requires two independent receiver ledgers with one payer
 and payee: funding A leaves B unchanged; versions advance independently; B rejects
@@ -265,6 +329,7 @@ route-exit residue rather than allowing it to grow with every request maximum.
 
 | Version | Date | Change |
 |---|---|---|
+| 3.0.0-draft | 2026-09-21 | Requires explicit wholesale accounts, persistent independent payer streams, v3 signed account binding, and atomic exact funding receipts. |
 | 2.0.0-draft | 2026-09-14 | Requires immutable payment-ledger settlement domains, v2 signed authorizations, domain-bound funding/account observations, independent account versions and explicit migration semantics. |
 | 1.1.0-draft | 2026-09-11 | Makes stable wholesale accounts and single-purpose spend authorization mandatory for every paid workload. Removes offer feature negotiation and payment-only fallback, defines the coordinated drain, and confines tickets to account funding and authorized shortfall funding. |
 | 1.0.0-draft | 2026-09-09 | Introduces stable payer-payee accounts, single-purpose spend authorization, aggregate shortfall funding, and migration-fenced compatibility with ticket-session accounting. |

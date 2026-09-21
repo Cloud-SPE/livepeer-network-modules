@@ -363,25 +363,27 @@ func (x *CreatePaymentResponse) GetAccountShortfallWei() *BigUInt {
 }
 
 type CreateSpendAuthorizationRequest struct {
-	state                      protoimpl.MessageState `protogen:"open.v1"`
-	Payee                      []byte                 `protobuf:"bytes,1,opt,name=payee,proto3" json:"payee,omitempty"`
-	AuthorizationId            string                 `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
-	RequestId                  string                 `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
-	SessionId                  string                 `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
-	Protocol                   string                 `protobuf:"bytes,5,opt,name=protocol,proto3" json:"protocol,omitempty"`
-	AcceptedPrice              *AcceptedPrice         `protobuf:"bytes,6,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
-	MaxDebitWei                *BigUInt               `protobuf:"bytes,7,opt,name=max_debit_wei,json=maxDebitWei,proto3" json:"max_debit_wei,omitempty"`
-	MaxTotalUnits              uint64                 `protobuf:"varint,8,opt,name=max_total_units,json=maxTotalUnits,proto3" json:"max_total_units,omitempty"`
-	NotBefore                  string                 `protobuf:"bytes,9,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
-	ExpiresAt                  string                 `protobuf:"bytes,10,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
-	RequestDigest              []byte                 `protobuf:"bytes,11,opt,name=request_digest,json=requestDigest,proto3" json:"request_digest,omitempty"`
-	CallerPublicKey            []byte                 `protobuf:"bytes,12,opt,name=caller_public_key,json=callerPublicKey,proto3" json:"caller_public_key,omitempty"`
-	Revision                   uint64                 `protobuf:"varint,13,opt,name=revision,proto3" json:"revision,omitempty"`
-	PredecessorAuthorizationId string                 `protobuf:"bytes,14,opt,name=predecessor_authorization_id,json=predecessorAuthorizationId,proto3" json:"predecessor_authorization_id,omitempty"`
-	BrokerUri                  string                 `protobuf:"bytes,15,opt,name=broker_uri,json=brokerUri,proto3" json:"broker_uri,omitempty"`
-	ChainId                    uint64                 `protobuf:"varint,16,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
-	Denomination               string                 `protobuf:"bytes,17,opt,name=denomination,proto3" json:"denomination,omitempty"`
-	SettlementDomainId         string                 `protobuf:"bytes,18,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Required shared-wallet isolation identity.
+	WholesaleAccountId         string         `protobuf:"bytes,19,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	Payee                      []byte         `protobuf:"bytes,1,opt,name=payee,proto3" json:"payee,omitempty"`
+	AuthorizationId            string         `protobuf:"bytes,2,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	RequestId                  string         `protobuf:"bytes,3,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	SessionId                  string         `protobuf:"bytes,4,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	Protocol                   string         `protobuf:"bytes,5,opt,name=protocol,proto3" json:"protocol,omitempty"`
+	AcceptedPrice              *AcceptedPrice `protobuf:"bytes,6,opt,name=accepted_price,json=acceptedPrice,proto3" json:"accepted_price,omitempty"`
+	MaxDebitWei                *BigUInt       `protobuf:"bytes,7,opt,name=max_debit_wei,json=maxDebitWei,proto3" json:"max_debit_wei,omitempty"`
+	MaxTotalUnits              uint64         `protobuf:"varint,8,opt,name=max_total_units,json=maxTotalUnits,proto3" json:"max_total_units,omitempty"`
+	NotBefore                  string         `protobuf:"bytes,9,opt,name=not_before,json=notBefore,proto3" json:"not_before,omitempty"`
+	ExpiresAt                  string         `protobuf:"bytes,10,opt,name=expires_at,json=expiresAt,proto3" json:"expires_at,omitempty"`
+	RequestDigest              []byte         `protobuf:"bytes,11,opt,name=request_digest,json=requestDigest,proto3" json:"request_digest,omitempty"`
+	CallerPublicKey            []byte         `protobuf:"bytes,12,opt,name=caller_public_key,json=callerPublicKey,proto3" json:"caller_public_key,omitempty"`
+	Revision                   uint64         `protobuf:"varint,13,opt,name=revision,proto3" json:"revision,omitempty"`
+	PredecessorAuthorizationId string         `protobuf:"bytes,14,opt,name=predecessor_authorization_id,json=predecessorAuthorizationId,proto3" json:"predecessor_authorization_id,omitempty"`
+	BrokerUri                  string         `protobuf:"bytes,15,opt,name=broker_uri,json=brokerUri,proto3" json:"broker_uri,omitempty"`
+	ChainId                    uint64         `protobuf:"varint,16,opt,name=chain_id,json=chainId,proto3" json:"chain_id,omitempty"`
+	Denomination               string         `protobuf:"bytes,17,opt,name=denomination,proto3" json:"denomination,omitempty"`
+	SettlementDomainId         string         `protobuf:"bytes,18,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
 	unknownFields              protoimpl.UnknownFields
 	sizeCache                  protoimpl.SizeCache
 }
@@ -414,6 +416,13 @@ func (x *CreateSpendAuthorizationRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use CreateSpendAuthorizationRequest.ProtoReflect.Descriptor instead.
 func (*CreateSpendAuthorizationRequest) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_payer_daemon_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CreateSpendAuthorizationRequest) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *CreateSpendAuthorizationRequest) GetPayee() []byte {
@@ -1015,8 +1024,9 @@ const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\x16ticket_validity_period\x18\t \x01(\x03R\x14ticketValidityPeriod\x12J\n" +
 	"\"ticket_validity_period_observed_at\x18\n" +
 	" \x01(\tR\x1eticketValidityPeriodObservedAt\x12Q\n" +
-	"\x15account_shortfall_wei\x18\f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13accountShortfallWei\"\xf2\x05\n" +
-	"\x1fCreateSpendAuthorizationRequest\x12\x14\n" +
+	"\x15account_shortfall_wei\x18\f \x01(\v2\x1d.livepeer.payments.v1.BigUIntR\x13accountShortfallWei\"\xa4\x06\n" +
+	"\x1fCreateSpendAuthorizationRequest\x120\n" +
+	"\x14wholesale_account_id\x18\x13 \x01(\tR\x12wholesaleAccountId\x12\x14\n" +
 	"\x05payee\x18\x01 \x01(\fR\x05payee\x12)\n" +
 	"\x10authorization_id\x18\x02 \x01(\tR\x0fauthorizationId\x12\x1d\n" +
 	"\n" +

@@ -530,7 +530,7 @@ arbitrarily** — rotating is a session reset and costs the sender a
 quote round-trip.
 
 Operator-initiated rotation uses `PayeeAdmin.ResetSession(sender,
-recipient, capability, offering)`. Reset closes the old session, drops
+recipient, capability, offering, wholesale_account_id, ticket_stream_id)`. Reset closes the old session, drops
 its nonce ledger, and makes the next `GetTicketParams` mint a fresh
 `work_id`.
 
@@ -541,12 +541,13 @@ credited there would be redeemed on chain against a session that can
 never serve the sender. The receiver therefore rejects the payment
 before validating any ticket, credits nothing, and queues no winners.
 
-The refusal is returned as a successful `ProcessPayment` carrying
-`tickets_rejected` and a dominant `INVALID_RECIPIENT_RAND`. Account funding
-credits nothing. The payer reports the result, refreshes ticket parameters,
-and retries the funding intent with a new id. No workload is rebound:
-authorizations and stable account value are independent of this funding
-generation.
+For isolated accounts, `FundWholesaleAccount` refuses a closed or exhausted
+generation with `FailedPrecondition` and structured `INVALID_RECIPIENT_RAND` detail.
+Already committed funding replays its exact receipt even after rotation. The broker
+currently exposes a generic funding rejection; after a known operator reset,
+invalidate the sender cache explicitly or restart it. Never infer nonpayment from
+an uncertain HTTP result or remint before reconciling the original receipt.
+Authorizations and stable account credit do not move when a generation rotates.
 
 Note what reset does **not** do: it rotates the stable-tuple index and
 closes the session record, but the session's rand survives, so tickets
@@ -902,3 +903,23 @@ The chain probe requires `--settlement-domain-id` from the signed route.
 
 For regional revenue collection and held-history diagnosis, see
 [regional receiver revenue evidence](regional-revenue-reporting.md).
+
+## Shared-wallet account cutover and rotation
+
+Assign a distinct application/environment `wholesale_account_id`; persist one sender
+database per independent daemon. Restarts reuse its `ticket_stream_id`. Copying a
+live database duplicates a nonce allocator and is unsupported. Wallet signing keys
+and the on-chain deposit remain shared trust/exposure even with separate accounts.
+
+Quiesce new work and funding, reconcile active authorizations, drain legacy credit
+with the old release, and preserve a ledger backup before the coordinated upgrade.
+There is no automatic legacy balance allocation. New account identities start at
+zero; the old ledger rows remain intact. See
+[the cutover contract](../../livepeer-network-protocol/protocols/wholesale-account.md#71-coordinated-shared-wallet-cutover).
+
+`PayeeAdmin.ResetSession` requires `wholesale_account_id` and `ticket_stream_id` as
+well as sender, recipient and route. This retires only that stream's generation.
+After a deliberate reset, invalidate sender cached parameters using
+`ReportPaymentResult` with `INVALID_RECIPIENT_RAND` or restart the sender. Replay
+uncertain funding bytes to obtain their original receipt before considering a new
+mint; a timeout does not prove that tickets were uncredited.

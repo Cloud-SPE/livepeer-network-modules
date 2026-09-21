@@ -116,7 +116,7 @@ func TestGetTicketParams_IsIdempotentForOpenSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := &pb.GetTicketParamsRequest{
+	req := &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     signer.Address(),
 		Recipient:  recipient,
 		FaceValue:  big.NewInt(1234).Bytes(),
@@ -157,7 +157,7 @@ func TestGetTicketParams_PersistsAcrossReceiverRestart(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req := &pb.GetTicketParamsRequest{
+	req := &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     signer.Address(),
 		Recipient:  recipient,
 		FaceValue:  big.NewInt(1234).Bytes(),
@@ -170,14 +170,13 @@ func TestGetTicketParams_PersistsAcrossReceiverRestart(t *testing.T) {
 	}
 	firstWorkID := hex.EncodeToString(first.GetTicketParams().GetRecipientRandHash())
 	firstPayment := signPayment(t, signer, recipient, first.GetTicketParams(), 1)
-	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	resp, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: firstPayment,
-		WorkId:       firstWorkID,
 	})
 	if err != nil {
 		t.Fatalf("first ProcessPayment: %v", err)
 	}
-	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() <= 0 {
+	if got := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue()); got.Sign() <= 0 {
 		t.Fatalf("first credited_ev = %s; want > 0", got)
 	}
 	cleanup()
@@ -197,14 +196,13 @@ func TestGetTicketParams_PersistsAcrossReceiverRestart(t *testing.T) {
 		t.Fatalf("work_id changed across restart: first=%s second=%s", firstWorkID, secondWorkID)
 	}
 	secondPayment := signPayment(t, signer, recipient, second.GetTicketParams(), 2)
-	resp, err = client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	resp, err = client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: secondPayment,
-		WorkId:       secondWorkID,
 	})
 	if err != nil {
 		t.Fatalf("second ProcessPayment after restart: %v", err)
 	}
-	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() <= 0 {
+	if got := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue()); got.Sign() <= 0 {
 		t.Fatalf("second credited_ev = %s; want > 0", got)
 	}
 }
@@ -231,7 +229,7 @@ func TestProcessPayment_E2E_RealSig(t *testing.T) {
 	defer cancel()
 
 	// 1. Sender asks the receiver for params.
-	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     sender,
 		Recipient:  recipient,
 		Capability: "openai:/v1/chat/completions",
@@ -246,7 +244,6 @@ func TestProcessPayment_E2E_RealSig(t *testing.T) {
 	}
 	rrHash := tp.GetTicketParams().GetRecipientRandHash()
 	seed := tp.GetTicketParams().GetSeed()
-	workID := hex.EncodeToString(rrHash)
 	faceValue := new(big.Int).SetBytes(tp.GetTicketParams().GetFaceValue())
 	winProb := new(big.Int).SetBytes(tp.GetTicketParams().GetWinProb())
 	if len(seed) != 32 {
@@ -291,17 +288,14 @@ func TestProcessPayment_E2E_RealSig(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	resp, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: raw,
-		WorkId:       workID,
 	})
 	if err != nil {
 		t.Fatalf("ProcessPayment: %v", err)
 	}
-	if resp.GetWinnersQueued() != 1 {
-		t.Errorf("WinnersQueued = %d; want 1 (MaxWinProb → always wins)", resp.GetWinnersQueued())
-	}
-	credited := new(big.Int).SetBytes(resp.GetCreditedEv())
+
+	credited := new(big.Int).SetBytes(resp.GetCreditedValueWei().GetValue())
 	if credited.Cmp(faceValue) != 0 {
 		t.Errorf("CreditedEv = %s; want %s (faceValue × MaxWinProb / 2^256 = faceValue)", credited, faceValue)
 	}
@@ -329,7 +323,7 @@ func TestProcessPayment_RejectsBadSig(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     sender,
 		Recipient:  recipient,
 		Capability: "x", Offering: "y",
@@ -362,29 +356,11 @@ func TestProcessPayment_RejectsBadSig(t *testing.T) {
 		TicketSenderParams: []*pb.TicketSenderParams{{SenderNonce: 1, Sig: sig}},
 	}
 	raw, _ := proto.Marshal(payment)
-	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
-		PaymentBytes: raw, WorkId: hex.EncodeToString(rrHash),
+	_, err = client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		PaymentBytes: raw,
 	})
-	if err != nil {
-		t.Fatalf("ProcessPayment: %v", err)
-	}
-	if resp.GetWinnersQueued() != 0 {
-		t.Errorf("WinnersQueued = %d; want 0 (bad sig)", resp.GetWinnersQueued())
-	}
-	if got := new(big.Int).SetBytes(resp.GetCreditedEv()); got.Sign() != 0 {
-		t.Errorf("CreditedEv = %s; want 0 (bad sig)", got)
-	}
-	if resp.GetTicketsRejected() != 1 {
-		t.Fatalf("TicketsRejected = %d; want 1", resp.GetTicketsRejected())
-	}
-	if resp.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE {
-		t.Fatalf("DominantRejection = %v; want INVALID_SIGNATURE", resp.GetDominantRejection())
-	}
-	if len(resp.GetTicketStatus()) != 1 {
-		t.Fatalf("TicketStatus count = %d; want 1", len(resp.GetTicketStatus()))
-	}
-	if resp.GetTicketStatus()[0].GetRejectionReason() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_SIGNATURE {
-		t.Fatalf("ticket rejection reason = %v; want INVALID_SIGNATURE", resp.GetTicketStatus()[0].GetRejectionReason())
+	if err == nil {
+		t.Fatal("invalid funding accepted")
 	}
 }
 
@@ -401,7 +377,7 @@ func TestProcessPayment_NonceReplayDropped(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	tp, _ := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+	tp, _ := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender: sender, Recipient: recipient, Capability: "x", Offering: "y",
 	})
 	rrHash := tp.GetTicketParams().GetRecipientRandHash()
@@ -427,17 +403,16 @@ func TestProcessPayment_NonceReplayDropped(t *testing.T) {
 	}
 	raw, _ := proto.Marshal(payment)
 
-	first, _ := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
-		PaymentBytes: raw, WorkId: hex.EncodeToString(rrHash),
+	first, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		PaymentBytes: raw,
 	})
-	if first.GetWinnersQueued() != 1 {
-		t.Errorf("first WinnersQueued = %d; want 1", first.GetWinnersQueued())
-	}
-	second, _ := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
-		PaymentBytes: raw, WorkId: hex.EncodeToString(rrHash),
+
+	second, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		PaymentBytes: raw,
 	})
-	if second.GetWinnersQueued() != 0 {
-		t.Errorf("replay WinnersQueued = %d; want 0 (nonce replay)", second.GetWinnersQueued())
+
+	if err != nil || !second.GetReplayed() || !proto.Equal(first.GetAccount(), second.GetAccount()) {
+		t.Fatalf("replay=%v err=%v", second, err)
 	}
 }
 
@@ -452,7 +427,7 @@ func TestProcessPayment_InvalidRecipientRandReported(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
+	tp, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender: sender, Recipient: recipient, Capability: "x", Offering: "y",
 	})
 	if err != nil {
@@ -483,24 +458,11 @@ func TestProcessPayment_InvalidRecipientRandReported(t *testing.T) {
 		TicketSenderParams: []*pb.TicketSenderParams{{SenderNonce: 1, Sig: sig}},
 	}
 	raw, _ := proto.Marshal(payment)
-	resp, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	_, err = client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: raw,
-		WorkId:       hex.EncodeToString(params.GetRecipientRandHash()),
 	})
-	if err != nil {
-		t.Fatalf("ProcessPayment: %v", err)
-	}
-	if resp.GetTicketsRejected() != 1 {
-		t.Fatalf("TicketsRejected = %d; want 1", resp.GetTicketsRejected())
-	}
-	if resp.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
-		t.Fatalf("DominantRejection = %v; want INVALID_RECIPIENT_RAND", resp.GetDominantRejection())
-	}
-	if len(resp.GetTicketStatus()) != 1 {
-		t.Fatalf("TicketStatus count = %d; want 1", len(resp.GetTicketStatus()))
-	}
-	if resp.GetTicketStatus()[0].GetRejectionReason() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND {
-		t.Fatalf("ticket rejection reason = %v; want INVALID_RECIPIENT_RAND", resp.GetTicketStatus()[0].GetRejectionReason())
+	if err == nil {
+		t.Fatal("invalid funding accepted")
 	}
 }
 

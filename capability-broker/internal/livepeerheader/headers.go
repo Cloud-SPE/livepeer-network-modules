@@ -9,9 +9,10 @@ package livepeerheader
 
 // Required request headers (gateway → broker).
 const (
-	Capability = "Livepeer-Capability"
-	Offering   = "Livepeer-Offering"
-	Payment    = "Livepeer-Payment"
+	Capability         = "Livepeer-Capability"
+	Offering           = "Livepeer-Offering"
+	Payment            = "Livepeer-Payment"
+	WholesaleAccountID = "Livepeer-Wholesale-Account-Id"
 	// Authorization is the required payer-signed, single-purpose reservation
 	// for exactly this job or logical session. Payment is optional account
 	// funding and never substitutes for authorization.

@@ -207,7 +207,7 @@ func TestJobCapacityRefusalSettlesZeroForUnaryAndStream(t *testing.T) {
 			if units != "0" {
 				t.Fatalf("work units = %q, want zero", units)
 			}
-			status, err := mock.GetSpendAuthorization(context.Background(), bytes.Repeat([]byte{1}, 20), "auth-"+requestID)
+			status, err := mock.GetSpendAuthorization(context.Background(), bytes.Repeat([]byte{1}, 20), "auth-"+requestID, "test-account")
 			if err != nil || status.Billed.Sign() != 0 || status.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) {
 				t.Fatalf("authorization status=%+v err=%v", status, err)
 			}
@@ -270,8 +270,8 @@ func setJobTestAuthorizationPrice(t *testing.T, req *http.Request, _ string, pri
 	req.Body = io.NopCloser(strings.NewReader(string(body)))
 	digest := sha256.Sum256(body)
 	requestID := req.Header.Get(livepeerheader.RequestID)
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Domain: "livepeer-spend-authorization/v2", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v3", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
 		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID,
 		RequestId: requestID, Protocol: "paid-job/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example",
 		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(price).Bytes()}, UnitsPerPrice: 1, WorkUnitName: workUnit, Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering)},
@@ -830,7 +830,7 @@ func TestDebitRetryCannotDoubleCharge(t *testing.T) {
 		s.sweepPendingDebits(t.Context())
 	}
 
-	account, err := mock.GetWholesaleAccount(t.Context(), bytes.Repeat([]byte{1}, 20))
+	account, err := mock.GetWholesaleAccount(t.Context(), bytes.Repeat([]byte{1}, 20), "test-account")
 	if err != nil {
 		t.Fatal(err)
 	}

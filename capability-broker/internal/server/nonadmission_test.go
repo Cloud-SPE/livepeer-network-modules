@@ -23,7 +23,7 @@ import (
 )
 
 func naBodyFor(issuedAt string) string {
-	return `{"protocol":"paid-job/v1","work_id":"work-abc",` +
+	return `{"wholesale_account_id":"test-account","protocol":"paid-job/v1","work_id":"work-abc",` +
 		`"sender":"` + strings.Repeat("0a", 20) + `",` +
 		`"recipient":"` + strings.Repeat("0b", 20) + `",` +
 		`"quote_id":"q-1","quote_version":1,` +
@@ -600,5 +600,26 @@ func TestEvidenceExpiredSurvivesRestart(t *testing.T) {
 	}
 	if jobID == "" {
 		t.Fatal("tombstone lost its job id")
+	}
+}
+
+func TestNonAdmissionReplayRejectsDifferentAccount(t *testing.T) {
+	var calls atomic.Int64
+	srv, _ := newSignedJobTestServer(t, &calls)
+	body := naBody()
+	first := askNonAdmission(t, srv, "isolated-replay", body)
+	first.Body.Close()
+	if first.StatusCode != http.StatusOK {
+		t.Fatalf("initial status %d", first.StatusCode)
+	}
+	replay := askNonAdmission(t, srv, "isolated-replay", body)
+	replay.Body.Close()
+	if replay.StatusCode != http.StatusOK {
+		t.Fatalf("replay status %d", replay.StatusCode)
+	}
+	wrong := askNonAdmission(t, srv, "isolated-replay", strings.Replace(body, "test-account", "another-account", 1))
+	wrong.Body.Close()
+	if wrong.StatusCode != http.StatusConflict {
+		t.Fatalf("cross-account replay status %d", wrong.StatusCode)
 	}
 }

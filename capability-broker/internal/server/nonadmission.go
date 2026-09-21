@@ -3,15 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
@@ -32,6 +35,7 @@ import (
 // compares every field to its own record before acting, which is what
 // makes echoed context sufficient.
 type nonAdmissionQuery struct {
+	WholesaleAccountID    string  `json:"wholesale_account_id"`
 	Protocol              string  `json:"protocol"`
 	WorkID                string  `json:"work_id"`
 	SenderHex             string  `json:"sender"`
@@ -52,6 +56,9 @@ type nonAdmissionQuery struct {
 // signable too, producing a record that binds to nothing and can be
 // replayed against any envelope carrying the same request id.
 func (q *nonAdmissionQuery) validate() (time.Time, error) {
+	if !identity.ValidWholesaleAccountID(q.WholesaleAccountID) {
+		return time.Time{}, errors.New("valid wholesale_account_id is required")
+	}
 	switch q.Protocol {
 	case "paid-job/v1", "paid-session/v1":
 	default:
@@ -155,6 +162,14 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 	// observed_at, and a consumer holding both cannot tell that they
 	// agree rather than conflict.
 	if prior, found, ferr := s.sessionStore.NonAdmissionFor(requestID); ferr == nil && found {
+		raw, decodeErr := base64.StdEncoding.DecodeString(prior)
+		var envelope settlement.Envelope
+		var record pb.NonAdmissionRecord
+		if decodeErr != nil || json.Unmarshal(raw, &envelope) != nil || protojson.Unmarshal(envelope.Payload, &record) != nil || record.GetWholesaleAccountId() != q.WholesaleAccountID {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "stored non-admission account does not match query")
+			return
+		}
+
 		w.Header().Set(livepeerheader.NonAdmission, prior)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"request_id":    requestID,
@@ -233,7 +248,7 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 
 	if rejected != nil {
 		var auth pb.SpendAuthorization
-		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
+		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetWholesaleAccountId() != q.WholesaleAccountID || auth.GetPayload().GetSettlementDomainId() != domainID {
 			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "rejected authorization domain mismatch")
 			return
 		}
@@ -244,18 +259,18 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := recovery.CloseUnexecutedAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), "durable paid-job payment refusal; runner not entered"); err != nil {
+		if err := recovery.CloseUnexecutedAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), "durable paid-job payment refusal; runner not entered", auth.GetPayload().GetWholesaleAccountId()); err != nil {
 			http.Error(w, "failed to fence rejected authorization", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	rec := &pb.NonAdmissionRecord{
-		SettlementDomainId: domainID,
-		Protocol:           q.Protocol,
-		RequestId:          requestID,
-		WorkId:             q.WorkID,
-		Sender:             sender,
-		Recipient:          recipient,
+		WholesaleAccountId: q.WholesaleAccountID, SettlementDomainId: domainID,
+		Protocol:  q.Protocol,
+		RequestId: requestID,
+		WorkId:    q.WorkID,
+		Sender:    sender,
+		Recipient: recipient,
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               q.QuoteID,
 			QuoteVersion:          *q.QuoteVersion,

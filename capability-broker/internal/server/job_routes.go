@@ -186,18 +186,18 @@ func toStorePending(pd *middleware.PendingDebit) *sessionstore.PendingDebit {
 		accountFunding = pd.AccountFundingWei.String()
 	}
 	return &sessionstore.PendingDebit{
-		AuthorizationBytes: append([]byte(nil), pd.AuthorizationBytes...),
-		Sender:             append([]byte(nil), pd.Sender...),
-		WorkID:             pd.WorkID,
-		DebitSeq:           pd.DebitSeq,
-		ReservedValueWei:   reserved,
-		AccountFundingWei:  accountFunding,
-		AccountVersion:     pd.AccountVersion,
-		ActualUnits:        pd.ActualUnits,
-		MeasuredUnits:      pd.MeasuredUnits,
-		WorkUnitName:       pd.WorkUnitName,
-		JobID:              pd.JobID,
-		RequestID:          pd.RequestID,
+		WholesaleAccountID: pd.WholesaleAccountID, AuthorizationBytes: append([]byte(nil), pd.AuthorizationBytes...),
+		Sender:            append([]byte(nil), pd.Sender...),
+		WorkID:            pd.WorkID,
+		DebitSeq:          pd.DebitSeq,
+		ReservedValueWei:  reserved,
+		AccountFundingWei: accountFunding,
+		AccountVersion:    pd.AccountVersion,
+		ActualUnits:       pd.ActualUnits,
+		MeasuredUnits:     pd.MeasuredUnits,
+		WorkUnitName:      pd.WorkUnitName,
+		JobID:             pd.JobID,
+		RequestID:         pd.RequestID,
 		// Due immediately: the first retry should not wait out a backoff
 		// the exchange has not earned yet.
 		NextAttemptAt: time.Now().UTC(),

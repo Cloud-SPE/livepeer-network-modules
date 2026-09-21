@@ -54,8 +54,8 @@ type fakePayment struct {
 	failSettles     int
 }
 
-func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
-	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
+func (f *fakePayment) FundWholesaleAccount(context.Context, []byte, string) (*payment.FundWholesaleAccountResult, error) {
+	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
 }
 
 func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
@@ -77,7 +77,7 @@ func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAut
 	f.mu.Lock()
 	f.openCalls++
 	f.mu.Unlock()
-	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
+	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
 }
 func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
 	f.mu.Lock()
@@ -95,7 +95,7 @@ func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.Advanc
 		f.debits = append(f.debits, debitCall{units: int64(req.CumulativeUnits - f.debitedUnits), seq: req.AdvanceSeq})
 		f.debitedUnits = req.CumulativeUnits
 	}
-	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
+	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
 }
 func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
 	f.mu.Lock()
@@ -108,12 +108,12 @@ func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleA
 	f.closed++
 	price, per := f.pricing()
 	billed := payment.BillFor(price, per, req.ActualUnits)
-	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
+	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
 }
-func (f *fakePayment) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
-	return &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, nil
+func (f *fakePayment) GetWholesaleAccount(context.Context, []byte, string) (*payment.WholesaleAccount, error) {
+	return &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, nil
 }
-func (f *fakePayment) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+func (f *fakePayment) GetSpendAuthorization(context.Context, []byte, string, string) (*payment.SpendAuthorizationStatus, error) {
 	return &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Reserved: big.NewInt(50)}, nil
 }
 
@@ -386,8 +386,8 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) authorization(t *testing.T, authorizationID, requestID, sessionID string, maxUnits uint64) []byte {
 	t.Helper()
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Domain: "livepeer-spend-authorization/v2", AuthorizationId: authorizationID, RequestId: requestID, SessionId: sessionID,
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v3", AuthorizationId: authorizationID, RequestId: requestID, SessionId: sessionID,
 		Payer: bytes.Repeat([]byte{0x11}, 20), Payee: bytes.Repeat([]byte{0x22}, 20), Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
 		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: h.spec.WorkUnit},
 		MaxDebitWei:   &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: maxUnits,
@@ -503,7 +503,7 @@ func TestOpenCapacityRefusalPersistsZeroUseAndRecoversSettlement(t *testing.T) {
 func TestAccountBackedSessionUsesBoundedRunwayAndSettles(t *testing.T) {
 	h := newHarness(t)
 	payer, payee := bytes.Repeat([]byte{0x11}, 20), bytes.Repeat([]byte{0x22}, 20)
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		AuthorizationId: "auth-session-1", RequestId: "req-account-1", SessionId: "gws-account-1",
 		Payer: payer, Payee: payee, Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
 		MaxDebitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: 100,

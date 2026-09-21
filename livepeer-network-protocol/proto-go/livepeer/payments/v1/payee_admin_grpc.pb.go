@@ -32,7 +32,7 @@ const (
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
 type PayeeAdminClient interface {
 	// Reset the active GetTicketParams session keyed by the stable
-	// sender/recipient/capability/offering identity. The current open
+	// sender/recipient/capability/offering/account/stream identity. The current open
 	// session is marked closed, its recipientRand nonce ledger is
 	// dropped, and the next GetTicketParams call mints a fresh work_id.
 	ResetSession(ctx context.Context, in *ResetSessionRequest, opts ...grpc.CallOption) (*ResetSessionResponse, error)
@@ -61,7 +61,7 @@ func (c *payeeAdminClient) ResetSession(ctx context.Context, in *ResetSessionReq
 // for forward compatibility.
 type PayeeAdminServer interface {
 	// Reset the active GetTicketParams session keyed by the stable
-	// sender/recipient/capability/offering identity. The current open
+	// sender/recipient/capability/offering/account/stream identity. The current open
 	// session is marked closed, its recipientRand nonce ledger is
 	// dropped, and the next GetTicketParams call mints a fresh work_id.
 	ResetSession(context.Context, *ResetSessionRequest) (*ResetSessionResponse, error)

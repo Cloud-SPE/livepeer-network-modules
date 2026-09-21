@@ -244,7 +244,7 @@ func TestLostReceiverResponseAndControllerOutageAcrossRestart(t *testing.T) {
 	if remote.calls != 2 || len(out.items) != 1 {
 		t.Fatalf("calls=%d deliveries=%d", remote.calls, len(out.items))
 	}
-	next := &pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{AuthorizationId: "next", PredecessorAuthorizationId: "job", SettlementDomainId: "source", Payer: make([]byte, 20)}}
+	next := &pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", AuthorizationId: "next", PredecessorAuthorizationId: "job", SettlementDomainId: "source", Payer: make([]byte, 20)}}
 	raw, _ := proto.Marshal(next)
 	if _, err = c.AdmitAuthorization(context.Background(), payment.AdmitAuthorizationRequest{AuthorizationBytes: raw}); err != nil {
 		t.Fatal(err)

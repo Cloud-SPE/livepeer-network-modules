@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"math/big"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,7 +21,7 @@ func signedAuthorization(t *testing.T, ks *inmemory.KeyStore, id string, payee [
 	t.Helper()
 	now := time.Now().UTC()
 	requestDigest := sha256.Sum256([]byte("request body"))
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Domain: spendauth.Domain, Payer: ks.Address(), Payee: payee,
 		ChainId: 42161, Denomination: "wei",
 		AuthorizationId: id, RequestId: "request-" + id, BrokerUri: "https://broker.example",
@@ -62,23 +63,14 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	}
 	payer, payee := ks.Address(), bytes20(0xaa)
 
-	// Seed reusable wholesale credit by migrating one ticket-generation
-	// balance, exactly what the account admission path does after validation.
-	if _, _, err := st.OpenSession(store.Session{WorkID: "generation", Capability: "custom:any", Offering: "offer", PricePerWorkUnitWei: "10", PerUnits: 1, WorkUnit: "widgets"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.SealSender("generation", payer); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := st.CreditBalance(payer, "generation", big.NewInt(1000)); err != nil {
-		t.Fatal(err)
-	}
+	// Seed the account through the atomic receipt transaction.
 	now := time.Now().UTC()
-	bootstrap := store.WholesaleAuthorizationSeed{ID: "bootstrap", Fingerprint: []byte("bootstrap"), Payer: payer, Payee: payee, RequestID: "bootstrap", Protocol: "paid-job/v1", Capability: "custom:any", Offering: "offer", PriceWei: "1", PerUnits: 1, WorkUnit: "widgets", MaxDebitWei: "1", MaxTotalUnits: 1, ExpiresAt: now.Add(time.Hour)}
-	if _, err := st.AdmitWholesale(bootstrap, "generation", nil, now); err != nil {
+	_, _, err = st.GetOrCreateTicketSession(store.TicketSessionKey{Sender: payer, Recipient: payee, Capability: "custom:any", Offering: "offer", WholesaleAccountID: "test-account", TicketStreamID: "test-stream"}, store.Session{WorkID: "generation", RecipientRand: "123", PricePerWorkUnitWei: "10"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.SettleWholesale(payer, payee, "bootstrap", 0, 1, now); err != nil {
+	_, _, err = st.ApplyWholesaleFunding(payer, payee, "test-account", "generation", strings.Repeat("a", 64), []store.FundingTicket{{Nonce: 1, Credit: big.NewInt(1000)}}, now)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,14 +90,14 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	if err != nil || !admitReplay.GetReplayed() || len(admitReplay.GetCreditedValueWei().GetValue()) != 0 {
 		t.Fatalf("admission replay=%+v err=%v", admitReplay, err)
 	}
-	advanced, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	advanced, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2,
 		TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1,
 	})
 	if err != nil || new(big.Int).SetBytes(advanced.GetBilledDeltaWei().GetValue()).Int64() != 20 {
 		t.Fatalf("advanced=%+v err=%v", advanced, err)
 	}
-	advanceReplay, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	advanceReplay, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2,
 		TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1,
 		PaymentBytes: []byte("must-not-be-processed"),
@@ -113,18 +105,18 @@ func TestWholesaleAuthorizationRPC(t *testing.T) {
 	if err != nil || !advanceReplay.GetReplayed() || len(advanceReplay.GetCreditedValueWei().GetValue()) != 0 {
 		t.Fatalf("advance replay=%+v err=%v", advanceReplay, err)
 	}
-	settled, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
+	settled, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if new(big.Int).SetBytes(settled.GetBilledValueWei().GetValue()).Int64() != 40 || new(big.Int).SetBytes(settled.GetReleasedValueWei().GetValue()).Int64() != 60 {
 		t.Fatalf("settled=%+v", settled)
 	}
-	recovered, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2, TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1, PaymentBytes: []byte("must-not-be-processed")})
+	recovered, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", CumulativeUnits: 2, TargetReservedValueWei: &pb.BigUInt{Value: big.NewInt(80).Bytes()}, AdvanceSeq: 1, PaymentBytes: []byte("must-not-be-processed")})
 	if err != nil || !recovered.GetReplayed() || new(big.Int).SetBytes(recovered.GetCumulativeBilledValueWei().GetValue()).Int64() != 20 || recovered.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED {
 		t.Fatalf("historical advance after settlement %+v %v", recovered, err)
 	}
-	replay, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
+	replay, err := client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, AuthorizationId: "job-1", ActualUnits: 4, SettlementSeq: 2})
 	if err != nil || !replay.GetReplayed() {
 		t.Fatalf("replay=%+v err=%v", replay, err)
 	}

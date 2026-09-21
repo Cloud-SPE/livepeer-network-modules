@@ -35,6 +35,8 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 	// Broker-style HTTP proxy for /v1/payment/ticket-params.
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req struct {
+			WholesaleAccountID  string `json:"wholesale_account_id"`
+			TicketStreamID      string `json:"ticket_stream_id"`
 			SenderETHAddress    string `json:"sender_eth_address"`
 			RecipientETHAddress string `json:"recipient_eth_address"`
 			FaceValueWei        string `json:"face_value_wei"`
@@ -48,7 +50,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 		senderAddr := mustDecodeHexAddress(t, req.SenderETHAddress)
 		recipientAddr := mustDecodeHexAddress(t, req.RecipientETHAddress)
 		faceValue, _ := new(big.Int).SetString(req.FaceValueWei, 10)
-		resp, err := payee.GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{
+		resp, err := payee.GetTicketParams(r.Context(), &pb.GetTicketParamsRequest{WholesaleAccountId: req.WholesaleAccountID, TicketStreamId: req.TicketStreamID,
 			Sender:     senderAddr,
 			Recipient:  recipientAddr,
 			FaceValue:  faceValue.Bytes(),
@@ -60,6 +62,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			return
 		}
 		out := map[string]any{
+			"wholesale_account_id": req.WholesaleAccountID, "ticket_stream_id": req.TicketStreamID, "isolation_version": 1,
 			"settlement_domain_id": "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "ticket_params": map[string]any{
 				"recipient":           req.RecipientETHAddress,
 				"face_value":          new(big.Int).SetBytes(resp.GetTicketParams().GetFaceValue()).String(),
@@ -131,7 +134,7 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 			FundedValueWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()},
 			MaxTotalUnits:  1,
 		},
-		AccountFunding: &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
+		AccountFunding: &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 	})
 	if err != nil {
 		t.Fatalf("CreatePayment: %v", err)
@@ -161,17 +164,14 @@ func TestQuoteFreeSenderFetchesPayeeParamsAndReceiverAcceptsPayment(t *testing.T
 		t.Fatalf("OpenSession outcome = %s; want ALREADY_OPEN", openResp.GetOutcome())
 	}
 
-	processResp, err := payee.ProcessPayment(ctx, &pb.ProcessPaymentRequest{
+	processResp, err := payee.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		PaymentBytes: createResp.GetPaymentBytes(),
-		WorkId:       workID,
 	})
 	if err != nil {
 		t.Fatalf("ProcessPayment: %v", err)
 	}
-	if processResp.GetWinnersQueued() != 1 {
-		t.Fatalf("WinnersQueued = %d; want 1", processResp.GetWinnersQueued())
-	}
-	if got := new(big.Int).SetBytes(processResp.GetCreditedEv()); got.Cmp(big.NewInt(1000)) != 0 {
+
+	if got := new(big.Int).SetBytes(processResp.GetCreditedValueWei().GetValue()); got.Cmp(big.NewInt(1000)) != 0 {
 		t.Fatalf("CreditedEv = %s; want 1000", got)
 	}
 

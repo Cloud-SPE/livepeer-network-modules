@@ -66,7 +66,7 @@ func stand(t *testing.T) (pb.PayerDaemonClient, func()) {
 type fakeFetcher struct{}
 
 func (fakeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
-	return &senderTypes.TicketParams{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	return &senderTypes.TicketParams{WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID, SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient: append([]byte(nil), req.Recipient...),
 		FaceValue: new(big.Int).Set(req.FaceValue),
 		// MaxWinProb: every ticket credits its full face value, so one
@@ -106,7 +106,7 @@ func (f *rotatingFetcher) Fetch(_ context.Context, req sender.TicketParamsReques
 	if f.count > 1 {
 		hash = []byte("0123456789abcdef0123456789abcde2")
 	}
-	return &senderTypes.TicketParams{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	return &senderTypes.TicketParams{WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID, SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient: append([]byte(nil), req.Recipient...),
 		FaceValue: new(big.Int).Set(req.FaceValue),
 		// MaxWinProb: every ticket credits its full face value, so one
@@ -185,7 +185,7 @@ func TestCreateSpendAuthorizationIsDurablyIdempotentAndScopeBound(t *testing.T) 
 	client, cleanup := stand(t)
 	defer cleanup()
 	now := time.Now().UTC()
-	req := &pb.CreateSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	req := &pb.CreateSpendAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Payee: bytes.Repeat([]byte{0x22}, 20), AuthorizationId: "authorization-1", RequestId: "request-1",
 		Protocol: "paid-job/v1", BrokerUri: "https://broker.example/",
 		ChainId: 42161, Denomination: "wei",
@@ -216,7 +216,7 @@ func TestCreatePaymentFundsOnlyAccountShortfall(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()
 	req := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 999, "https://broker.example")
-	req.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(70).Bytes()}}
+	req.AccountFunding = &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(70).Bytes()}}
 	res, err := client.CreatePayment(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestCreatePaymentFundsOnlyAccountShortfall(t *testing.T) {
 	}
 
 	zero := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 999, "https://broker.example")
-	zero.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}}
+	zero.AccountFunding = &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}}
 	res, err = client.CreatePayment(context.Background(), zero)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestCreatePaymentRejectsAccountShortfallAboveFundingCeiling(t *testing.T) {
 	client, cleanup := stand(t)
 	defer cleanup()
 	req := makeCreatePaymentRequest([]byte("recipient-20-bytes!!"), "custom:any", "offer", "widgets", 1, 1, 20, "https://broker.example")
-	req.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	req.AccountFunding = &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		TargetAvailableWei:   &pb.BigUInt{Value: big.NewInt(100).Bytes()},
 		ObservedAvailableWei: &pb.BigUInt{Value: big.NewInt(70).Bytes()},
 	}
@@ -763,7 +763,7 @@ func makeCreatePaymentRequest(recipient []byte, capability, offering, workUnit s
 		TicketParamsBaseUrl: baseURL,
 		AcceptedPrice:       baseAcceptedPrice(capability, offering, workUnit, pricePerUnitWei, unitsPerPrice),
 		Funding:             baseFunding(fundedValueWei, unitsPerPrice),
-		AccountFunding:      &pb.AccountFundingIntent{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: new(big.Int).SetUint64(fundedValueWei).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
+		AccountFunding:      &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", TargetAvailableWei: &pb.BigUInt{Value: new(big.Int).SetUint64(fundedValueWei).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}},
 		MintRequestId:       fmt.Sprintf("test-mint-%d", mintSeq.Add(1)),
 	}
 }
@@ -795,7 +795,7 @@ func baseFunding(fundedValueWei, estimatedUnits uint64) *pb.FundingIntent {
 type authoritativeFetcher struct{}
 
 func (authoritativeFetcher) Fetch(_ context.Context, req sender.TicketParamsRequest) (*senderTypes.TicketParams, error) {
-	return &senderTypes.TicketParams{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	return &senderTypes.TicketParams{WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID, SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         big.NewInt(5000),
 		WinProb:           new(big.Int).Set(senderTypes.MaxWinProb),
@@ -818,7 +818,7 @@ func (halfProbabilityFetcher) Fetch(_ context.Context, req sender.TicketParamsRe
 	if rem.Sign() != 0 {
 		prob.Add(prob, big.NewInt(1))
 	}
-	return &senderTypes.TicketParams{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	return &senderTypes.TicketParams{WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID, SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         face,
 		WinProb:           prob,

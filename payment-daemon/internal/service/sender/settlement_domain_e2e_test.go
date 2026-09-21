@@ -36,7 +36,7 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 		t.Helper()
 		req := devModeCreateRequest(payeeAddress, id, url)
 		req.Funding.FundedValueWei = &pb.BigUInt{Value: big.NewInt(amount).Bytes()}
-		req.AccountFunding = &pb.AccountFundingIntent{SettlementDomainId: domain, TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(amount).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}}
+		req.AccountFunding = &pb.AccountFundingIntent{WholesaleAccountId: "test-account", SettlementDomainId: domain, TargetAvailableWei: &pb.BigUInt{Value: big.NewInt(amount).Bytes()}, ObservedAvailableWei: &pb.BigUInt{}}
 		out, err := payer.CreatePayment(ctx, req)
 		if err != nil {
 			t.Fatal(err)
@@ -51,7 +51,7 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 	payerAddress := payment.GetSender()
 	account := func(c pb.PayeeDaemonClient, d string) *pb.WholesaleAccountView {
 		t.Helper()
-		v, e := c.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{Payer: payerAddress, SettlementDomainId: d})
+		v, e := c.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{WholesaleAccountId: "test-account", Payer: payerAddress, SettlementDomainId: d})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -66,7 +66,7 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		_, e = c.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: d, PaymentBytes: m.GetPaymentBytes()})
+		_, e = c.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: d, PaymentBytes: m.GetPaymentBytes()})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -81,7 +81,7 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 	if _, err := b.OpenSession(ctx, &pb.OpenSessionRequest{WorkId: ma.GetWorkId(), Capability: "openai:chat-completions", Offering: "model-a", PricePerWorkUnitWei: big.NewInt(1000).Bytes(), PerUnits: 1, WorkUnit: "tokens"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := b.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: db, PaymentBytes: ma.GetPaymentBytes()}); err == nil {
+	if _, err := b.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: db, PaymentBytes: ma.GetPaymentBytes()}); err == nil {
 		t.Fatal("A ticket credited B")
 	}
 	mb := mint(urlB, db, "fund-b", 200000)
@@ -95,7 +95,7 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 		now := time.Now().UTC()
 		digest := sha256.Sum256([]byte("body"))
 		price := devModeCreateRequest(payeeAddress, "unused", url).GetAcceptedPrice()
-		v, e := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{SettlementDomainId: domain, Payee: payeeAddress, AuthorizationId: id, RequestId: id, Protocol: "paid-job/v1", AcceptedPrice: price, MaxDebitWei: &pb.BigUInt{Value: big.NewInt(10000).Bytes()}, MaxTotalUnits: 10, NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano), RequestDigest: digest[:], BrokerUri: url, ChainId: 42161, Denomination: "wei"})
+		v, e := payer.CreateSpendAuthorization(ctx, &pb.CreateSpendAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: domain, Payee: payeeAddress, AuthorizationId: id, RequestId: id, Protocol: "paid-job/v1", AcceptedPrice: price, MaxDebitWei: &pb.BigUInt{Value: big.NewInt(10000).Bytes()}, MaxTotalUnits: 10, NotBefore: now.Add(-time.Minute).Format(time.RFC3339Nano), ExpiresAt: now.Add(time.Hour).Format(time.RFC3339Nano), RequestDigest: digest[:], BrokerUri: url, ChainId: 42161, Denomination: "wei"})
 		if e != nil {
 			t.Fatal(e)
 		}
@@ -112,14 +112,14 @@ func TestIndependentSettlementDomainsConformance(t *testing.T) {
 	if _, e := b.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: ab}); e != nil {
 		t.Fatal(e)
 	}
-	if _, e := b.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: da, Payer: payerAddress, AuthorizationId: "same-id", ActualUnits: 1, SettlementSeq: 1}); e == nil {
+	if _, e := b.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: da, Payer: payerAddress, AuthorizationId: "same-id", ActualUnits: 1, SettlementSeq: 1}); e == nil {
 		t.Fatal("foreign domain settled colliding authorization ID")
 	}
 	for _, tc := range []struct {
 		c pb.PayeeDaemonClient
 		d string
 	}{{a, da}, {b, db}} {
-		if _, e := tc.c.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: tc.d, Payer: payerAddress, AuthorizationId: "same-id", ActualUnits: 1, SettlementSeq: 1}); e != nil {
+		if _, e := tc.c.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: tc.d, Payer: payerAddress, AuthorizationId: "same-id", ActualUnits: 1, SettlementSeq: 1}); e != nil {
 			t.Fatal(e)
 		}
 	}

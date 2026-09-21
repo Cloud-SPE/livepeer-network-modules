@@ -45,7 +45,7 @@ func bytesOf(v byte, n int) []byte {
 func baseAuthorization(ks *inmemory.KeyStore, payee []byte) *pb.SpendAuthorizationPayload {
 	now := time.Now().UTC()
 	digest := sha256.Sum256([]byte("request"))
-	return &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	return &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Domain: spendauth.Domain, Payer: ks.Address(), Payee: payee, ChainId: 42161, Denomination: "wei",
 		AuthorizationId: "auth", RequestId: "request", BrokerUri: "https://broker.example",
 		Protocol: "paid-job/v1", Capability: "custom:any", Offering: "default",
@@ -132,37 +132,37 @@ func TestAdmitAuthorizationValidationMatrix(t *testing.T) {
 func TestWholesaleLookupAndMutationErrors(t *testing.T) {
 	svc, st, ks, payee := receiverFixture(t)
 	ctx := context.Background()
-	if _, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid account lookup code=%v", status.Code(err))
 	}
-	account, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address()})
+	account, err := svc.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address()})
 	if err != nil || account.GetAccount().GetChainId() != 42161 || account.GetAccount().GetDenomination() != "wei" {
 		t.Fatalf("account=%+v err=%v", account, err)
 	}
-	if _, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing"}); status.Code(err) != codes.NotFound {
+	if _, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing"}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing authorization code=%v", status.Code(err))
 	}
-	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid advance code=%v", status.Code(err))
 	}
-	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", AdvanceSeq: 1, TargetReservedValueWei: &pb.BigUInt{}}); status.Code(err) != codes.NotFound {
+	if _, err := svc.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", AdvanceSeq: 1, TargetReservedValueWei: &pb.BigUInt{}}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing advance code=%v", status.Code(err))
 	}
-	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("invalid settle code=%v", status.Code(err))
 	}
-	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", SettlementSeq: 1}); status.Code(err) != codes.NotFound {
+	if _, err := svc.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "missing", SettlementSeq: 1}); status.Code(err) != codes.NotFound {
 		t.Fatalf("missing settle code=%v", status.Code(err))
 	}
-	if _, err := svc.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: []byte("bad")}); status.Code(err) != codes.InvalidArgument {
+	if _, err := svc.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", PaymentBytes: []byte("bad")}); status.Code(err) != codes.InvalidArgument {
 		t.Fatalf("malformed funding code=%v", status.Code(err))
 	}
 	now := time.Now().UTC()
-	seed := store.WholesaleAuthorizationSeed{ID: "expired", Fingerprint: []byte("fp"), Payer: ks.Address(), Payee: payee, RequestID: "r", Protocol: "paid-job/v1", Capability: "c", Offering: "o", PriceWei: "1", PerUnits: 1, WorkUnit: "u", MaxDebitWei: "1", MaxTotalUnits: 1, ExpiresAt: now.Add(-time.Second)}
+	seed := store.WholesaleAuthorizationSeed{WholesaleAccountID: "test-account", ID: "expired", Fingerprint: []byte("fp"), Payer: ks.Address(), Payee: payee, RequestID: "r", Protocol: "paid-job/v1", Capability: "c", Offering: "o", PriceWei: "1", PerUnits: 1, WorkUnit: "u", MaxDebitWei: "1", MaxTotalUnits: 1, ExpiresAt: now.Add(-time.Second)}
 	if _, err := st.AdmitWholesale(seed, "", nil, now); err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "expired"})
+	got, err := svc.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: ks.Address(), AuthorizationId: "expired"})
 	if err != nil || got.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED {
 		t.Fatalf("authorization=%+v err=%v", got, err)
 	}
@@ -284,27 +284,36 @@ func TestSignedPriceAndRPCInputValidation(t *testing.T) {
 		"balance-work":   func() error { _, err := svc.GetBalance(ctx, &pb.GetBalanceRequest{Sender: []byte{1}}); return err },
 		"close-sender":   func() error { _, err := svc.CloseSession(ctx, &pb.CloseSessionRequest{}); return err },
 		"close-work":     func() error { _, err := svc.CloseSession(ctx, &pb.CloseSessionRequest{Sender: []byte{1}}); return err },
-		"reset-sender":   func() error { _, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{}); return err },
+		"reset-sender": func() error {
+			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream"})
+			return err
+		},
 		"reset-recipient": func() error {
-			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{Sender: []byte{1}, Recipient: []byte{2}})
+			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: []byte{1}, Recipient: []byte{2}})
 			return err
 		},
-		"reset-capability": func() error { _, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{Sender: []byte{1}}); return err },
+		"reset-capability": func() error {
+			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: []byte{1}})
+			return err
+		},
 		"reset-offering": func() error {
-			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{Sender: []byte{1}, Capability: "c"})
+			_, err := svc.ResetSession(ctx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: []byte{1}, Capability: "c"})
 			return err
 		},
-		"params-sender": func() error { _, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); return err },
+		"params-sender": func() error {
+			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream"})
+			return err
+		},
 		"params-capability": func() error {
-			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{Sender: bytesOf(1, 20)})
+			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: bytesOf(1, 20)})
 			return err
 		},
 		"params-offering": func() error {
-			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{Sender: bytesOf(1, 20), Capability: "c"})
+			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: bytesOf(1, 20), Capability: "c"})
 			return err
 		},
 		"params-recipient": func() error {
-			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{Sender: bytesOf(1, 20), Capability: "c", Offering: "o", Recipient: bytesOf(2, 20)})
+			_, err := svc.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream", Sender: bytesOf(1, 20), Capability: "c", Offering: "o", Recipient: bytesOf(2, 20)})
 			return err
 		},
 	} {

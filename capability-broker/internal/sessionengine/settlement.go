@@ -48,7 +48,7 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		billed = v
 	}
 	out := &pb.SettlementRecord{
-		SettlementDomainId: rec.SettlementDomainID,
+		WholesaleAccountId: rec.WholesaleAccountID, SettlementDomainId: rec.SettlementDomainID,
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               rec.QuoteID,
 			QuoteVersion:          rec.QuoteVersion,

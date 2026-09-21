@@ -30,18 +30,19 @@ type Attribution struct {
 }
 
 type Operation struct {
-	ID              string
-	AuthorizationID string
-	Kind            string
-	Sequence        uint64
-	Payer           []byte
-	Units           uint64
-	TargetReserved  string
-	PaymentBytes    []byte
-	MinimumRound    int64
-	Completed       bool
-	TotalBilled     string
-	Emitted         bool
+	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
+	ID                 string
+	AuthorizationID    string
+	Kind               string
+	Sequence           uint64
+	Payer              []byte
+	Units              uint64
+	TargetReserved     string
+	PaymentBytes       []byte
+	MinimumRound       int64
+	Completed          bool
+	TotalBilled        string
+	Emitted            bool
 }
 
 type Store struct {
@@ -176,6 +177,9 @@ func (s *Store) Prepare(op Operation) (Operation, error) {
 			var auth pb.SpendAuthorization
 			if err := proto.Unmarshal(raw, &auth); err != nil {
 				return err
+			}
+			if auth.GetPayload().GetWholesaleAccountId() != op.WholesaleAccountID {
+				return fmt.Errorf("billing operation account differs from saved authorization")
 			}
 			if auth.GetPayload().GetPredecessorAuthorizationId() != "" && tx.Bucket([]byte("inherited_baselines")).Get([]byte(op.AuthorizationID)) == nil {
 				return fmt.Errorf("successor inherited billing baseline unavailable")

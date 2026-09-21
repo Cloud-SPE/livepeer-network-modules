@@ -38,24 +38,7 @@ func (s *Store) NonceSeen(recipientRand *big.Int, nonce uint32) (bool, error) {
 // already present. Returns ErrNonceAlreadySeen / ErrTooManyNonces in
 // those cases.
 func (s *Store) RecordNonce(recipientRand *big.Int, nonce uint32) error {
-	return s.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket([]byte(noncesBucket))
-		key := nonceKey(recipientRand, nonce)
-		if v := bucket.Get(key); v != nil {
-			return ErrNonceAlreadySeen
-		}
-		// Count the existing entries under this rand prefix.
-		prefix := append(randHex(recipientRand), 0x00)
-		count := 0
-		c := bucket.Cursor()
-		for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
-			count++
-			if count >= MaxSenderNonces {
-				return ErrTooManyNonces
-			}
-		}
-		return bucket.Put(key, []byte{1})
-	})
+	return s.db.Update(func(tx *bolt.Tx) error { return recordNonce(tx, recipientRand, nonce) })
 }
 
 // NonceCount reports how many nonces have been recorded under a
@@ -173,4 +156,23 @@ func (s *Store) FillNonceLedger(recipientRand *big.Int, from, count uint32) erro
 		}
 		return nil
 	})
+}
+
+func recordNonce(tx *bolt.Tx, recipientRand *big.Int, nonce uint32) error {
+	bucket := tx.Bucket([]byte(noncesBucket))
+	key := nonceKey(recipientRand, nonce)
+	if v := bucket.Get(key); v != nil {
+		return ErrNonceAlreadySeen
+	}
+	// Count the existing entries under this rand prefix.
+	prefix := append(randHex(recipientRand), 0x00)
+	count := 0
+	c := bucket.Cursor()
+	for k, _ := c.Seek(prefix); k != nil && hasPrefix(k, prefix); k, _ = c.Next() {
+		count++
+		if count >= MaxSenderNonces {
+			return ErrTooManyNonces
+		}
+	}
+	return bucket.Put(key, []byte{1})
 }

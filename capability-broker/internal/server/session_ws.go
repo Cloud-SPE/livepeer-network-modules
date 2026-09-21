@@ -201,7 +201,7 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 		p := auth.GetPayload()
 		spec := s.specForRecord(rec)
 		emptyDigest := sha256.Sum256(nil)
-		if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") || !bytes.Equal(p.GetRequestDigest(), emptyDigest[:]) {
+		if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v3" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") || !bytes.Equal(p.GetRequestDigest(), emptyDigest[:]) {
 			fail(livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session.topup")
 			return
 		}

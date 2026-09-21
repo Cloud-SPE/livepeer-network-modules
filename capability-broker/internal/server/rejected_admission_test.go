@@ -41,7 +41,7 @@ func (p *refusingAdmission) AdmitAuthorization(context.Context, payment.AdmitAut
 	}
 	return nil, status.Error(codes.FailedPrecondition, "insufficient wholesale account balance: available=0 required=100")
 }
-func (p *refusingAdmission) CloseUnexecutedAuthorization(_ context.Context, payer []byte, id, reason string) error {
+func (p *refusingAdmission) CloseUnexecutedAuthorization(_ context.Context, payer []byte, id, reason string, wholesaleAccountID string) error {
 	p.fences.Add(1)
 	if !bytes.Equal(payer, bytes.Repeat([]byte{1}, 20)) || id != "auth-refused" || reason == "" {
 		return errors.New("wrong scope")

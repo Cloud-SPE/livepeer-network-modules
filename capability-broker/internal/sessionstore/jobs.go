@@ -84,6 +84,7 @@ type JobRecord struct {
 // uncertain. Retrying the same authorization id and settlement sequence is
 // idempotent, so the reservation remains encumbered until reconciliation.
 type PendingDebit struct {
+	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
 	AuthorizationBytes []byte `json:"authorization_bytes,omitempty"`
 	Sender             []byte `json:"sender"`
 	WorkID             string `json:"work_id"`

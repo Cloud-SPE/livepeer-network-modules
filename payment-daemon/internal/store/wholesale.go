@@ -32,13 +32,14 @@ var (
 // The database supplies the immutable settlement-domain and chain/payee binding;
 // denomination is wei. The two addresses identify a row within that one ledger.
 type WholesaleAccount struct {
-	Payer       []byte    `json:"payer"`
-	Payee       []byte    `json:"payee"`
-	CreditedWei string    `json:"credited_wei"`
-	ReservedWei string    `json:"reserved_wei"`
-	DebitedWei  string    `json:"debited_wei"`
-	Version     uint64    `json:"version"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	WholesaleAccountID string    `json:"wholesale_account_id,omitempty"`
+	Payer              []byte    `json:"payer"`
+	Payee              []byte    `json:"payee"`
+	CreditedWei        string    `json:"credited_wei"`
+	ReservedWei        string    `json:"reserved_wei"`
+	DebitedWei         string    `json:"debited_wei"`
+	Version            uint64    `json:"version"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // WholesaleTotals is the low-cardinality payee-wide exposure view used for
@@ -58,50 +59,52 @@ func (a WholesaleAccount) Available() *big.Int {
 }
 
 type WholesaleAuthorizationSeed struct {
-	ID            string
-	Fingerprint   []byte
-	Payer         []byte
-	Payee         []byte
-	RequestID     string
-	SessionID     string
-	Protocol      string
-	Capability    string
-	Offering      string
-	PriceWei      string
-	PerUnits      uint64
-	WorkUnit      string
-	MaxDebitWei   string
-	MaxTotalUnits uint64
-	ExpiresAt     time.Time
-	Revision      uint64
-	PredecessorID string
+	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
+	ID                 string
+	Fingerprint        []byte
+	Payer              []byte
+	Payee              []byte
+	RequestID          string
+	SessionID          string
+	Protocol           string
+	Capability         string
+	Offering           string
+	PriceWei           string
+	PerUnits           uint64
+	WorkUnit           string
+	MaxDebitWei        string
+	MaxTotalUnits      uint64
+	ExpiresAt          time.Time
+	Revision           uint64
+	PredecessorID      string
 }
 
 type WholesaleAuthorization struct {
-	ID            string    `json:"id"`
-	Fingerprint   []byte    `json:"fingerprint"`
-	Payer         []byte    `json:"payer"`
-	Payee         []byte    `json:"payee"`
-	RequestID     string    `json:"request_id"`
-	SessionID     string    `json:"session_id,omitempty"`
-	Protocol      string    `json:"protocol"`
-	Capability    string    `json:"capability"`
-	Offering      string    `json:"offering"`
-	PriceWei      string    `json:"price_wei"`
-	PerUnits      uint64    `json:"per_units"`
-	WorkUnit      string    `json:"work_unit"`
-	MaxDebitWei   string    `json:"max_debit_wei"`
-	MaxTotalUnits uint64    `json:"max_total_units"`
-	State         string    `json:"state"`
-	ActualUnits   uint64    `json:"actual_units,omitempty"`
-	BilledWei     string    `json:"billed_wei,omitempty"`
-	ReleasedWei   string    `json:"released_wei,omitempty"`
-	ReservedWei   string    `json:"reserved_wei,omitempty"`
-	SettlementSeq uint64    `json:"settlement_seq,omitempty"`
-	ExpiresAt     time.Time `json:"expires_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
-	Revision      uint64    `json:"revision,omitempty"`
-	PredecessorID string    `json:"predecessor_id,omitempty"`
+	WholesaleAccountID string    `json:"wholesale_account_id,omitempty"`
+	ID                 string    `json:"id"`
+	Fingerprint        []byte    `json:"fingerprint"`
+	Payer              []byte    `json:"payer"`
+	Payee              []byte    `json:"payee"`
+	RequestID          string    `json:"request_id"`
+	SessionID          string    `json:"session_id,omitempty"`
+	Protocol           string    `json:"protocol"`
+	Capability         string    `json:"capability"`
+	Offering           string    `json:"offering"`
+	PriceWei           string    `json:"price_wei"`
+	PerUnits           uint64    `json:"per_units"`
+	WorkUnit           string    `json:"work_unit"`
+	MaxDebitWei        string    `json:"max_debit_wei"`
+	MaxTotalUnits      uint64    `json:"max_total_units"`
+	State              string    `json:"state"`
+	ActualUnits        uint64    `json:"actual_units,omitempty"`
+	BilledWei          string    `json:"billed_wei,omitempty"`
+	ReleasedWei        string    `json:"released_wei,omitempty"`
+	ReservedWei        string    `json:"reserved_wei,omitempty"`
+	SettlementSeq      uint64    `json:"settlement_seq,omitempty"`
+	ExpiresAt          time.Time `json:"expires_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
+	Revision           uint64    `json:"revision,omitempty"`
+	PredecessorID      string    `json:"predecessor_id,omitempty"`
 }
 
 type WholesaleAdmissionResult struct {
@@ -114,15 +117,18 @@ type WholesaleAdmissionResult struct {
 // FundWholesale atomically moves all currently credited value from a ticket
 // validation generation into the stable account. Repeating it after a lost
 // response transfers zero and returns the same account position.
-func (s *Store) FundWholesale(payer, payee []byte, fundingWorkID string, now time.Time) (*WholesaleAccount, *big.Int, error) {
+func (s *Store) FundWholesale(payer, payee []byte, fundingWorkID string, now time.Time, accountID ...string) (*WholesaleAccount, *big.Int, error) {
 	if len(payer) != 20 || len(payee) != 20 || fundingWorkID == "" {
 		return nil, nil, errors.New("store: payer, payee, and funding work id are required")
+	}
+	if accountScope(accountID) != "" {
+		return nil, nil, errors.New("isolated funding requires a durable receipt")
 	}
 	transferred := new(big.Int)
 	var account *WholesaleAccount
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		var err error
-		account, err = loadWholesaleAccount(tx, payer, payee)
+		account, err = loadWholesaleAccount(tx, payer, payee, accountID...)
 		if err != nil {
 			return err
 		}
@@ -170,7 +176,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 	insufficient := false
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
-		authKey := wholesaleAuthorizationKey(seed.Payer, seed.ID)
+		authKey := wholesaleAuthorizationKey(seed.Payer, seed.ID, seed.WholesaleAccountID)
 		if fences := tx.Bucket([]byte(unexecutedFencesBucket)); fences != nil && fences.Get(authKey) != nil {
 			return ErrAuthorizationState
 		}
@@ -182,7 +188,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 			if !bytes.Equal(existing.Fingerprint, seed.Fingerprint) {
 				return ErrAuthorizationFingerprint
 			}
-			account, err := loadWholesaleAccount(tx, seed.Payer, seed.Payee)
+			account, err := loadWholesaleAccount(tx, seed.Payer, seed.Payee, seed.WholesaleAccountID)
 			if err != nil {
 				return err
 			}
@@ -190,13 +196,13 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 			return nil
 		}
 
-		account, err := loadWholesaleAccount(tx, seed.Payer, seed.Payee)
+		account, err := loadWholesaleAccount(tx, seed.Payer, seed.Payee, seed.WholesaleAccountID)
 		if err != nil {
 			return err
 		}
 		if !seed.ExpiresAt.After(now) {
 			auth := &WholesaleAuthorization{
-				ID: seed.ID, Fingerprint: bytes.Clone(seed.Fingerprint), Payer: bytes.Clone(seed.Payer), Payee: bytes.Clone(seed.Payee),
+				WholesaleAccountID: seed.WholesaleAccountID, ID: seed.ID, Fingerprint: bytes.Clone(seed.Fingerprint), Payer: bytes.Clone(seed.Payer), Payee: bytes.Clone(seed.Payee),
 				RequestID: seed.RequestID, SessionID: seed.SessionID, Protocol: seed.Protocol,
 				Capability: seed.Capability, Offering: seed.Offering, PriceWei: seed.PriceWei,
 				PerUnits: seed.PerUnits, WorkUnit: seed.WorkUnit, MaxDebitWei: seed.MaxDebitWei,
@@ -215,6 +221,9 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 			return nil
 		}
 		if fundingWorkID != "" {
+			if seed.WholesaleAccountID != "" {
+				return errors.New("isolated funding requires a durable funding receipt")
+			}
 			sessionKey := compositeKey(seed.Payer, fundingWorkID)
 			sessions := tx.Bucket([]byte(sessionsBucket))
 			raw := sessions.Get(sessionKey)
@@ -247,7 +256,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 		var predecessor *WholesaleAuthorization
 		oldReserve := new(big.Int)
 		if seed.PredecessorID != "" {
-			predKey := wholesaleAuthorizationKey(seed.Payer, seed.PredecessorID)
+			predKey := wholesaleAuthorizationKey(seed.Payer, seed.PredecessorID, seed.WholesaleAccountID)
 			predRaw := auths.Get(predKey)
 			if predRaw == nil {
 				return ErrAuthorizationNotFound
@@ -297,7 +306,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 			if err != nil {
 				return err
 			}
-			if err := auths.Put(wholesaleAuthorizationKey(seed.Payer, seed.PredecessorID), encodedPred); err != nil {
+			if err := auths.Put(wholesaleAuthorizationKey(seed.Payer, seed.PredecessorID, seed.WholesaleAccountID), encodedPred); err != nil {
 				return err
 			}
 		}
@@ -305,7 +314,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 		account.Version++
 		account.UpdatedAt = now.UTC()
 		auth := &WholesaleAuthorization{
-			ID: seed.ID, Fingerprint: bytes.Clone(seed.Fingerprint), Payer: bytes.Clone(seed.Payer), Payee: bytes.Clone(seed.Payee),
+			WholesaleAccountID: seed.WholesaleAccountID, ID: seed.ID, Fingerprint: bytes.Clone(seed.Fingerprint), Payer: bytes.Clone(seed.Payer), Payee: bytes.Clone(seed.Payee),
 			RequestID: seed.RequestID, SessionID: seed.SessionID, Protocol: seed.Protocol,
 			Capability: seed.Capability, Offering: seed.Offering, PriceWei: seed.PriceWei,
 			PerUnits: seed.PerUnits, WorkUnit: seed.WorkUnit, MaxDebitWei: seed.MaxDebitWei,
@@ -343,7 +352,7 @@ type WholesaleAdvanceResult struct {
 // AdvanceWholesale atomically moves a session's cumulative billing curve and
 // replaces its prior runway reservation. It never reserves beyond the signed
 // authorization remainder and never lets two sessions claim the same float.
-func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cumulativeUnits uint64, targetReserved *big.Int, advanceSeq uint64, fundingWorkID string, now time.Time) (*WholesaleAdvanceResult, error) {
+func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cumulativeUnits uint64, targetReserved *big.Int, advanceSeq uint64, fundingWorkID string, now time.Time, accountID ...string) (*WholesaleAdvanceResult, error) {
 	if advanceSeq == 0 || targetReserved == nil || targetReserved.Sign() < 0 {
 		return nil, ErrAuthorizationState
 	}
@@ -353,7 +362,7 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 		if err != nil {
 			return err
 		}
-		historyKey := append(append([]byte{}, wholesaleAuthorizationKey(payer, authorizationID)...), 0)
+		historyKey := append(append([]byte{}, wholesaleAuthorizationKey(payer, authorizationID, accountID...)...), 0)
 		historyKey = binary.BigEndian.AppendUint64(historyKey, advanceSeq)
 		if raw := history.Get(historyKey); raw != nil {
 			var previous WholesaleAuthorization
@@ -363,7 +372,7 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 			if !bytes.Equal(previous.Payee, payee) || previous.ActualUnits != cumulativeUnits || previous.ReservedWei != targetReserved.String() || previous.SettlementSeq != advanceSeq {
 				return ErrAuthorizationSettlement
 			}
-			account, err := loadWholesaleAccount(tx, payer, payee)
+			account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 			if err != nil {
 				return err
 			}
@@ -371,7 +380,7 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 			return nil
 		}
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
-		key := wholesaleAuthorizationKey(payer, authorizationID)
+		key := wholesaleAuthorizationKey(payer, authorizationID, accountID...)
 		raw := auths.Get(key)
 		if raw == nil {
 			return ErrAuthorizationNotFound
@@ -393,18 +402,21 @@ func (s *Store) AdvanceWholesale(payer, payee []byte, authorizationID string, cu
 			if cumulativeUnits != auth.ActualUnits || targetReserved.Cmp(parseDecimalBig(auth.ReservedWei)) != 0 {
 				return ErrAuthorizationSettlement
 			}
-			account, err := loadWholesaleAccount(tx, payer, payee)
+			account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 			if err != nil {
 				return err
 			}
 			result.Account, result.Authorization, result.Replayed = account, &auth, true
 			return nil
 		}
-		account, err := loadWholesaleAccount(tx, payer, payee)
+		account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 		if err != nil {
 			return err
 		}
 		if fundingWorkID != "" {
+			if accountScope(accountID) != "" {
+				return errors.New("isolated funding requires a durable funding receipt")
+			}
 			sessions := tx.Bucket([]byte(sessionsBucket))
 			sk := compositeKey(payer, fundingWorkID)
 			sr := sessions.Get(sk)
@@ -473,11 +485,11 @@ type WholesaleSettlementResult struct {
 	Replayed      bool
 }
 
-func (s *Store) SettleWholesale(payer, payee []byte, authorizationID string, actualUnits, settlementSeq uint64, now time.Time) (*WholesaleSettlementResult, error) {
+func (s *Store) SettleWholesale(payer, payee []byte, authorizationID string, actualUnits, settlementSeq uint64, now time.Time, accountID ...string) (*WholesaleSettlementResult, error) {
 	result := &WholesaleSettlementResult{Billed: new(big.Int), Released: new(big.Int)}
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
-		key := wholesaleAuthorizationKey(payer, authorizationID)
+		key := wholesaleAuthorizationKey(payer, authorizationID, accountID...)
 		raw := auths.Get(key)
 		if raw == nil {
 			return ErrAuthorizationNotFound
@@ -493,7 +505,7 @@ func (s *Store) SettleWholesale(payer, payee []byte, authorizationID string, act
 			if auth.ActualUnits != actualUnits || auth.SettlementSeq != settlementSeq {
 				return ErrAuthorizationSettlement
 			}
-			account, err := loadWholesaleAccount(tx, payer, payee)
+			account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 			if err != nil {
 				return err
 			}
@@ -519,7 +531,7 @@ func (s *Store) SettleWholesale(payer, payee []byte, authorizationID string, act
 		}
 		billedDelta := new(big.Int).Sub(billed, priorBilled)
 		released := parseDecimalBig(auth.ReservedWei)
-		account, err := loadWholesaleAccount(tx, payer, payee)
+		account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 		if err != nil {
 			return err
 		}
@@ -549,20 +561,20 @@ func (s *Store) SettleWholesale(payer, payee []byte, authorizationID string, act
 	return result, err
 }
 
-func (s *Store) GetWholesaleAccount(payer, payee []byte) (*WholesaleAccount, error) {
+func (s *Store) GetWholesaleAccount(payer, payee []byte, accountID ...string) (*WholesaleAccount, error) {
 	var account *WholesaleAccount
 	err := s.db.View(func(tx *bolt.Tx) error {
 		var err error
-		account, err = loadWholesaleAccount(tx, payer, payee)
+		account, err = loadWholesaleAccount(tx, payer, payee, accountID...)
 		return err
 	})
 	return account, err
 }
 
-func (s *Store) GetWholesaleAuthorization(payer []byte, id string) (*WholesaleAuthorization, error) {
+func (s *Store) GetWholesaleAuthorization(payer []byte, id string, accountID ...string) (*WholesaleAuthorization, error) {
 	var auth WholesaleAuthorization
 	err := s.db.View(func(tx *bolt.Tx) error {
-		raw := tx.Bucket([]byte(spendAuthorizationsBucket)).Get(wholesaleAuthorizationKey(payer, id))
+		raw := tx.Bucket([]byte(spendAuthorizationsBucket)).Get(wholesaleAuthorizationKey(payer, id, accountID...))
 		if raw == nil {
 			return ErrAuthorizationNotFound
 		}
@@ -583,11 +595,11 @@ func (s *Store) GetWholesaleTotals() (*WholesaleTotals, error) {
 	return &totals, err
 }
 
-func loadWholesaleAccount(tx *bolt.Tx, payer, payee []byte) (*WholesaleAccount, error) {
-	key := wholesaleAccountKey(payer, payee)
+func loadWholesaleAccount(tx *bolt.Tx, payer, payee []byte, accountID ...string) (*WholesaleAccount, error) {
+	key := wholesaleAccountKey(payer, payee, accountID...)
 	raw := tx.Bucket([]byte(wholesaleAccountsBucket)).Get(key)
 	if raw == nil {
-		return &WholesaleAccount{Payer: bytes.Clone(payer), Payee: bytes.Clone(payee), CreditedWei: "0", ReservedWei: "0", DebitedWei: "0"}, nil
+		return &WholesaleAccount{WholesaleAccountID: accountScope(accountID), Payer: bytes.Clone(payer), Payee: bytes.Clone(payee), CreditedWei: "0", ReservedWei: "0", DebitedWei: "0"}, nil
 	}
 	var account WholesaleAccount
 	if err := json.Unmarshal(raw, &account); err != nil {
@@ -598,7 +610,7 @@ func loadWholesaleAccount(tx *bolt.Tx, payer, payee []byte) (*WholesaleAccount, 
 
 func putWholesaleAccount(tx *bolt.Tx, account *WholesaleAccount) error {
 	accounts := tx.Bucket([]byte(wholesaleAccountsBucket))
-	key := wholesaleAccountKey(account.Payer, account.Payee)
+	key := wholesaleAccountKey(account.Payer, account.Payee, account.WholesaleAccountID)
 	var previous WholesaleAccount
 	if raw := accounts.Get(key); raw != nil {
 		if err := json.Unmarshal(raw, &previous); err != nil {
@@ -632,17 +644,38 @@ func putWholesaleAccount(tx *bolt.Tx, account *WholesaleAccount) error {
 	return accounts.Put(key, raw)
 }
 
-func wholesaleAccountKey(payer, payee []byte) []byte {
+func wholesaleAccountKey(payer, payee []byte, accountID ...string) []byte {
 	h := sha256.New()
 	h.Write(payer)
 	h.Write(payee)
+	if a := accountScope(accountID); a != "" {
+		h.Write([]byte{0})
+		h.Write([]byte(a))
+	}
+	if accountScope(accountID) != "" {
+		return append([]byte("v3:"), h.Sum(nil)...)
+	}
 	return h.Sum(nil)
 }
 
-func wholesaleAuthorizationKey(payer []byte, id string) []byte {
+func wholesaleAuthorizationKey(payer []byte, id string, accountID ...string) []byte {
 	h := sha256.New()
 	h.Write(payer)
 	h.Write([]byte{0})
 	h.Write([]byte(id))
+	if a := accountScope(accountID); a != "" {
+		h.Write([]byte{0})
+		h.Write([]byte(a))
+	}
+	if accountScope(accountID) != "" {
+		return append([]byte("v3:"), h.Sum(nil)...)
+	}
 	return h.Sum(nil)
+}
+
+func accountScope(ids []string) string {
+	if len(ids) > 0 {
+		return ids[0]
+	}
+	return ""
 }

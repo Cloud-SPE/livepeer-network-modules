@@ -120,7 +120,7 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	}
 	now := time.Now().UTC()
 	if now.Before(notBefore) {
-		return nil, status.Error(codes.FailedPrecondition, "authorization is not active yet")
+		return nil, admissionFailure("AUTHORIZATION_NOT_ACTIVE", "authorization is not active yet")
 	}
 	maxDebit := new(big.Int).SetBytes(payload.GetMaxDebitWei().GetValue())
 	price := new(big.Int).SetBytes(payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
@@ -140,8 +140,11 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		if !bytes.Equal(existing.Fingerprint, fingerprint[:]) {
 			return nil, status.Error(codes.InvalidArgument, "authorization_id reused with different content")
 		}
+		if existing.State == store.AuthorizationCanceledUnused {
+			return nil, admissionFailure("AUTHORIZATION_ADMISSION_CANCELED", "authorization admission was canceled")
+		}
 		if existing.State != store.AuthorizationAdmitted {
-			return nil, status.Errorf(codes.FailedPrecondition, "authorization is already %s", existing.State)
+			return nil, admissionFailure("AUTHORIZATION_NOT_ADMITTED", "authorization is already "+existing.State)
 		}
 		account, accountErr := s.store.GetWholesaleAccount(payload.GetPayer(), payload.GetPayee())
 		if accountErr != nil {
@@ -190,16 +193,27 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		Revision: payload.GetRevision(), PredecessorID: payload.GetPredecessorAuthorizationId(),
 	}, fundingWorkID, reservation, now)
 	if errors.Is(err, store.ErrInsufficientWholesale) {
-		return nil, status.Errorf(codes.FailedPrecondition, "insufficient wholesale account balance: available=%s required=%s", result.Account.Available(), maxDebit)
+		return nil, admissionFailure("INSUFFICIENT_WHOLESALE_CREDIT", "insufficient wholesale account balance for requested reservation")
 	}
 	if errors.Is(err, store.ErrAuthorizationFingerprint) {
 		return nil, status.Error(codes.InvalidArgument, "authorization_id reused with different content")
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, store.ErrReservationExceedsRemaining):
+		return nil, admissionFailure("RESERVATION_EXCEEDS_REMAINING_DEBIT", "reservation exceeds remaining debit allowance")
+	case errors.Is(err, store.ErrRevisionPredecessor), errors.Is(err, store.ErrAuthorizationNotFound):
+		return nil, admissionFailure("REVISION_PREDECESSOR_INVALID", "revision predecessor is unavailable or incompatible")
+	case errors.Is(err, store.ErrRevisionLimits):
+		return nil, admissionFailure("REVISION_LIMITS_BELOW_USAGE", "revision limits are below cumulative usage")
+	case errors.Is(err, store.ErrAuthorizationCanceled):
+		return nil, admissionFailure("AUTHORIZATION_ADMISSION_CANCELED", "authorization admission was canceled")
+	case errors.Is(err, store.ErrAuthorizationState):
+		return nil, admissionFailure("AUTHORIZATION_STATE_INVALID", "authorization state does not permit admission")
+	case err != nil:
 		return nil, status.Errorf(codes.Internal, "admit authorization: %v", err)
 	}
 	if result.Authorization.State == store.AuthorizationExpiredUnused {
-		return nil, status.Error(codes.FailedPrecondition, "authorization expired unused")
+		return nil, admissionFailure("AUTHORIZATION_EXPIRED_UNUSED", "authorization expired unused")
 	}
 	s.recordWholesaleTotals()
 	return &pb.AdmitAuthorizationResponse{
@@ -354,12 +368,7 @@ func (s *Service) GetSpendAuthorization(_ context.Context, req *pb.GetSpendAutho
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get spend authorization: %v", err)
 	}
-	return &pb.GetSpendAuthorizationResponse{
-		State: authorizationState(auth.State), ReservedValueWei: &pb.BigUInt{Value: decimalBytes(auth.ReservedWei)},
-		BilledValueWei:   &pb.BigUInt{Value: decimalBytes(auth.BilledWei)},
-		ReleasedValueWei: &pb.BigUInt{Value: decimalBytes(auth.ReleasedWei)},
-		ActualUnits:      auth.ActualUnits, SettlementSeq: auth.SettlementSeq, ObservedAt: auth.UpdatedAt.Format(time.RFC3339Nano),
-	}, nil
+	return authorizationView(auth), nil
 }
 
 func authorizationState(state string) pb.SpendAuthorizationState {
@@ -372,6 +381,8 @@ func authorizationState(state string) pb.SpendAuthorizationState {
 		return pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED
 	case store.AuthorizationSuperseded:
 		return pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED
+	case store.AuthorizationCanceledUnused:
+		return pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED
 	default:
 		return pb.SpendAuthorizationState_SPEND_AUTHORIZATION_STATE_UNSPECIFIED
 	}

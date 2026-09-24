@@ -1,0 +1,74 @@
+package payment
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+
+	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
+)
+
+// AdmissionRecovery is a trusted receiver operation, independent of gates on
+// new admission. Missing support leaves uncertain financial intents pending.
+type AdmissionRecovery interface {
+	CancelAuthorizationAdmission(context.Context, []byte) (*CanceledAdmission, error)
+}
+
+type CanceledAdmission struct {
+	Canceled      bool
+	Authorization *SpendAuthorizationStatus
+	Account       *WholesaleAccount
+}
+
+func (g *GRPC) CancelAuthorizationAdmission(ctx context.Context, wire []byte) (*CanceledAdmission, error) {
+	domain, err := g.SettlementDomain(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil {
+		return nil, err
+	}
+	fingerprint := sha256.Sum256(wire)
+	r, err := g.client.CancelAuthorizationAdmission(ctx, &pb.CancelAuthorizationAdmissionRequest{SettlementDomainId: domain, Payer: auth.GetPayload().GetPayer(), AuthorizationId: auth.GetPayload().GetAuthorizationId(), AuthorizationFingerprint: fingerprint[:]})
+	if err != nil {
+		return nil, err
+	}
+	return &CanceledAdmission{Canceled: r.GetCanceled(), Authorization: authorizationStatusFromProto(r.GetAuthorization()), Account: accountFromProto(r.GetAccount())}, nil
+}
+
+func (m *metered) CancelAuthorizationAdmission(ctx context.Context, wire []byte) (*CanceledAdmission, error) {
+	inner, ok := m.inner.(AdmissionRecovery)
+	if !ok {
+		return nil, errors.ErrUnsupported
+	}
+	return inner.CancelAuthorizationAdmission(ctx, wire)
+}
+
+// AdmissionFailureReason is the receiver's stable reason, never an internal
+// error string. Older receivers can still be reconciled by status and fencing.
+func AdmissionFailureReason(err error) string {
+	for _, detail := range status.Convert(err).Details() {
+		if info, ok := detail.(*errdetails.ErrorInfo); ok && info.Domain == "payments.livepeer.org" {
+			return info.Reason
+		}
+	}
+	return ""
+}
+
+func AdmissionRefused(err error) bool {
+	if errors.Is(err, ErrAdmissionStopped) {
+		return true
+	}
+	switch status.Code(err) {
+	case codes.FailedPrecondition, codes.InvalidArgument, codes.PermissionDenied:
+		// AUTHORIZATION_NOT_ACTIVE can become valid without changing identity.
+		return AdmissionFailureReason(err) != "AUTHORIZATION_NOT_ACTIVE"
+	default:
+		return false
+	}
+}

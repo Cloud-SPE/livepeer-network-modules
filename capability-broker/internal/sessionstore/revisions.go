@@ -17,11 +17,23 @@ type RevisionIntent struct {
 	Fingerprint        []byte    `json:"fingerprint"`
 	ReservationWei     string    `json:"reservation_wei"`
 	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
+	Failures           uint32    `json:"failures,omitempty"`
+	NextRetryAt        time.Time `json:"next_retry_at,omitempty"`
 }
 
 // CommitRevision changes authority and records its idempotent response in one
 // transaction. There is no crash interval between those two facts.
 func (s *Store) CommitRevision(id, requestID string, fingerprint []byte, lease time.Time, balance string, mutate func(*Record) error) error {
+	return s.commitRevision(id, requestID, fingerprint, lease, balance, "", "", mutate)
+}
+
+// RefuseRevision retains the idempotent refusal together with removal of an
+// intent whose non-admission has been durably established by the receiver.
+func (s *Store) RefuseRevision(id string, intent *RevisionIntent, code, detail string) error {
+	return s.commitRevision(id, intent.RequestID, intent.Fingerprint, intent.LeaseExpiresAt, "", code, detail, func(*Record) error { return nil })
+}
+
+func (s *Store) commitRevision(id, requestID string, fingerprint []byte, lease time.Time, balance, code, detail string, mutate func(*Record) error) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(sessionsBucket))
 		raw := bucket.Get([]byte(id))
@@ -47,7 +59,7 @@ func (s *Store) CommitRevision(id, requestID string, fingerprint []byte, lease t
 		if err = bucket.Put([]byte(id), encoded); err != nil {
 			return err
 		}
-		response := TopUpRecord{RequestID: requestID, SessionID: id, Fingerprint: bytes.Clone(fingerprint), LeaseExpiresAt: lease, BalanceWei: balance, CreatedAt: rec.UpdatedAt}
+		response := TopUpRecord{RequestID: requestID, SessionID: id, Fingerprint: bytes.Clone(fingerprint), LeaseExpiresAt: lease, BalanceWei: balance, CreatedAt: rec.UpdatedAt, ErrorCode: code, ErrorDetail: detail}
 		encoded, err = json.Marshal(response)
 		if err != nil {
 			return err

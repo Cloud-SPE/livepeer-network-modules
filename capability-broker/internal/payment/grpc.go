@@ -240,7 +240,14 @@ func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authoriz
 	if err != nil {
 		return nil, err
 	}
-	return &SpendAuthorizationStatus{State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}, nil
+	return authorizationStatusFromProto(res), nil
+}
+
+func authorizationStatusFromProto(res *pb.GetSpendAuthorizationResponse) *SpendAuthorizationStatus {
+	if res == nil {
+		return nil
+	}
+	return &SpendAuthorizationStatus{State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}
 }
 
 func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {

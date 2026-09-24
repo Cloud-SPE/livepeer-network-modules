@@ -21,6 +21,7 @@ type Mock struct {
 	sessions              map[string]*mockSession // keyed by work_id (sender unsealed) then composite (sender||work_id)
 	debits                map[string]int64        // (sender||work_id||seq) → recorded units
 	wholesaleAccounts     map[string]*WholesaleAccount
+	canceledAdmissions    map[string][]byte
 	accountAuthorizations map[string]*mockAuthorization
 	// statePath, when set via EnablePersistence, makes the ledger
 	// survive the process (see mock_persist.go).
@@ -40,11 +41,13 @@ type Mock struct {
 }
 
 type mockAuthorization struct {
-	payload  *pb.SpendAuthorizationPayload
-	reserved *big.Int
-	billed   *big.Int
-	released *big.Int
-	state    int32
+	payload     *pb.SpendAuthorizationPayload
+	reserved    *big.Int
+	billed      *big.Int
+	released    *big.Int
+	state       int32
+	units, seq  uint64
+	fingerprint []byte
 }
 
 type mockSession struct {
@@ -71,6 +74,7 @@ func NewMock() *Mock {
 		debits:                map[string]int64{},
 		wholesaleAccounts:     map[string]*WholesaleAccount{},
 		accountAuthorizations: map[string]*mockAuthorization{},
+		canceledAdmissions:    map[string][]byte{},
 	}
 }
 
@@ -127,24 +131,59 @@ func (m *Mock) AdmitAuthorization(_ context.Context, req AdmitAuthorizationReque
 	defer m.mu.Unlock()
 	defer m.flushLocked()
 	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetAuthorizationId()
+	fp := sha256.Sum256(req.AuthorizationBytes)
+	if m.canceledAdmissions[key] != nil {
+		return nil, errors.New("admission canceled")
+	}
 	if prior := m.accountAuthorizations[key]; prior != nil {
+		if !bytesEqual(prior.fingerprint, fp[:]) {
+			return nil, errors.New("authorization fingerprint mismatch")
+		}
 		return &AdmitAuthorizationResult{State: prior.state, Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee())), Reserved: new(big.Int).Set(prior.reserved), Credited: new(big.Int), Replayed: true}, nil
 	}
 	account := m.mockAccountLocked(p.GetPayer(), p.GetPayee())
+	inherited := new(big.Int)
+	var units, seq uint64
+	var predecessor *mockAuthorization
+	if previous := p.GetPredecessorAuthorizationId(); previous != "" {
+		predecessor = m.accountAuthorizations[hex.EncodeToString(p.GetPayer())+"|"+previous]
+		if predecessor == nil || predecessor.state != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
+			return nil, errors.New("invalid revision predecessor")
+		}
+		inherited.Set(predecessor.billed)
+		units, seq = predecessor.units, predecessor.seq
+	}
+	remaining := new(big.Int).Sub(new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()), inherited)
+	if reserved.Sign() == 0 {
+		reserved.Set(remaining)
+	}
+	if reserved.Sign() < 0 || reserved.Cmp(remaining) > 0 {
+		return nil, errors.New("reservation exceeds remaining debit")
+	}
 	credited := new(big.Int)
 	if len(req.PaymentBytes) > 0 {
 		credited.Set(mockCreditPerPayment)
 		account.Credited.Add(account.Credited, credited)
 		account.Available.Add(account.Available, credited)
 	}
-	if account.Available.Cmp(reserved) < 0 {
+	available := new(big.Int).Set(account.Available)
+	if predecessor != nil {
+		available.Add(available, predecessor.reserved)
+	}
+	if available.Cmp(reserved) < 0 {
 		return nil, errors.New("insufficient wholesale account balance")
+	}
+	if predecessor != nil {
+		account.Reserved.Sub(account.Reserved, predecessor.reserved)
+		account.Available.Add(account.Available, predecessor.reserved)
+		predecessor.reserved.SetInt64(0)
+		predecessor.state = int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED)
 	}
 	account.Available.Sub(account.Available, reserved)
 	account.Reserved.Add(account.Reserved, reserved)
 	account.Version++
 	state := int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED)
-	m.accountAuthorizations[key] = &mockAuthorization{payload: proto.Clone(p).(*pb.SpendAuthorizationPayload), reserved: new(big.Int).Set(reserved), billed: new(big.Int), released: new(big.Int), state: state}
+	m.accountAuthorizations[key] = &mockAuthorization{payload: proto.Clone(p).(*pb.SpendAuthorizationPayload), reserved: new(big.Int).Set(reserved), billed: inherited, released: new(big.Int), state: state, units: units, seq: seq, fingerprint: fp[:]}
 	return &AdmitAuthorizationResult{State: state, Account: cloneWholesaleAccount(account), Reserved: reserved, Credited: credited}, nil
 }
 
@@ -162,13 +201,25 @@ func (m *Mock) AdvanceAuthorization(_ context.Context, req AdvanceAuthorizationR
 	per := auth.payload.GetAcceptedPrice().GetUnitsPerPrice()
 	billed := BillFor(price, per, req.CumulativeUnits)
 	delta := new(big.Int).Sub(billed, auth.billed)
-	if delta.Sign() < 0 || account.Reserved.Cmp(delta) < 0 {
-		return nil, errors.New("authorization advance exceeds reservation")
+	if delta.Sign() < 0 || auth.state != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || req.AdvanceSeq < auth.seq {
+		return nil, errors.New("invalid authorization advance")
 	}
-	account.Reserved.Sub(account.Reserved, delta)
+	remaining := new(big.Int).Sub(new(big.Int).SetBytes(auth.payload.GetMaxDebitWei().GetValue()), billed)
+	if req.TargetReserved.Cmp(remaining) > 0 {
+		return nil, errors.New("reservation exceeds remaining debit")
+	}
+	available := new(big.Int).Add(account.Available, auth.reserved)
+	cost := new(big.Int).Add(delta, req.TargetReserved)
+	if available.Cmp(cost) < 0 {
+		return nil, errors.New("insufficient wholesale credit")
+	}
+	account.Available.Sub(available, cost)
+	account.Reserved.Sub(account.Reserved, auth.reserved)
+	account.Reserved.Add(account.Reserved, req.TargetReserved)
 	account.Debited.Add(account.Debited, delta)
-	auth.reserved.Sub(auth.reserved, delta)
+	auth.reserved.Set(req.TargetReserved)
 	auth.billed.Set(billed)
+	auth.units, auth.seq = req.CumulativeUnits, req.AdvanceSeq
 	account.Version++
 	return &AdvanceAuthorizationResult{State: auth.state, Account: cloneWholesaleAccount(account), BilledDelta: delta, CumulativeBilled: new(big.Int).Set(billed), Reserved: new(big.Int).Set(auth.reserved), Credited: new(big.Int)}, nil
 }
@@ -205,6 +256,7 @@ func (m *Mock) SettleAuthorization(_ context.Context, req SettleAuthorizationReq
 	auth.released.Set(release)
 	auth.reserved.SetInt64(0)
 	auth.state = int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)
+	auth.units, auth.seq = req.ActualUnits, req.SettlementSeq
 	account.Version++
 	return &SettleAuthorizationResult{State: auth.state, Account: cloneWholesaleAccount(account), Billed: new(big.Int).Set(total), Released: release}, nil
 }
@@ -220,9 +272,12 @@ func (m *Mock) GetSpendAuthorization(_ context.Context, payer []byte, authorizat
 	defer m.mu.Unlock()
 	auth := m.accountAuthorizations[hex.EncodeToString(payer)+"|"+authorizationID]
 	if auth == nil {
+		if m.canceledAdmissions[hex.EncodeToString(payer)+"|"+authorizationID] != nil {
+			return &SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED), Reserved: new(big.Int), Billed: new(big.Int), Released: new(big.Int)}, nil
+		}
 		return nil, errors.New("authorization not found")
 	}
-	return &SpendAuthorizationStatus{State: auth.state, Reserved: new(big.Int).Set(auth.reserved), Billed: new(big.Int).Set(auth.billed), Released: new(big.Int).Set(auth.released)}, nil
+	return &SpendAuthorizationStatus{State: auth.state, Reserved: new(big.Int).Set(auth.reserved), Billed: new(big.Int).Set(auth.billed), Released: new(big.Int).Set(auth.released), ActualUnits: auth.units, SettlementSeq: auth.seq}, nil
 }
 
 func bytes20(v byte) []byte {
@@ -728,3 +783,27 @@ var _ Client = (*Mock)(nil)
 const MockSettlementDomainID = "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func (m *Mock) SettlementDomain(context.Context) (string, error) { return MockSettlementDomainID, nil }
+
+func (m *Mock) CancelAuthorizationAdmission(_ context.Context, wire []byte) (*CanceledAdmission, error) {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil {
+		return nil, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.flushLocked()
+	p := auth.GetPayload()
+	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetAuthorizationId()
+	fp := sha256.Sum256(wire)
+	if a := m.accountAuthorizations[key]; a != nil {
+		if !bytesEqual(a.fingerprint, fp[:]) {
+			return nil, errors.New("authorization fingerprint mismatch")
+		}
+		return &CanceledAdmission{Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee())), Authorization: &SpendAuthorizationStatus{State: a.state, Reserved: new(big.Int).Set(a.reserved), Billed: new(big.Int).Set(a.billed), Released: new(big.Int).Set(a.released), ActualUnits: a.units, SettlementSeq: a.seq}}, nil
+	}
+	if previous := m.canceledAdmissions[key]; previous != nil && !bytesEqual(previous, fp[:]) {
+		return nil, errors.New("authorization fingerprint mismatch")
+	}
+	m.canceledAdmissions[key] = fp[:]
+	return &CanceledAdmission{Canceled: true}, nil
+}

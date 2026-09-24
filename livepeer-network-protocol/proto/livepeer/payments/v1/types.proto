@@ -263,6 +263,9 @@ enum SpendAuthorizationState {
   SPEND_AUTHORIZATION_EXPIRED_UNUSED = 4;
   SPEND_AUTHORIZATION_OUTCOME_UNKNOWN = 5;
   SPEND_AUTHORIZATION_SUPERSEDED = 6;
+  // Receiver proved admission absent and fenced this exact signed identity.
+  // It has no usage and can never become admitted.
+  SPEND_AUTHORIZATION_CANCELED_UNUSED = 7;
 }
 
 // AccountFundingIntent asks the sender to fund only the difference between a

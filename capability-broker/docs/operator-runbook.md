@@ -170,6 +170,49 @@ credentials, grants, and usage watermark. Missing authorization state or a
 lost runner → terminate fail closed as `recovery_failed`. An undrained legacy
 record without authorization state refuses broker startup.
 
+### Authorization revisions and stuck winddown
+
+Revision reservations use the successor's remaining cumulative debit allowance,
+after receiver billing is reconciled. A 120-unit runway against a 180-unit
+successor with 74 units already billed reserves 106 units at the accepted price.
+Both HTTP and control WebSocket top-ups use the same engine path.
+
+Upgrade the payment daemon before the broker: recovery uses the additive
+`CancelAuthorizationAdmission` RPC. An older receiver returns `Unimplemented`;
+the broker retains an uncertain intent until the recovery RPC is available.
+No new authorization, ticket batch or session ID is needed to repair an old
+oversized intent. Startup and sweeps repair active-session reservations before
+replaying the original admission. During winddown, an unadmitted successor is
+atomically fenced; an already-admitted successor is adopted and settled.
+An expired-unused revision becomes a durable `refill_refused` response.
+
+Before repairing a reported production session, verify the running broker and
+receiver image digests/source revisions and back up their stores together with
+the broker sealing key. Inspect the sealed intent through the normal store
+reader in a protected environment, retaining only sanitized authorization IDs,
+limits, reservation, cumulative billing and sequence in the incident record.
+Do not delete intents or hand-edit Bolt records: admission may have succeeded
+before its response was lost.
+
+`session revision recovery held` means accounting remains uncertain. Background
+retries increase from one second to a one-minute cap, with the next retry time
+persisted across restart; an explicit identical top-up retry may bypass that
+cooldown. Runner termination continues while payment closure is pending.
+`session revision refused; predecessor retained` records a resolved refusal.
+Persistent receiver conflicts or outages remain visible as `winding_down` and
+must not be treated as a final zero-use settlement.
+
+After recovery, verify the active receiver authorization is settled, its
+reservation is released, and the signed settlement fetched by broker or gateway
+session ID matches cumulative units and billed wei and retains the original
+close reason. For a final total of 74 units at 10^12 wei/unit, the bill is
+74 × 10^12 wei. The temporary 106 × 10^12 wei reservation is not another charge.
+Insufficient wholesale credit remains a separate admission/funding issue.
+
+Run `make test-revisions` from `capability-broker/` for Docker-based race tests
+covering the real receiver ledger, restart/lost-response recovery, HTTP/WS
+parity and signed cumulative settlement.
+
 Output-producing runners may additionally report `output_state` as `waiting`,
 `producing`, or `stalled`, plus a sanitized `last_failure_code`. These are
 independent from heartbeat liveness: a stalled callback proves the runner is

@@ -716,12 +716,16 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		return nil, protoErr("session_terminal", "session is %s (%s)", rec.State, rec.CloseReason)
 	}
 	if rec.RevisionIntent != nil {
-		if _, err := e.resumeRevisionLocked(ctx, sessionID); err != nil {
-			return nil, err
-		}
+		_, revisionErr := e.resumeRevisionLocked(ctx, sessionID)
 		rec, err = e.cfg.Store.Get(sessionID)
 		if err != nil {
 			return nil, err
+		}
+		if rec.RevisionIntent != nil {
+			return nil, revisionErr
+		}
+		if rec.Closing() {
+			return nil, protoErr("session_terminal", "session is %s", rec.State)
 		}
 	}
 	spec := e.cfg.Specs(sessionID)
@@ -763,7 +767,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		}
 	}
 
-	var chargedWei *big.Int
+	var cumulativeBilled *big.Int
 	debitSeq := rec.DebitSeq
 	if delta > 0 {
 		ac, ok := e.cfg.Payment.(payment.AccountClient)
@@ -781,7 +785,10 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		if runwayUnits > remainingUnits {
 			runwayUnits = remainingUnits
 		}
-		target := payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, runwayUnits)
+		// Reserve the increment on the cumulative price curve. Rounding a
+		// fresh runway independently can exceed the final remaining wei.
+		currentBill := payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, authorizationCumulative)
+		target := new(big.Int).Sub(payment.BillFor(spec.PricePerWorkUnitWei, spec.PerUnits, authorizationCumulative+runwayUnits), currentBill)
 		if ev.EventType == "session.ended" || ev.EventType == "session.failed" {
 			target = new(big.Int)
 		}
@@ -798,8 +805,11 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		if advanced == nil || advanced.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
 			return nil, &RetryableError{Err: errors.New("payment daemon returned invalid authorization advance state")}
 		}
-		chargedWei, debitSeq = advanced.BilledDelta, advanceSeq
-		if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { r.AuthorizationReservedWei = target.String(); return nil }); err != nil {
+		cumulativeBilled, debitSeq = advanced.CumulativeBilled, advanceSeq
+		if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+			r.AuthorizationReservedWei = bigIntString(advanced.Reserved)
+			return nil
+		}); err != nil {
 			return nil, &RetryableError{Err: err}
 		}
 	}
@@ -856,8 +866,8 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 			r.DebitedTotal += delta
 			r.DebitSeq = debitSeq
 			r.PendingDebitSeq = 0
-			if chargedWei != nil {
-				r.BilledWei = addDecimal(r.BilledWei, chargedWei)
+			if cumulativeBilled != nil {
+				r.BilledWei = cumulativeBilled.String()
 			}
 		}
 		r.LeaseExpiresAt = now.Add(spec.heartbeat() * time.Duration(spec.missed()))
@@ -938,6 +948,9 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		}
 		return nil, err
 	} else if prior != nil {
+		if prior.ErrorCode != "" {
+			return nil, protoErr(prior.ErrorCode, "%s", prior.ErrorDetail)
+		}
 		bal, _ := new(big.Int).SetString(prior.BalanceWei, 10)
 		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal}, nil
 	}
@@ -948,13 +961,29 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		if rec.RevisionIntent.RequestID != requestID {
 			return nil, &RetryableError{Err: errors.New("previous authorization revision remains unresolved")}
 		}
-		return e.resumeRevisionLocked(ctx, sessionID)
+		return e.resumeRevisionLocked(ctx, sessionID, true)
 	}
 	if reservation == nil || reservation.Sign() < 0 {
 		return nil, protoErr("payment_invalid", "revision reservation must be nonnegative")
 	}
 	if rec.PendingDebitSeq != 0 {
-		return nil, &RetryableError{Err: errors.New("usage debit must resolve before authorization revision")}
+		ac, ok := e.cfg.Payment.(payment.AccountClient)
+		if !ok {
+			return nil, &RetryableError{Err: errors.New("account receiver unavailable")}
+		}
+		usage, lookupErr := ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+		if lookupErr != nil {
+			return nil, &RetryableError{Err: lookupErr}
+		}
+		if usage == nil || usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
+			return nil, &RetryableError{Err: errors.New("usage authority unresolved")}
+		}
+		if err := reconcileReceiverUsage(rec, usage); err != nil {
+			return nil, &RetryableError{Err: err}
+		}
+		if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { return reconcileReceiverUsage(r, usage) }); err != nil {
+			return nil, &RetryableError{Err: err}
+		}
 	}
 	if rec.Closing() || rec.AccountAuthorizationID == "" {
 		return nil, protoErr("refill_refused", "session does not accept an account authorization revision")
@@ -997,7 +1026,7 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 	}); err != nil {
 		return nil, &RetryableError{Err: err}
 	}
-	return e.resumeRevisionLocked(ctx, sessionID)
+	return e.resumeRevisionLocked(ctx, sessionID, true)
 }
 
 func addDecimal(current string, delta *big.Int) string {
@@ -1083,20 +1112,24 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		}
 	}
 	if rec.RevisionIntent != nil {
-		if _, err := e.resumeRevisionLocked(ctx, sessionID); err != nil {
-			_ = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
-				r.State = sessionstore.StateWindingDown
-				r.CloseReason = reason
-				r.RunnerTerminated = runnerDone
-				return nil
-			})
-			e.cfg.Log.Warn("winddown waiting for authorization revision", "session", sessionID, "err", err)
+		// Persist closing before resolution so an unadmitted revision is fenced,
+		// rather than funding fresh runway during shutdown.
+		if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+			r.State, r.CloseReason, r.RunnerTerminated = sessionstore.StateWindingDown, reason, runnerDone
+			return nil
+		}); err != nil {
 			return
 		}
-		rec, err = e.cfg.Store.Get(sessionID)
-		if err != nil {
+		_, revisionErr := e.resumeRevisionLocked(ctx, sessionID)
+		current, readErr := e.cfg.Store.Get(sessionID)
+		if readErr != nil {
 			return
 		}
+		if current.RevisionIntent != nil {
+			e.cfg.Log.Warn("winddown waiting for authorization revision", "session", sessionID, "err", revisionErr)
+			return
+		}
+		rec = current
 	}
 	paymentClosed := rec.PaymentClosed
 	releasedAuthorizationWei := ""
@@ -1104,7 +1137,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		var closeErr error
 		if ac, ok := e.cfg.Payment.(payment.AccountClient); ok {
 			var settled *payment.SettleAuthorizationResult
-			settled, closeErr = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: rec.DebitedTotal, SettlementSeq: rec.DebitSeq + 1})
+			settled, closeErr = e.settleSessionAuthorizationLocked(ctx, rec, ac)
 			if closeErr == nil && (settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
 				closeErr = errors.New("payment daemon returned invalid authorization settlement state")
 			}
@@ -1302,11 +1335,6 @@ func (e *Engine) Recover(ctx context.Context) {
 			}
 			if authErr != nil || authStatus == nil || authStatus.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
 				e.cfg.Log.Error("session authorization unavailable after restart; failing closed", "session", id, "err", authErr)
-				_ = e.cfg.Store.Update(id, func(r *sessionstore.Record) error {
-					r.PaymentClosed = true
-					r.AuthorizationReservedWei = "0"
-					return nil
-				})
 				mu := e.sessionMu(id)
 				mu.Lock()
 				e.winddownLocked(ctx, id, ReasonRecoveryFailed)

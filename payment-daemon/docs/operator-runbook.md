@@ -612,6 +612,13 @@ bounded runway. Account replenishment may restore availability, but only a
 valid predecessor-bound authorization revision can extend a session's signed
 cumulative cap.
 
+A successor inherits previously billed units and wei. Its reservation cannot
+exceed `successor max_debit_wei - cumulative billed wei`. For 180 authorized,
+74 billed and 120 requested at 10^12 wei/unit, the allowable reservation is
+106 × 10^12 wei. The receiver keeps enforcing this bound; excess requests return
+`FailedPrecondition` with `google.rpc.ErrorInfo` reason
+`RESERVATION_EXCEEDS_REMAINING_DEBIT` in domain `payments.livepeer.org`.
+
 When funded authorized runway cannot be reserved, the broker does not extend
 involuntary payer credit. It refuses admission or winds the session down with
 `insufficient_balance`.
@@ -629,6 +636,21 @@ account and authorization store to survive. An active broker record without a
 matching durable authorization terminates fail closed; a pre-cutover
 nonterminal record without authorization state refuses startup until the
 operator drains or resolves it.
+
+The trusted broker recovery RPC `CancelAuthorizationAdmission` atomically
+fences an absent admission or returns the existing authorization unchanged.
+It binds the payer and authorization ID to SHA-256 of the exact signed bytes.
+An accepted cumulative successor is never converted into a zero-use outcome.
+Fenced identities remain queryable as `SPEND_AUTHORIZATION_CANCELED_UNUSED`,
+so accounting and regional drain checks can distinguish them from missing
+receiver state. Reusing a fenced identity cannot admit work later.
+
+Deploy the receiver before a broker using this RPC. Broker startup/sweeps can
+then repair old oversized revision intents or safely resolve them during
+winddown, preserving the original identities and cumulative billing. See the
+[broker recovery procedure](../../capability-broker/docs/operator-runbook.md#authorization-revisions-and-stuck-winddown).
+Missing or unreachable ledger state still requires reconciliation; it must
+not be reported as successful financial closure.
 
 ### 6.5.3. Funding and revenue recognition
 

@@ -78,6 +78,11 @@ func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 // caller-supplied runner, for the tests that need a descriptor the
 // standard fake does not produce.
 func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *httptest.Server {
+	srv, _ := newSessionTestServerConfigured(t, runnerHandler, nil)
+	return srv
+}
+
+func newSessionTestServerConfigured(t *testing.T, runnerHandler http.Handler, configure func(*config.Config)) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
@@ -126,6 +131,9 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 			Price:      config.Price{AmountWei: "10", PerUnits: 1},
 		}},
 	}
+	if configure != nil {
+		configure(cfg)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config: %v", err)
 	}
@@ -141,7 +149,7 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	attachSessionRunner(t, s, srv, runnerHandler)
-	return srv
+	return srv, s
 }
 
 // attachSessionRunner enrols a host and attaches the runner that serves

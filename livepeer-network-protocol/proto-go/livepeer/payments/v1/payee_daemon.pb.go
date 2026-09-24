@@ -132,7 +132,7 @@ func (x CloseSessionResponse_Outcome) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CloseSessionResponse_Outcome.Descriptor instead.
 func (CloseSessionResponse_Outcome) EnumDescriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{29, 0}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{31, 0}
 }
 
 type GetRedemptionStatusResponse_Status int32
@@ -187,7 +187,7 @@ func (x GetRedemptionStatusResponse_Status) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use GetRedemptionStatusResponse_Status.Descriptor instead.
 func (GetRedemptionStatusResponse_Status) EnumDescriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{33, 0}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{35, 0}
 }
 
 type GetQuoteRequest struct {
@@ -994,8 +994,9 @@ type AdmitAuthorizationRequest struct {
 	// available value for this reservation.
 	PaymentBytes []byte `protobuf:"bytes,2,opt,name=payment_bytes,json=paymentBytes,proto3" json:"payment_bytes,omitempty"`
 	// Amount to reserve at admission. Jobs normally request max_debit_wei;
-	// sessions request only bounded runway. Empty means max_debit_wei for
-	// backwards compatibility.
+	// sessions request only bounded runway. Empty/zero means the remaining
+	// max_debit_wei after inherited cumulative billing (the whole maximum for
+	// an initial authorization). It is not an admission-cancellation signal.
 	ReservationValueWei *BigUInt `protobuf:"bytes,3,opt,name=reservation_value_wei,json=reservationValueWei,proto3" json:"reservation_value_wei,omitempty"`
 	unknownFields       protoimpl.UnknownFields
 	sizeCache           protoimpl.SizeCache
@@ -1712,6 +1713,139 @@ func (x *GetSpendAuthorizationResponse) GetObservedAt() string {
 	return ""
 }
 
+type CancelAuthorizationAdmissionRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	SettlementDomainId string                 `protobuf:"bytes,1,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	Payer              []byte                 `protobuf:"bytes,2,opt,name=payer,proto3" json:"payer,omitempty"`
+	AuthorizationId    string                 `protobuf:"bytes,3,opt,name=authorization_id,json=authorizationId,proto3" json:"authorization_id,omitempty"`
+	// SHA-256 of the exact signed authorization bytes. A different fingerprint
+	// for an existing admission or cancellation is rejected.
+	AuthorizationFingerprint []byte `protobuf:"bytes,4,opt,name=authorization_fingerprint,json=authorizationFingerprint,proto3" json:"authorization_fingerprint,omitempty"`
+	unknownFields            protoimpl.UnknownFields
+	sizeCache                protoimpl.SizeCache
+}
+
+func (x *CancelAuthorizationAdmissionRequest) Reset() {
+	*x = CancelAuthorizationAdmissionRequest{}
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[22]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelAuthorizationAdmissionRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelAuthorizationAdmissionRequest) ProtoMessage() {}
+
+func (x *CancelAuthorizationAdmissionRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[22]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelAuthorizationAdmissionRequest.ProtoReflect.Descriptor instead.
+func (*CancelAuthorizationAdmissionRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{22}
+}
+
+func (x *CancelAuthorizationAdmissionRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
+func (x *CancelAuthorizationAdmissionRequest) GetPayer() []byte {
+	if x != nil {
+		return x.Payer
+	}
+	return nil
+}
+
+func (x *CancelAuthorizationAdmissionRequest) GetAuthorizationId() string {
+	if x != nil {
+		return x.AuthorizationId
+	}
+	return ""
+}
+
+func (x *CancelAuthorizationAdmissionRequest) GetAuthorizationFingerprint() []byte {
+	if x != nil {
+		return x.AuthorizationFingerprint
+	}
+	return nil
+}
+
+type CancelAuthorizationAdmissionResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// True means admission was absent and is now durably fenced. Retrying
+	// AdmitAuthorization with this identity cannot admit it later.
+	Canceled bool `protobuf:"varint,1,opt,name=canceled,proto3" json:"canceled,omitempty"`
+	// Present when admission won the race. Inherited usage is never erased.
+	Authorization *GetSpendAuthorizationResponse `protobuf:"bytes,2,opt,name=authorization,proto3" json:"authorization,omitempty"`
+	Account       *WholesaleAccountView          `protobuf:"bytes,3,opt,name=account,proto3" json:"account,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CancelAuthorizationAdmissionResponse) Reset() {
+	*x = CancelAuthorizationAdmissionResponse{}
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[23]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CancelAuthorizationAdmissionResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CancelAuthorizationAdmissionResponse) ProtoMessage() {}
+
+func (x *CancelAuthorizationAdmissionResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[23]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CancelAuthorizationAdmissionResponse.ProtoReflect.Descriptor instead.
+func (*CancelAuthorizationAdmissionResponse) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{23}
+}
+
+func (x *CancelAuthorizationAdmissionResponse) GetCanceled() bool {
+	if x != nil {
+		return x.Canceled
+	}
+	return false
+}
+
+func (x *CancelAuthorizationAdmissionResponse) GetAuthorization() *GetSpendAuthorizationResponse {
+	if x != nil {
+		return x.Authorization
+	}
+	return nil
+}
+
+func (x *CancelAuthorizationAdmissionResponse) GetAccount() *WholesaleAccountView {
+	if x != nil {
+		return x.Account
+	}
+	return nil
+}
+
 type DebitBalanceRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Sender whose balance is being debited.
@@ -1729,7 +1863,7 @@ type DebitBalanceRequest struct {
 
 func (x *DebitBalanceRequest) Reset() {
 	*x = DebitBalanceRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[22]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1741,7 +1875,7 @@ func (x *DebitBalanceRequest) String() string {
 func (*DebitBalanceRequest) ProtoMessage() {}
 
 func (x *DebitBalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[22]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1754,7 +1888,7 @@ func (x *DebitBalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebitBalanceRequest.ProtoReflect.Descriptor instead.
 func (*DebitBalanceRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{22}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *DebitBalanceRequest) GetSender() []byte {
@@ -1818,7 +1952,7 @@ type DebitBalanceResponse struct {
 
 func (x *DebitBalanceResponse) Reset() {
 	*x = DebitBalanceResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[23]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1830,7 +1964,7 @@ func (x *DebitBalanceResponse) String() string {
 func (*DebitBalanceResponse) ProtoMessage() {}
 
 func (x *DebitBalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[23]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1843,7 +1977,7 @@ func (x *DebitBalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DebitBalanceResponse.ProtoReflect.Descriptor instead.
 func (*DebitBalanceResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{23}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *DebitBalanceResponse) GetBalance() []byte {
@@ -1886,7 +2020,7 @@ type SufficientBalanceRequest struct {
 
 func (x *SufficientBalanceRequest) Reset() {
 	*x = SufficientBalanceRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[24]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1898,7 +2032,7 @@ func (x *SufficientBalanceRequest) String() string {
 func (*SufficientBalanceRequest) ProtoMessage() {}
 
 func (x *SufficientBalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[24]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1911,7 +2045,7 @@ func (x *SufficientBalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SufficientBalanceRequest.ProtoReflect.Descriptor instead.
 func (*SufficientBalanceRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{24}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SufficientBalanceRequest) GetSender() []byte {
@@ -1946,7 +2080,7 @@ type SufficientBalanceResponse struct {
 
 func (x *SufficientBalanceResponse) Reset() {
 	*x = SufficientBalanceResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[25]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1958,7 +2092,7 @@ func (x *SufficientBalanceResponse) String() string {
 func (*SufficientBalanceResponse) ProtoMessage() {}
 
 func (x *SufficientBalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[25]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1971,7 +2105,7 @@ func (x *SufficientBalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SufficientBalanceResponse.ProtoReflect.Descriptor instead.
 func (*SufficientBalanceResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{25}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *SufficientBalanceResponse) GetSufficient() bool {
@@ -1998,7 +2132,7 @@ type GetBalanceRequest struct {
 
 func (x *GetBalanceRequest) Reset() {
 	*x = GetBalanceRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[26]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2010,7 +2144,7 @@ func (x *GetBalanceRequest) String() string {
 func (*GetBalanceRequest) ProtoMessage() {}
 
 func (x *GetBalanceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[26]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2023,7 +2157,7 @@ func (x *GetBalanceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBalanceRequest.ProtoReflect.Descriptor instead.
 func (*GetBalanceRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{26}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GetBalanceRequest) GetSender() []byte {
@@ -2049,7 +2183,7 @@ type GetBalanceResponse struct {
 
 func (x *GetBalanceResponse) Reset() {
 	*x = GetBalanceResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[27]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2061,7 +2195,7 @@ func (x *GetBalanceResponse) String() string {
 func (*GetBalanceResponse) ProtoMessage() {}
 
 func (x *GetBalanceResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[27]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2074,7 +2208,7 @@ func (x *GetBalanceResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBalanceResponse.ProtoReflect.Descriptor instead.
 func (*GetBalanceResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{27}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GetBalanceResponse) GetBalance() []byte {
@@ -2094,7 +2228,7 @@ type CloseSessionRequest struct {
 
 func (x *CloseSessionRequest) Reset() {
 	*x = CloseSessionRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[28]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2106,7 +2240,7 @@ func (x *CloseSessionRequest) String() string {
 func (*CloseSessionRequest) ProtoMessage() {}
 
 func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[28]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2119,7 +2253,7 @@ func (x *CloseSessionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionRequest.ProtoReflect.Descriptor instead.
 func (*CloseSessionRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{28}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *CloseSessionRequest) GetSender() []byte {
@@ -2145,7 +2279,7 @@ type CloseSessionResponse struct {
 
 func (x *CloseSessionResponse) Reset() {
 	*x = CloseSessionResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[29]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2157,7 +2291,7 @@ func (x *CloseSessionResponse) String() string {
 func (*CloseSessionResponse) ProtoMessage() {}
 
 func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[29]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2170,7 +2304,7 @@ func (x *CloseSessionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CloseSessionResponse.ProtoReflect.Descriptor instead.
 func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{29}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CloseSessionResponse) GetOutcome() CloseSessionResponse_Outcome {
@@ -2191,7 +2325,7 @@ type ListPendingRedemptionsRequest struct {
 
 func (x *ListPendingRedemptionsRequest) Reset() {
 	*x = ListPendingRedemptionsRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[30]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2203,7 +2337,7 @@ func (x *ListPendingRedemptionsRequest) String() string {
 func (*ListPendingRedemptionsRequest) ProtoMessage() {}
 
 func (x *ListPendingRedemptionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[30]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2216,7 +2350,7 @@ func (x *ListPendingRedemptionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingRedemptionsRequest.ProtoReflect.Descriptor instead.
 func (*ListPendingRedemptionsRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{30}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ListPendingRedemptionsRequest) GetSince() int64 {
@@ -2235,7 +2369,7 @@ type ListPendingRedemptionsResponse struct {
 
 func (x *ListPendingRedemptionsResponse) Reset() {
 	*x = ListPendingRedemptionsResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[31]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2247,7 +2381,7 @@ func (x *ListPendingRedemptionsResponse) String() string {
 func (*ListPendingRedemptionsResponse) ProtoMessage() {}
 
 func (x *ListPendingRedemptionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[31]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2260,7 +2394,7 @@ func (x *ListPendingRedemptionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListPendingRedemptionsResponse.ProtoReflect.Descriptor instead.
 func (*ListPendingRedemptionsResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{31}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ListPendingRedemptionsResponse) GetRedemptions() []*PendingRedemption {
@@ -2279,7 +2413,7 @@ type GetRedemptionStatusRequest struct {
 
 func (x *GetRedemptionStatusRequest) Reset() {
 	*x = GetRedemptionStatusRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[32]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2291,7 +2425,7 @@ func (x *GetRedemptionStatusRequest) String() string {
 func (*GetRedemptionStatusRequest) ProtoMessage() {}
 
 func (x *GetRedemptionStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[32]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2304,7 +2438,7 @@ func (x *GetRedemptionStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRedemptionStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetRedemptionStatusRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{32}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *GetRedemptionStatusRequest) GetTicketHash() []byte {
@@ -2328,7 +2462,7 @@ type GetRedemptionStatusResponse struct {
 
 func (x *GetRedemptionStatusResponse) Reset() {
 	*x = GetRedemptionStatusResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[33]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2340,7 +2474,7 @@ func (x *GetRedemptionStatusResponse) String() string {
 func (*GetRedemptionStatusResponse) ProtoMessage() {}
 
 func (x *GetRedemptionStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[33]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2353,7 +2487,7 @@ func (x *GetRedemptionStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRedemptionStatusResponse.ProtoReflect.Descriptor instead.
 func (*GetRedemptionStatusResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{33}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *GetRedemptionStatusResponse) GetStatus() GetRedemptionStatusResponse_Status {
@@ -2386,7 +2520,7 @@ type GetRoundRevenueRequest struct {
 
 func (x *GetRoundRevenueRequest) Reset() {
 	*x = GetRoundRevenueRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[34]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2398,7 +2532,7 @@ func (x *GetRoundRevenueRequest) String() string {
 func (*GetRoundRevenueRequest) ProtoMessage() {}
 
 func (x *GetRoundRevenueRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[34]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2411,7 +2545,7 @@ func (x *GetRoundRevenueRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRoundRevenueRequest.ProtoReflect.Descriptor instead.
 func (*GetRoundRevenueRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{34}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *GetRoundRevenueRequest) GetRoundId() int64 {
@@ -2448,7 +2582,7 @@ type GetRoundRevenueResponse struct {
 
 func (x *GetRoundRevenueResponse) Reset() {
 	*x = GetRoundRevenueResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[35]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2460,7 +2594,7 @@ func (x *GetRoundRevenueResponse) String() string {
 func (*GetRoundRevenueResponse) ProtoMessage() {}
 
 func (x *GetRoundRevenueResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[35]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2473,7 +2607,7 @@ func (x *GetRoundRevenueResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRoundRevenueResponse.ProtoReflect.Descriptor instead.
 func (*GetRoundRevenueResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{35}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *GetRoundRevenueResponse) GetRoundId() int64 {
@@ -2591,7 +2725,7 @@ type FreezeRevenueSourceRequest struct {
 
 func (x *FreezeRevenueSourceRequest) Reset() {
 	*x = FreezeRevenueSourceRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[36]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2603,7 +2737,7 @@ func (x *FreezeRevenueSourceRequest) String() string {
 func (*FreezeRevenueSourceRequest) ProtoMessage() {}
 
 func (x *FreezeRevenueSourceRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[36]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2616,7 +2750,7 @@ func (x *FreezeRevenueSourceRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FreezeRevenueSourceRequest.ProtoReflect.Descriptor instead.
 func (*FreezeRevenueSourceRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{36}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *FreezeRevenueSourceRequest) GetSettlementDomainId() string {
@@ -2642,7 +2776,7 @@ type GetRevenueSourceStatusRequest struct {
 
 func (x *GetRevenueSourceStatusRequest) Reset() {
 	*x = GetRevenueSourceStatusRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[37]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2654,7 +2788,7 @@ func (x *GetRevenueSourceStatusRequest) String() string {
 func (*GetRevenueSourceStatusRequest) ProtoMessage() {}
 
 func (x *GetRevenueSourceStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[37]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2667,7 +2801,7 @@ func (x *GetRevenueSourceStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetRevenueSourceStatusRequest.ProtoReflect.Descriptor instead.
 func (*GetRevenueSourceStatusRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{37}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *GetRevenueSourceStatusRequest) GetSettlementDomainId() string {
@@ -2698,7 +2832,7 @@ type RevenueSourceStatus struct {
 
 func (x *RevenueSourceStatus) Reset() {
 	*x = RevenueSourceStatus{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[38]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2710,7 +2844,7 @@ func (x *RevenueSourceStatus) String() string {
 func (*RevenueSourceStatus) ProtoMessage() {}
 
 func (x *RevenueSourceStatus) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[38]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2723,7 +2857,7 @@ func (x *RevenueSourceStatus) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevenueSourceStatus.ProtoReflect.Descriptor instead.
 func (*RevenueSourceStatus) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{38}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *RevenueSourceStatus) GetSettlementDomainId() string {
@@ -2829,7 +2963,7 @@ type CloseUnexecutedAuthorizationRequest struct {
 
 func (x *CloseUnexecutedAuthorizationRequest) Reset() {
 	*x = CloseUnexecutedAuthorizationRequest{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[39]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2841,7 +2975,7 @@ func (x *CloseUnexecutedAuthorizationRequest) String() string {
 func (*CloseUnexecutedAuthorizationRequest) ProtoMessage() {}
 
 func (x *CloseUnexecutedAuthorizationRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[39]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2854,7 +2988,7 @@ func (x *CloseUnexecutedAuthorizationRequest) ProtoReflect() protoreflect.Messag
 
 // Deprecated: Use CloseUnexecutedAuthorizationRequest.ProtoReflect.Descriptor instead.
 func (*CloseUnexecutedAuthorizationRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{39}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *CloseUnexecutedAuthorizationRequest) GetSettlementDomainId() string {
@@ -2895,7 +3029,7 @@ type CloseUnexecutedAuthorizationResponse struct {
 
 func (x *CloseUnexecutedAuthorizationResponse) Reset() {
 	*x = CloseUnexecutedAuthorizationResponse{}
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[40]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2907,7 +3041,7 @@ func (x *CloseUnexecutedAuthorizationResponse) String() string {
 func (*CloseUnexecutedAuthorizationResponse) ProtoMessage() {}
 
 func (x *CloseUnexecutedAuthorizationResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[40]
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2920,7 +3054,7 @@ func (x *CloseUnexecutedAuthorizationResponse) ProtoReflect() protoreflect.Messa
 
 // Deprecated: Use CloseUnexecutedAuthorizationResponse.ProtoReflect.Descriptor instead.
 func (*CloseUnexecutedAuthorizationResponse) Descriptor() ([]byte, []int) {
-	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{40}
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *CloseUnexecutedAuthorizationResponse) GetSettlementDomainId() string {
@@ -3057,7 +3191,16 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\factual_units\x18\x05 \x01(\x04R\vactualUnits\x12%\n" +
 	"\x0esettlement_seq\x18\x06 \x01(\x04R\rsettlementSeq\x12\x1f\n" +
 	"\vobserved_at\x18\a \x01(\tR\n" +
-	"observedAt\"\x82\x01\n" +
+	"observedAt\"\xd5\x01\n" +
+	"#CancelAuthorizationAdmissionRequest\x120\n" +
+	"\x14settlement_domain_id\x18\x01 \x01(\tR\x12settlementDomainId\x12\x14\n" +
+	"\x05payer\x18\x02 \x01(\fR\x05payer\x12)\n" +
+	"\x10authorization_id\x18\x03 \x01(\tR\x0fauthorizationId\x12;\n" +
+	"\x19authorization_fingerprint\x18\x04 \x01(\fR\x18authorizationFingerprint\"\xe3\x01\n" +
+	"$CancelAuthorizationAdmissionResponse\x12\x1a\n" +
+	"\bcanceled\x18\x01 \x01(\bR\bcanceled\x12Y\n" +
+	"\rauthorization\x18\x02 \x01(\v23.livepeer.payments.v1.GetSpendAuthorizationResponseR\rauthorization\x12D\n" +
+	"\aaccount\x18\x03 \x01(\v2*.livepeer.payments.v1.WholesaleAccountViewR\aaccount\"\x82\x01\n" +
 	"\x13DebitBalanceRequest\x12\x16\n" +
 	"\x06sender\x18\x01 \x01(\fR\x06sender\x12\x17\n" +
 	"\awork_id\x18\x02 \x01(\tR\x06workId\x12\x1d\n" +
@@ -3158,7 +3301,7 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\x06reason\x18\x04 \x01(\tR\x06reason\"p\n" +
 	"$CloseUnexecutedAuthorizationResponse\x120\n" +
 	"\x14settlement_domain_id\x18\x01 \x01(\tR\x12settlementDomainId\x12\x16\n" +
-	"\x06fenced\x18\x02 \x01(\bR\x06fenced2\x80\x14\n" +
+	"\x06fenced\x18\x02 \x01(\bR\x06fenced2\x98\x15\n" +
 	"\vPayeeDaemon\x12Y\n" +
 	"\bGetQuote\x12%.livepeer.payments.v1.GetQuoteRequest\x1a&.livepeer.payments.v1.GetQuoteResponse\x12n\n" +
 	"\x0fGetTicketParams\x12,.livepeer.payments.v1.GetTicketParamsRequest\x1a-.livepeer.payments.v1.GetTicketParamsResponse\x12q\n" +
@@ -3170,7 +3313,8 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"\x14AdvanceAuthorization\x121.livepeer.payments.v1.AdvanceAuthorizationRequest\x1a2.livepeer.payments.v1.AdvanceAuthorizationResponse\x12z\n" +
 	"\x13SettleAuthorization\x120.livepeer.payments.v1.SettleAuthorizationRequest\x1a1.livepeer.payments.v1.SettleAuthorizationResponse\x12z\n" +
 	"\x13GetWholesaleAccount\x120.livepeer.payments.v1.GetWholesaleAccountRequest\x1a1.livepeer.payments.v1.GetWholesaleAccountResponse\x12\x80\x01\n" +
-	"\x15GetSpendAuthorization\x122.livepeer.payments.v1.GetSpendAuthorizationRequest\x1a3.livepeer.payments.v1.GetSpendAuthorizationResponse\x12e\n" +
+	"\x15GetSpendAuthorization\x122.livepeer.payments.v1.GetSpendAuthorizationRequest\x1a3.livepeer.payments.v1.GetSpendAuthorizationResponse\x12\x95\x01\n" +
+	"\x1cCancelAuthorizationAdmission\x129.livepeer.payments.v1.CancelAuthorizationAdmissionRequest\x1a:.livepeer.payments.v1.CancelAuthorizationAdmissionResponse\x12e\n" +
 	"\fDebitBalance\x12).livepeer.payments.v1.DebitBalanceRequest\x1a*.livepeer.payments.v1.DebitBalanceResponse\x12t\n" +
 	"\x11SufficientBalance\x12..livepeer.payments.v1.SufficientBalanceRequest\x1a/.livepeer.payments.v1.SufficientBalanceResponse\x12_\n" +
 	"\n" +
@@ -3197,7 +3341,7 @@ func file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP() []byte {
 }
 
 var file_livepeer_payments_v1_payee_daemon_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_livepeer_payments_v1_payee_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 41)
+var file_livepeer_payments_v1_payee_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
 var file_livepeer_payments_v1_payee_daemon_proto_goTypes = []any{
 	(OpenSessionResponse_Outcome)(0),             // 0: livepeer.payments.v1.OpenSessionResponse.Outcome
 	(CloseSessionResponse_Outcome)(0),            // 1: livepeer.payments.v1.CloseSessionResponse.Outcome
@@ -3224,121 +3368,127 @@ var file_livepeer_payments_v1_payee_daemon_proto_goTypes = []any{
 	(*GetWholesaleAccountResponse)(nil),          // 22: livepeer.payments.v1.GetWholesaleAccountResponse
 	(*GetSpendAuthorizationRequest)(nil),         // 23: livepeer.payments.v1.GetSpendAuthorizationRequest
 	(*GetSpendAuthorizationResponse)(nil),        // 24: livepeer.payments.v1.GetSpendAuthorizationResponse
-	(*DebitBalanceRequest)(nil),                  // 25: livepeer.payments.v1.DebitBalanceRequest
-	(*DebitBalanceResponse)(nil),                 // 26: livepeer.payments.v1.DebitBalanceResponse
-	(*SufficientBalanceRequest)(nil),             // 27: livepeer.payments.v1.SufficientBalanceRequest
-	(*SufficientBalanceResponse)(nil),            // 28: livepeer.payments.v1.SufficientBalanceResponse
-	(*GetBalanceRequest)(nil),                    // 29: livepeer.payments.v1.GetBalanceRequest
-	(*GetBalanceResponse)(nil),                   // 30: livepeer.payments.v1.GetBalanceResponse
-	(*CloseSessionRequest)(nil),                  // 31: livepeer.payments.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil),                 // 32: livepeer.payments.v1.CloseSessionResponse
-	(*ListPendingRedemptionsRequest)(nil),        // 33: livepeer.payments.v1.ListPendingRedemptionsRequest
-	(*ListPendingRedemptionsResponse)(nil),       // 34: livepeer.payments.v1.ListPendingRedemptionsResponse
-	(*GetRedemptionStatusRequest)(nil),           // 35: livepeer.payments.v1.GetRedemptionStatusRequest
-	(*GetRedemptionStatusResponse)(nil),          // 36: livepeer.payments.v1.GetRedemptionStatusResponse
-	(*GetRoundRevenueRequest)(nil),               // 37: livepeer.payments.v1.GetRoundRevenueRequest
-	(*GetRoundRevenueResponse)(nil),              // 38: livepeer.payments.v1.GetRoundRevenueResponse
-	(*FreezeRevenueSourceRequest)(nil),           // 39: livepeer.payments.v1.FreezeRevenueSourceRequest
-	(*GetRevenueSourceStatusRequest)(nil),        // 40: livepeer.payments.v1.GetRevenueSourceStatusRequest
-	(*RevenueSourceStatus)(nil),                  // 41: livepeer.payments.v1.RevenueSourceStatus
-	(*CloseUnexecutedAuthorizationRequest)(nil),  // 42: livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
-	(*CloseUnexecutedAuthorizationResponse)(nil), // 43: livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
-	(*TicketParams)(nil),                         // 44: livepeer.payments.v1.TicketParams
-	(*OfferingPrice)(nil),                        // 45: livepeer.payments.v1.OfferingPrice
-	(*CapabilityEntry)(nil),                      // 46: livepeer.payments.v1.CapabilityEntry
-	(*WholesaleAccountView)(nil),                 // 47: livepeer.payments.v1.WholesaleAccountView
-	(*BigUInt)(nil),                              // 48: livepeer.payments.v1.BigUInt
-	(*TicketStatus)(nil),                         // 49: livepeer.payments.v1.TicketStatus
-	(PaymentRejectionReason)(0),                  // 50: livepeer.payments.v1.PaymentRejectionReason
-	(SpendAuthorizationState)(0),                 // 51: livepeer.payments.v1.SpendAuthorizationState
-	(*PendingRedemption)(nil),                    // 52: livepeer.payments.v1.PendingRedemption
-	(*HealthRequest)(nil),                        // 53: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),                       // 54: livepeer.payments.v1.HealthResponse
+	(*CancelAuthorizationAdmissionRequest)(nil),  // 25: livepeer.payments.v1.CancelAuthorizationAdmissionRequest
+	(*CancelAuthorizationAdmissionResponse)(nil), // 26: livepeer.payments.v1.CancelAuthorizationAdmissionResponse
+	(*DebitBalanceRequest)(nil),                  // 27: livepeer.payments.v1.DebitBalanceRequest
+	(*DebitBalanceResponse)(nil),                 // 28: livepeer.payments.v1.DebitBalanceResponse
+	(*SufficientBalanceRequest)(nil),             // 29: livepeer.payments.v1.SufficientBalanceRequest
+	(*SufficientBalanceResponse)(nil),            // 30: livepeer.payments.v1.SufficientBalanceResponse
+	(*GetBalanceRequest)(nil),                    // 31: livepeer.payments.v1.GetBalanceRequest
+	(*GetBalanceResponse)(nil),                   // 32: livepeer.payments.v1.GetBalanceResponse
+	(*CloseSessionRequest)(nil),                  // 33: livepeer.payments.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),                 // 34: livepeer.payments.v1.CloseSessionResponse
+	(*ListPendingRedemptionsRequest)(nil),        // 35: livepeer.payments.v1.ListPendingRedemptionsRequest
+	(*ListPendingRedemptionsResponse)(nil),       // 36: livepeer.payments.v1.ListPendingRedemptionsResponse
+	(*GetRedemptionStatusRequest)(nil),           // 37: livepeer.payments.v1.GetRedemptionStatusRequest
+	(*GetRedemptionStatusResponse)(nil),          // 38: livepeer.payments.v1.GetRedemptionStatusResponse
+	(*GetRoundRevenueRequest)(nil),               // 39: livepeer.payments.v1.GetRoundRevenueRequest
+	(*GetRoundRevenueResponse)(nil),              // 40: livepeer.payments.v1.GetRoundRevenueResponse
+	(*FreezeRevenueSourceRequest)(nil),           // 41: livepeer.payments.v1.FreezeRevenueSourceRequest
+	(*GetRevenueSourceStatusRequest)(nil),        // 42: livepeer.payments.v1.GetRevenueSourceStatusRequest
+	(*RevenueSourceStatus)(nil),                  // 43: livepeer.payments.v1.RevenueSourceStatus
+	(*CloseUnexecutedAuthorizationRequest)(nil),  // 44: livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
+	(*CloseUnexecutedAuthorizationResponse)(nil), // 45: livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
+	(*TicketParams)(nil),                         // 46: livepeer.payments.v1.TicketParams
+	(*OfferingPrice)(nil),                        // 47: livepeer.payments.v1.OfferingPrice
+	(*CapabilityEntry)(nil),                      // 48: livepeer.payments.v1.CapabilityEntry
+	(*WholesaleAccountView)(nil),                 // 49: livepeer.payments.v1.WholesaleAccountView
+	(*BigUInt)(nil),                              // 50: livepeer.payments.v1.BigUInt
+	(*TicketStatus)(nil),                         // 51: livepeer.payments.v1.TicketStatus
+	(PaymentRejectionReason)(0),                  // 52: livepeer.payments.v1.PaymentRejectionReason
+	(SpendAuthorizationState)(0),                 // 53: livepeer.payments.v1.SpendAuthorizationState
+	(*PendingRedemption)(nil),                    // 54: livepeer.payments.v1.PendingRedemption
+	(*HealthRequest)(nil),                        // 55: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),                       // 56: livepeer.payments.v1.HealthResponse
 }
 var file_livepeer_payments_v1_payee_daemon_proto_depIdxs = []int32{
-	44, // 0: livepeer.payments.v1.GetQuoteResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	45, // 1: livepeer.payments.v1.GetQuoteResponse.offering_prices:type_name -> livepeer.payments.v1.OfferingPrice
-	44, // 2: livepeer.payments.v1.GetTicketParamsResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	46, // 3: livepeer.payments.v1.ListCapabilitiesResponse.capabilities:type_name -> livepeer.payments.v1.CapabilityEntry
+	46, // 0: livepeer.payments.v1.GetQuoteResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	47, // 1: livepeer.payments.v1.GetQuoteResponse.offering_prices:type_name -> livepeer.payments.v1.OfferingPrice
+	46, // 2: livepeer.payments.v1.GetTicketParamsResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	48, // 3: livepeer.payments.v1.ListCapabilitiesResponse.capabilities:type_name -> livepeer.payments.v1.CapabilityEntry
 	0,  // 4: livepeer.payments.v1.OpenSessionResponse.outcome:type_name -> livepeer.payments.v1.OpenSessionResponse.Outcome
-	47, // 5: livepeer.payments.v1.FundWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	48, // 6: livepeer.payments.v1.FundWholesaleAccountResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	49, // 7: livepeer.payments.v1.ProcessPaymentResponse.ticket_status:type_name -> livepeer.payments.v1.TicketStatus
-	50, // 8: livepeer.payments.v1.ProcessPaymentResponse.dominant_rejection:type_name -> livepeer.payments.v1.PaymentRejectionReason
-	48, // 9: livepeer.payments.v1.AdmitAuthorizationRequest.reservation_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 10: livepeer.payments.v1.AdvanceAuthorizationRequest.target_reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	51, // 11: livepeer.payments.v1.AdvanceAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	47, // 12: livepeer.payments.v1.AdvanceAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	48, // 13: livepeer.payments.v1.AdvanceAuthorizationResponse.billed_delta_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 14: livepeer.payments.v1.AdvanceAuthorizationResponse.cumulative_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 15: livepeer.payments.v1.AdvanceAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 16: livepeer.payments.v1.AdvanceAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	51, // 17: livepeer.payments.v1.AdmitAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	47, // 18: livepeer.payments.v1.AdmitAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	48, // 19: livepeer.payments.v1.AdmitAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 20: livepeer.payments.v1.AdmitAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	51, // 21: livepeer.payments.v1.SettleAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	47, // 22: livepeer.payments.v1.SettleAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	48, // 23: livepeer.payments.v1.SettleAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 24: livepeer.payments.v1.SettleAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	47, // 25: livepeer.payments.v1.GetWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	51, // 26: livepeer.payments.v1.GetSpendAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	48, // 27: livepeer.payments.v1.GetSpendAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 28: livepeer.payments.v1.GetSpendAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 29: livepeer.payments.v1.GetSpendAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	48, // 30: livepeer.payments.v1.DebitBalanceResponse.debited_wei:type_name -> livepeer.payments.v1.BigUInt
-	1,  // 31: livepeer.payments.v1.CloseSessionResponse.outcome:type_name -> livepeer.payments.v1.CloseSessionResponse.Outcome
-	52, // 32: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
-	2,  // 33: livepeer.payments.v1.GetRedemptionStatusResponse.status:type_name -> livepeer.payments.v1.GetRedemptionStatusResponse.Status
-	3,  // 34: livepeer.payments.v1.PayeeDaemon.GetQuote:input_type -> livepeer.payments.v1.GetQuoteRequest
-	5,  // 35: livepeer.payments.v1.PayeeDaemon.GetTicketParams:input_type -> livepeer.payments.v1.GetTicketParamsRequest
-	7,  // 36: livepeer.payments.v1.PayeeDaemon.ListCapabilities:input_type -> livepeer.payments.v1.ListCapabilitiesRequest
-	9,  // 37: livepeer.payments.v1.PayeeDaemon.OpenSession:input_type -> livepeer.payments.v1.OpenSessionRequest
-	11, // 38: livepeer.payments.v1.PayeeDaemon.ProcessPayment:input_type -> livepeer.payments.v1.ProcessPaymentRequest
-	12, // 39: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:input_type -> livepeer.payments.v1.FundWholesaleAccountRequest
-	15, // 40: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:input_type -> livepeer.payments.v1.AdmitAuthorizationRequest
-	16, // 41: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:input_type -> livepeer.payments.v1.AdvanceAuthorizationRequest
-	19, // 42: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:input_type -> livepeer.payments.v1.SettleAuthorizationRequest
-	21, // 43: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:input_type -> livepeer.payments.v1.GetWholesaleAccountRequest
-	23, // 44: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:input_type -> livepeer.payments.v1.GetSpendAuthorizationRequest
-	25, // 45: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
-	27, // 46: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
-	29, // 47: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
-	31, // 48: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
-	33, // 49: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
-	35, // 50: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
-	37, // 51: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
-	39, // 52: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:input_type -> livepeer.payments.v1.FreezeRevenueSourceRequest
-	40, // 53: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:input_type -> livepeer.payments.v1.GetRevenueSourceStatusRequest
-	42, // 54: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:input_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
-	53, // 55: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
-	4,  // 56: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
-	6,  // 57: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
-	8,  // 58: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
-	10, // 59: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
-	14, // 60: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
-	13, // 61: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:output_type -> livepeer.payments.v1.FundWholesaleAccountResponse
-	18, // 62: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:output_type -> livepeer.payments.v1.AdmitAuthorizationResponse
-	17, // 63: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:output_type -> livepeer.payments.v1.AdvanceAuthorizationResponse
-	20, // 64: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:output_type -> livepeer.payments.v1.SettleAuthorizationResponse
-	22, // 65: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:output_type -> livepeer.payments.v1.GetWholesaleAccountResponse
-	24, // 66: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:output_type -> livepeer.payments.v1.GetSpendAuthorizationResponse
-	26, // 67: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
-	28, // 68: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
-	30, // 69: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
-	32, // 70: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
-	34, // 71: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
-	36, // 72: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
-	38, // 73: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
-	41, // 74: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:output_type -> livepeer.payments.v1.RevenueSourceStatus
-	41, // 75: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:output_type -> livepeer.payments.v1.RevenueSourceStatus
-	43, // 76: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:output_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
-	54, // 77: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
-	56, // [56:78] is the sub-list for method output_type
-	34, // [34:56] is the sub-list for method input_type
-	34, // [34:34] is the sub-list for extension type_name
-	34, // [34:34] is the sub-list for extension extendee
-	0,  // [0:34] is the sub-list for field type_name
+	49, // 5: livepeer.payments.v1.FundWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	50, // 6: livepeer.payments.v1.FundWholesaleAccountResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 7: livepeer.payments.v1.ProcessPaymentResponse.ticket_status:type_name -> livepeer.payments.v1.TicketStatus
+	52, // 8: livepeer.payments.v1.ProcessPaymentResponse.dominant_rejection:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	50, // 9: livepeer.payments.v1.AdmitAuthorizationRequest.reservation_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 10: livepeer.payments.v1.AdvanceAuthorizationRequest.target_reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	53, // 11: livepeer.payments.v1.AdvanceAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	49, // 12: livepeer.payments.v1.AdvanceAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	50, // 13: livepeer.payments.v1.AdvanceAuthorizationResponse.billed_delta_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 14: livepeer.payments.v1.AdvanceAuthorizationResponse.cumulative_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 15: livepeer.payments.v1.AdvanceAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 16: livepeer.payments.v1.AdvanceAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	53, // 17: livepeer.payments.v1.AdmitAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	49, // 18: livepeer.payments.v1.AdmitAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	50, // 19: livepeer.payments.v1.AdmitAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 20: livepeer.payments.v1.AdmitAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	53, // 21: livepeer.payments.v1.SettleAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	49, // 22: livepeer.payments.v1.SettleAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	50, // 23: livepeer.payments.v1.SettleAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 24: livepeer.payments.v1.SettleAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	49, // 25: livepeer.payments.v1.GetWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	53, // 26: livepeer.payments.v1.GetSpendAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	50, // 27: livepeer.payments.v1.GetSpendAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 28: livepeer.payments.v1.GetSpendAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 29: livepeer.payments.v1.GetSpendAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	24, // 30: livepeer.payments.v1.CancelAuthorizationAdmissionResponse.authorization:type_name -> livepeer.payments.v1.GetSpendAuthorizationResponse
+	49, // 31: livepeer.payments.v1.CancelAuthorizationAdmissionResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	50, // 32: livepeer.payments.v1.DebitBalanceResponse.debited_wei:type_name -> livepeer.payments.v1.BigUInt
+	1,  // 33: livepeer.payments.v1.CloseSessionResponse.outcome:type_name -> livepeer.payments.v1.CloseSessionResponse.Outcome
+	54, // 34: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
+	2,  // 35: livepeer.payments.v1.GetRedemptionStatusResponse.status:type_name -> livepeer.payments.v1.GetRedemptionStatusResponse.Status
+	3,  // 36: livepeer.payments.v1.PayeeDaemon.GetQuote:input_type -> livepeer.payments.v1.GetQuoteRequest
+	5,  // 37: livepeer.payments.v1.PayeeDaemon.GetTicketParams:input_type -> livepeer.payments.v1.GetTicketParamsRequest
+	7,  // 38: livepeer.payments.v1.PayeeDaemon.ListCapabilities:input_type -> livepeer.payments.v1.ListCapabilitiesRequest
+	9,  // 39: livepeer.payments.v1.PayeeDaemon.OpenSession:input_type -> livepeer.payments.v1.OpenSessionRequest
+	11, // 40: livepeer.payments.v1.PayeeDaemon.ProcessPayment:input_type -> livepeer.payments.v1.ProcessPaymentRequest
+	12, // 41: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:input_type -> livepeer.payments.v1.FundWholesaleAccountRequest
+	15, // 42: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:input_type -> livepeer.payments.v1.AdmitAuthorizationRequest
+	16, // 43: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:input_type -> livepeer.payments.v1.AdvanceAuthorizationRequest
+	19, // 44: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:input_type -> livepeer.payments.v1.SettleAuthorizationRequest
+	21, // 45: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:input_type -> livepeer.payments.v1.GetWholesaleAccountRequest
+	23, // 46: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:input_type -> livepeer.payments.v1.GetSpendAuthorizationRequest
+	25, // 47: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:input_type -> livepeer.payments.v1.CancelAuthorizationAdmissionRequest
+	27, // 48: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
+	29, // 49: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
+	31, // 50: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
+	33, // 51: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
+	35, // 52: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
+	37, // 53: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
+	39, // 54: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
+	41, // 55: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:input_type -> livepeer.payments.v1.FreezeRevenueSourceRequest
+	42, // 56: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:input_type -> livepeer.payments.v1.GetRevenueSourceStatusRequest
+	44, // 57: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:input_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
+	55, // 58: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
+	4,  // 59: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
+	6,  // 60: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
+	8,  // 61: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
+	10, // 62: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
+	14, // 63: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
+	13, // 64: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:output_type -> livepeer.payments.v1.FundWholesaleAccountResponse
+	18, // 65: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:output_type -> livepeer.payments.v1.AdmitAuthorizationResponse
+	17, // 66: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:output_type -> livepeer.payments.v1.AdvanceAuthorizationResponse
+	20, // 67: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:output_type -> livepeer.payments.v1.SettleAuthorizationResponse
+	22, // 68: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:output_type -> livepeer.payments.v1.GetWholesaleAccountResponse
+	24, // 69: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:output_type -> livepeer.payments.v1.GetSpendAuthorizationResponse
+	26, // 70: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:output_type -> livepeer.payments.v1.CancelAuthorizationAdmissionResponse
+	28, // 71: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
+	30, // 72: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
+	32, // 73: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
+	34, // 74: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
+	36, // 75: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
+	38, // 76: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
+	40, // 77: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
+	43, // 78: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:output_type -> livepeer.payments.v1.RevenueSourceStatus
+	43, // 79: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:output_type -> livepeer.payments.v1.RevenueSourceStatus
+	45, // 80: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:output_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
+	56, // 81: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
+	59, // [59:82] is the sub-list for method output_type
+	36, // [36:59] is the sub-list for method input_type
+	36, // [36:36] is the sub-list for extension type_name
+	36, // [36:36] is the sub-list for extension extendee
+	0,  // [0:36] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_payments_v1_payee_daemon_proto_init() }
@@ -3353,7 +3503,7 @@ func file_livepeer_payments_v1_payee_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_payments_v1_payee_daemon_proto_rawDesc), len(file_livepeer_payments_v1_payee_daemon_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   41,
+			NumMessages:   43,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

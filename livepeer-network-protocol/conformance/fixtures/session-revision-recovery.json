@@ -1,0 +1,25 @@
+{
+  "contract": "paid-session/v1",
+  "description": "Successor caps are cumulative; runway is bounded by remaining debit and never becomes a second charge.",
+  "price_wei": "1000000000000",
+  "predecessor_max_units": 120,
+  "successor_max_units": 180,
+  "cumulative_units": 74,
+  "requested_runway_units": 120,
+  "expected_reservation_wei": "106000000000000",
+  "expected_final_billed_wei": "74000000000000",
+  "recovery": {
+    "unadmitted_active": "repair_reservation_and_replay_same_identity",
+    "admitted_response_lost": "commit_receiver_authority_and_cumulative_totals",
+    "unadmitted_winding_down": "fence_successor_and_settle_predecessor",
+    "admitted_winding_down": "settle_successor",
+    "expired_unused": "persist_refill_refused_and_retain_predecessor",
+    "receiver_unavailable": "retain_intent_and_defer",
+    "replay": "same_request_authorization_and_payment_bytes"
+  },
+  "reservation_error": {
+    "grpc_code": "FAILED_PRECONDITION",
+    "error_info_domain": "payments.livepeer.org",
+    "error_info_reason": "RESERVATION_EXCEEDS_REMAINING_DEBIT"
+  }
+}

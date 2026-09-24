@@ -124,6 +124,44 @@ Ticket-session rotation and `Livepeer-Rebind-From` are not part of this
 contract. Funding generations are internal to the stable account and cannot
 change workload identity.
 
+Successor limits are cumulative, including usage billed under the predecessor.
+The broker MUST bound the requested reservation by the successor's remaining
+debit allowance after reconciling receiver billing and pending usage. HTTP and
+control WebSocket revisions follow the same rule. For 180 authorized units,
+74 billed units and a requested runway of 120 at 10^12 wei/unit, reserve
+106 × 10^12 wei. A reservation is not an additional charge.
+
+The broker persists revision identity, exact authorization/payment bytes,
+fingerprint, derived reservation and promised lease before admission. Recovery
+may correct an oversized derived reservation while preserving those identities
+and bytes. An already-admitted successor wins over a replayed reservation;
+recovery must adopt the receiver's actual result and inherited billing.
+Authority replacement and the replayable response commit atomically.
+
+On winddown or definitive refusal, `CancelAuthorizationAdmission` on the
+receiver's trusted socket atomically fences an absent admission or returns the
+existing authorization unchanged, checked against SHA-256 of its signed bytes.
+A `NotFound` lookup alone cannot authorize abandoning an in-flight admission.
+A durable cancellation or expired-unused successor produces a replayable
+`refill_refused` result and retains the predecessor. An accepted successor must
+be reconciled and settled as the current authority. Receiver outages retain
+the intent and financial obligations; background retry schedules survive
+restart. Signed terminal settlement is withheld until financial closure is
+confirmed. Usage and billed totals never reset at a revision boundary.
+`GetSpendAuthorization` reports a fenced identity as
+`SPEND_AUTHORIZATION_CANCELED_UNUSED`, distinct from an unknown authorization;
+regional drain checks treat that state as terminal with no usage.
+
+Expected receiver admission refusals use gRPC `FailedPrecondition` with
+`google.rpc.ErrorInfo.domain = "payments.livepeer.org"`. Defined reasons are
+`RESERVATION_EXCEEDS_REMAINING_DEBIT`, `REVISION_PREDECESSOR_INVALID`,
+`REVISION_LIMITS_BELOW_USAGE`, `AUTHORIZATION_EXPIRED_UNUSED`,
+`AUTHORIZATION_ADMISSION_CANCELED`, `AUTHORIZATION_NOT_ACTIVE`,
+`AUTHORIZATION_NOT_ADMITTED`, `AUTHORIZATION_STATE_INVALID`, and
+`INSUFFICIENT_WHOLESALE_CREDIT`. `AUTHORIZATION_NOT_ACTIVE` is retryable;
+the broker reconciles/fences other refusals before discarding an intent.
+An `Internal` error or transport timeout is not proof of non-admission.
+
 ### 3.4 End
 
 `POST /v1/session/{session_id}/end` requires the session credential. It is
@@ -233,9 +271,13 @@ authorization after a crash.
 
 On restart the broker verifies that the runner session and active authorization
 still exist. If both survive, processing resumes from durable watermarks. If
-the authorization is absent or unverifiable, the broker marks the payment
-obligation unavailable, terminates the runner, releases capacity, and reaches
-`recovery_failed`; it MUST NOT keep serving unbillable work.
+the authorization is absent or unverifiable, the broker terminates the runner
+and records `recovery_failed`; it MUST NOT keep serving unbillable work. Missing
+receiver state is not evidence of settlement: the session remains
+`winding_down`, retains its financial obligations and capacity, and withholds a
+signed terminal result until the receiver ledger has been reconciled. A lost
+settlement response is recovered by replaying its receiver-confirmed cumulative
+units and sequence, not by fabricating closure or resetting the bill.
 
 This release is a hard cut. Before deployment, operators MUST stop admission,
 drain every payment-only nonterminal session and paid open reservation, and

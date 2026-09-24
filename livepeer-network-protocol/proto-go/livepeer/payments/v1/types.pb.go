@@ -42,6 +42,9 @@ const (
 	SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED    SpendAuthorizationState = 4
 	SpendAuthorizationState_SPEND_AUTHORIZATION_OUTCOME_UNKNOWN   SpendAuthorizationState = 5
 	SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED        SpendAuthorizationState = 6
+	// Receiver proved admission absent and fenced this exact signed identity.
+	// It has no usage and can never become admitted.
+	SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED SpendAuthorizationState = 7
 )
 
 // Enum value maps for SpendAuthorizationState.
@@ -54,6 +57,7 @@ var (
 		4: "SPEND_AUTHORIZATION_EXPIRED_UNUSED",
 		5: "SPEND_AUTHORIZATION_OUTCOME_UNKNOWN",
 		6: "SPEND_AUTHORIZATION_SUPERSEDED",
+		7: "SPEND_AUTHORIZATION_CANCELED_UNUSED",
 	}
 	SpendAuthorizationState_value = map[string]int32{
 		"SPEND_AUTHORIZATION_STATE_UNSPECIFIED": 0,
@@ -63,6 +67,7 @@ var (
 		"SPEND_AUTHORIZATION_EXPIRED_UNUSED":    4,
 		"SPEND_AUTHORIZATION_OUTCOME_UNKNOWN":   5,
 		"SPEND_AUTHORIZATION_SUPERSEDED":        6,
+		"SPEND_AUTHORIZATION_CANCELED_UNUSED":   7,
 	}
 )
 
@@ -2517,7 +2522,7 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\n" +
 	"face_value\x18\x03 \x01(\fR\tfaceValue\x12\x1b\n" +
 	"\tqueued_at\x18\x04 \x01(\x03R\bqueuedAt\x12\x1a\n" +
-	"\battempts\x18\x05 \x01(\x05R\battempts*\x9c\x02\n" +
+	"\battempts\x18\x05 \x01(\x05R\battempts*\xc5\x02\n" +
 	"\x17SpendAuthorizationState\x12)\n" +
 	"%SPEND_AUTHORIZATION_STATE_UNSPECIFIED\x10\x00\x12\x1e\n" +
 	"\x1aSPEND_AUTHORIZATION_ISSUED\x10\x01\x12 \n" +
@@ -2525,7 +2530,8 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"\x1bSPEND_AUTHORIZATION_SETTLED\x10\x03\x12&\n" +
 	"\"SPEND_AUTHORIZATION_EXPIRED_UNUSED\x10\x04\x12'\n" +
 	"#SPEND_AUTHORIZATION_OUTCOME_UNKNOWN\x10\x05\x12\"\n" +
-	"\x1eSPEND_AUTHORIZATION_SUPERSEDED\x10\x06*\xa6\x02\n" +
+	"\x1eSPEND_AUTHORIZATION_SUPERSEDED\x10\x06\x12'\n" +
+	"#SPEND_AUTHORIZATION_CANCELED_UNUSED\x10\a*\xa6\x02\n" +
 	"\x16PaymentRejectionReason\x12(\n" +
 	"$PAYMENT_REJECTION_REASON_UNSPECIFIED\x10\x00\x123\n" +
 	"/PAYMENT_REJECTION_REASON_INVALID_RECIPIENT_RAND\x10\x01\x12)\n" +

@@ -447,6 +447,8 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if rec.Terminal() {
 		resp["ended_at"] = rec.EndedAt.Format(time.RFC3339)
+	}
+	if rec.Closing() {
 		resp["close_reason"] = rec.CloseReason
 	}
 	outputState := rec.OutputState

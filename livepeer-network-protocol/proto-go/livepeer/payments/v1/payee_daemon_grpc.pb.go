@@ -46,6 +46,7 @@ const (
 	PayeeDaemon_SettleAuthorization_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/SettleAuthorization"
 	PayeeDaemon_GetWholesaleAccount_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/GetWholesaleAccount"
 	PayeeDaemon_GetSpendAuthorization_FullMethodName        = "/livepeer.payments.v1.PayeeDaemon/GetSpendAuthorization"
+	PayeeDaemon_CancelAuthorizationAdmission_FullMethodName = "/livepeer.payments.v1.PayeeDaemon/CancelAuthorizationAdmission"
 	PayeeDaemon_DebitBalance_FullMethodName                 = "/livepeer.payments.v1.PayeeDaemon/DebitBalance"
 	PayeeDaemon_SufficientBalance_FullMethodName            = "/livepeer.payments.v1.PayeeDaemon/SufficientBalance"
 	PayeeDaemon_GetBalance_FullMethodName                   = "/livepeer.payments.v1.PayeeDaemon/GetBalance"
@@ -105,6 +106,10 @@ type PayeeDaemonClient interface {
 	SettleAuthorization(ctx context.Context, in *SettleAuthorizationRequest, opts ...grpc.CallOption) (*SettleAuthorizationResponse, error)
 	GetWholesaleAccount(ctx context.Context, in *GetWholesaleAccountRequest, opts ...grpc.CallOption) (*GetWholesaleAccountResponse, error)
 	GetSpendAuthorization(ctx context.Context, in *GetSpendAuthorizationRequest, opts ...grpc.CallOption) (*GetSpendAuthorizationResponse, error)
+	// Trusted broker recovery only. Atomically fence an unadmitted identity, or
+	// return its existing ledger state without changing it. A lookup returning
+	// NotFound alone cannot exclude an admission still in flight.
+	CancelAuthorizationAdmission(ctx context.Context, in *CancelAuthorizationAdmissionRequest, opts ...grpc.CallOption) (*CancelAuthorizationAdmissionResponse, error)
 	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
 	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
@@ -255,6 +260,16 @@ func (c *payeeDaemonClient) GetSpendAuthorization(ctx context.Context, in *GetSp
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(GetSpendAuthorizationResponse)
 	err := c.cc.Invoke(ctx, PayeeDaemon_GetSpendAuthorization_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) CancelAuthorizationAdmission(ctx context.Context, in *CancelAuthorizationAdmissionRequest, opts ...grpc.CallOption) (*CancelAuthorizationAdmissionResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CancelAuthorizationAdmissionResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_CancelAuthorizationAdmission_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -417,6 +432,10 @@ type PayeeDaemonServer interface {
 	SettleAuthorization(context.Context, *SettleAuthorizationRequest) (*SettleAuthorizationResponse, error)
 	GetWholesaleAccount(context.Context, *GetWholesaleAccountRequest) (*GetWholesaleAccountResponse, error)
 	GetSpendAuthorization(context.Context, *GetSpendAuthorizationRequest) (*GetSpendAuthorizationResponse, error)
+	// Trusted broker recovery only. Atomically fence an unadmitted identity, or
+	// return its existing ledger state without changing it. A lookup returning
+	// NotFound alone cannot exclude an admission still in flight.
+	CancelAuthorizationAdmission(context.Context, *CancelAuthorizationAdmissionRequest) (*CancelAuthorizationAdmissionResponse, error)
 	// Deprecated legacy accounting RPC. Brokers MUST NOT call it. Debit
 	// authorized work through AdvanceAuthorization or SettleAuthorization.
 	// Debit session-priced work units from a (sender, work_id) balance
@@ -495,6 +514,9 @@ func (UnimplementedPayeeDaemonServer) GetWholesaleAccount(context.Context, *GetW
 }
 func (UnimplementedPayeeDaemonServer) GetSpendAuthorization(context.Context, *GetSpendAuthorizationRequest) (*GetSpendAuthorizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method GetSpendAuthorization not implemented")
+}
+func (UnimplementedPayeeDaemonServer) CancelAuthorizationAdmission(context.Context, *CancelAuthorizationAdmissionRequest) (*CancelAuthorizationAdmissionResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CancelAuthorizationAdmission not implemented")
 }
 func (UnimplementedPayeeDaemonServer) DebitBalance(context.Context, *DebitBalanceRequest) (*DebitBalanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DebitBalance not implemented")
@@ -748,6 +770,24 @@ func _PayeeDaemon_GetSpendAuthorization_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _PayeeDaemon_CancelAuthorizationAdmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CancelAuthorizationAdmissionRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).CancelAuthorizationAdmission(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_CancelAuthorizationAdmission_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).CancelAuthorizationAdmission(ctx, req.(*CancelAuthorizationAdmissionRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _PayeeDaemon_DebitBalance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(DebitBalanceRequest)
 	if err := dec(in); err != nil {
@@ -996,6 +1036,10 @@ var PayeeDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetSpendAuthorization",
 			Handler:    _PayeeDaemon_GetSpendAuthorization_Handler,
+		},
+		{
+			MethodName: "CancelAuthorizationAdmission",
+			Handler:    _PayeeDaemon_CancelAuthorizationAdmission_Handler,
 		},
 		{
 			MethodName: "DebitBalance",

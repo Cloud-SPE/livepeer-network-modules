@@ -29,6 +29,8 @@ type TopUpRecord struct {
 	LeaseExpiresAt time.Time `json:"lease_expires_at"`
 	BalanceWei     string    `json:"balance_wei"`
 	CreatedAt      time.Time `json:"created_at"`
+	ErrorCode      string    `json:"error_code,omitempty"`
+	ErrorDetail    string    `json:"error_detail,omitempty"`
 }
 
 func topupKey(sessionID, requestID string) []byte {

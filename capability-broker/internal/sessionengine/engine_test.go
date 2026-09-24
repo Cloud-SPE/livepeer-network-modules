@@ -52,6 +52,7 @@ type fakePayment struct {
 	accountAdvances []payment.AdvanceAuthorizationRequest
 	accountSettles  []payment.SettleAuthorizationRequest
 	failSettles     int
+	authStatuses    map[string]*payment.SpendAuthorizationStatus
 }
 
 func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
@@ -76,6 +77,21 @@ func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAut
 	}
 	f.mu.Lock()
 	f.openCalls++
+	if f.authStatuses == nil {
+		f.authStatuses = make(map[string]*payment.SpendAuthorizationStatus)
+	}
+	id := auth.GetPayload().GetAuthorizationId()
+	if prior := f.authStatuses[id]; prior != nil {
+		reserved.Set(prior.Reserved)
+	} else {
+		next := &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Reserved: new(big.Int).Set(reserved), Billed: new(big.Int), Released: new(big.Int)}
+		if pred := f.authStatuses[auth.GetPayload().GetPredecessorAuthorizationId()]; pred != nil {
+			next.ActualUnits, next.SettlementSeq = pred.ActualUnits, pred.SettlementSeq
+			next.Billed.Set(pred.Billed)
+			pred.State = int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED)
+		}
+		f.authStatuses[id] = next
+	}
 	f.mu.Unlock()
 	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
 }
@@ -95,6 +111,9 @@ func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.Advanc
 		f.debits = append(f.debits, debitCall{units: int64(req.CumulativeUnits - f.debitedUnits), seq: req.AdvanceSeq})
 		f.debitedUnits = req.CumulativeUnits
 	}
+	if a := f.authStatuses[req.AuthorizationID]; a != nil {
+		a.ActualUnits, a.SettlementSeq, a.Billed, a.Reserved = req.CumulativeUnits, req.AdvanceSeq, new(big.Int).Set(after), new(big.Int).Set(req.TargetReserved)
+	}
 	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
 }
 func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
@@ -108,13 +127,38 @@ func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleA
 	f.closed++
 	price, per := f.pricing()
 	billed := payment.BillFor(price, per, req.ActualUnits)
+	if a := f.authStatuses[req.AuthorizationID]; a != nil {
+		a.State = int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)
+		a.ActualUnits, a.SettlementSeq, a.Billed = req.ActualUnits, req.SettlementSeq, new(big.Int).Set(billed)
+		a.Reserved.SetInt64(0)
+	}
 	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
 }
 func (f *fakePayment) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
 	return &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, nil
 }
-func (f *fakePayment) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
-	return &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Reserved: big.NewInt(50)}, nil
+func (f *fakePayment) GetSpendAuthorization(_ context.Context, _ []byte, id string) (*payment.SpendAuthorizationStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	a := f.authStatuses[id]
+	if a == nil {
+		return nil, errors.New("authorization not found")
+	}
+	copy := *a
+	copy.Reserved, copy.Billed, copy.Released = new(big.Int).Set(a.Reserved), new(big.Int).Set(a.Billed), new(big.Int).Set(a.Released)
+	return &copy, nil
+}
+
+func (f *fakePayment) CancelAuthorizationAdmission(ctx context.Context, wire []byte) (*payment.CanceledAdmission, error) {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil {
+		return nil, err
+	}
+	a, err := f.GetSpendAuthorization(ctx, nil, auth.GetPayload().GetAuthorizationId())
+	if err != nil {
+		return &payment.CanceledAdmission{Canceled: true}, nil
+	}
+	return &payment.CanceledAdmission{Authorization: a, Account: &payment.WholesaleAccount{Available: big.NewInt(1000)}}, nil
 }
 
 func newFakePayment() *fakePayment {

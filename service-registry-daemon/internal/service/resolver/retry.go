@@ -492,7 +492,9 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (result *ty
 			return nil, s.resolutionError(req.Address, types.ErrResolutionDeferred, st.status)
 		}
 	}
-	err = s.refreshAddress(ctx, req.Address, true)
+	// Recheck cooldown under the coordinator lock; a concurrent attempt may
+	// have failed since the state read above. Only explicit force may bypass it.
+	err = s.refreshAddress(ctx, req.Address, req.ForceRefresh)
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}

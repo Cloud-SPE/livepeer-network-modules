@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/selection"
@@ -437,5 +438,42 @@ func TestIncompatibleEvidenceSurvivesTransportWithoutRenewal(t *testing.T) {
 	after := f.svc.state(f.addr).status
 	if after.Compatibility != types.CompatibilityIncompatible || after.CompatibilityValidUntil != before.CompatibilityValidUntil || after.NextRetryAt.Sub(f.clk.Now()) != 30*time.Minute {
 		t.Fatal(after)
+	}
+}
+
+type gatedCacheRecorder struct {
+	metrics.Recorder
+	entered, release chan struct{}
+}
+
+func (g *gatedCacheRecorder) IncCacheLookup(result string) {
+	close(g.entered)
+	<-g.release
+	g.Recorder.IncCacheLookup(result)
+}
+
+func TestOrdinaryResolutionRechecksConcurrentFailureCooldown(t *testing.T) {
+	f := routeFixture(t)
+	fetch := &outcomeFetcher{outcome: map[string]error{f.uri: httpFailure(404)}}
+	f.svc.fetcher = fetch
+	gate := &gatedCacheRecorder{Recorder: f.svc.rec, entered: make(chan struct{}), release: make(chan struct{})}
+	f.svc.rec = gate
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.svc.ResolveByAddress(context.Background(), Request{Address: f.addr})
+		done <- err
+	}()
+	<-gate.entered
+	err := f.svc.RefreshAddress(context.Background(), f.addr)
+	before := f.svc.state(f.addr).status
+	calls := fetch.calls.Load()
+	close(gate.release)
+	ordinaryErr := <-done
+	if err == nil || !errors.Is(ordinaryErr, types.ErrResolutionDeferred) {
+		t.Fatalf("refresh=%v ordinary=%v", err, ordinaryErr)
+	}
+	after := f.svc.state(f.addr).status
+	if fetch.calls.Load() != calls || after.NextRetryAt != before.NextRetryAt || after.ConsecutiveFailures != before.ConsecutiveFailures {
+		t.Fatal("ordinary request bypassed newly established cooldown")
 	}
 }

@@ -13,7 +13,7 @@ is not a promise of compatibility with those earlier binaries.
 |---|---|---|
 | `ResolveByAddress` | `eth_address`, `allow_legacy_fallback`, `allow_unsigned`, `force_refresh` | Source-aware resolution, signature validation, overlay merge and inventory health pruning |
 | `Select` | required `capability`, `offering`; optional `tier`, `min_weight` | First ranked route |
-| `SelectMany` | Same filter | Ordered matching routes; no matches returns `not_found` |
+| `SelectMany` | Same filter | Snapshot-only ordered matching routes; fresh absence is `not_found`, incomplete state is `registry_unavailable` |
 | `ListKnown` | Empty request | Cached candidate addresses, mode and cached timestamp |
 | `Refresh` | `eth_address` or `*`, `force` | Re-resolve; `force=true` bypasses TTL |
 | `GetAuditLog` | address, optional since/limit | Stored audit records |
@@ -25,11 +25,17 @@ filtering. Capability and offering IDs are opaque. Do not normalize slash and
 colon forms into an alias. Selection uses case-insensitive string matching
 without semantic rewriting; use the keys returned by discovery.
 
-`SelectMany` skips individual addresses that fail resolution. It then applies
-conjunctive enabled/tier/min-weight and capability/offering filtering, then sorts by descending weight. Equal
-weights preserve input order. `Select` uses that same process and returns the
-first result. Separate calls need not produce identical results if health,
-publications or configuration change between them.
+`Select` and `SelectMany` read one immutable indexed snapshot, with no outbound
+network calls or waits for background refresh. They enforce enabled/tier/min-weight,
+capability/offering, source freshness, signed validity and cached live health,
+then sort by descending weight. Equal weights preserve orchestrator-address order
+and manifest node order. `Select` returns the first result. Separate calls may
+observe different publications or health snapshots.
+
+A valid matching route succeeds despite unrelated refresh failures. If none exists,
+incomplete/cold/expired state returns `UNAVAILABLE` (`registry_unavailable`);
+a sufficiently fresh view proving no eligible match returns `NOT_FOUND`.
+See [snapshot and refresh semantics](../design-docs/resolver-cache.md).
 
 With the production live-health provider enabled, targeted selection requires
 a fresh `ready` capability/offering entry from the broker's `/registry/health`.
@@ -60,8 +66,8 @@ identity, not a runner identity.
   canonical extra JSON and canonical constraints JSON. It does not include
   publication sequence, settlement keys or the typed estimator.
 - `settlement_keys` includes all keys projected from the signed publication,
-  sorted newest-first by not-before. Windows are passed through, not filtered
-  against current time. Consumers verify the settlement record's issued-at
+  sorted newest-first by not-before. All windows are passed through. If keys are advertised, at least one must be
+  valid at selection time; expired siblings remain in the response for historical verification. Consumers verify the settlement record's issued-at
   against the key window. `introduced_in_publication_seq` currently carries
   the containing publication's sequence, not independently tracked key history.
 - The optional `work_unit_estimator` is typed; consumers must implement the
@@ -90,8 +96,8 @@ inventory.
 
 ListKnown does not resolve or probe entries. Overlay-only restricts it to
 configured candidates that already have cache records. Missing startup
-publications are retried by Select/SelectMany and Refresh, but do not appear in
-ListKnown until cached. KnownEntry's wire `freshness_status` is currently left
+publications are retried by background workers and explicit Refresh, but do not
+appear in ListKnown until cached. Selection never triggers retrieval. KnownEntry's wire `freshness_status` is currently left
 UNSPECIFIED. Domain static-overlay mode also maps to wire UNSPECIFIED; use
 node source STATIC_OVERLAY to recognize pins.
 
@@ -119,6 +125,7 @@ Errors carry `registry_error_code` in a `google.protobuf.Struct` status detail.
 
 | Stable detail | gRPC status | Meaning |
 |---|---|---|
+| `registry_unavailable` | Unavailable | Selection has no eligible match and incomplete, expired or unverifiable state prevents a reliable absence answer |
 | `not_found` | NotFound | Missing/disabled discovery entry, missing chain pointer, or no selectable routes |
 | `manifest_unavailable` | Unavailable | HTTP/transport retrieval failed without usable fallback |
 | `signature_mismatch` | Unauthenticated | Claimed/recovered signer differs from expected address |

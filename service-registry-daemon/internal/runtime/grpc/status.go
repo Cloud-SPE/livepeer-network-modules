@@ -32,6 +32,8 @@ func errorToStatus(err error) error {
 // classifyError returns (gRPC code, the sentinel string used in status detail).
 func classifyError(err error) (codes.Code, string) {
 	switch {
+	case errors.Is(err, types.ErrRegistryUnavailable):
+		return codes.Unavailable, "registry_unavailable"
 	case errors.Is(err, types.ErrNotFound):
 		return codes.NotFound, "not_found"
 	case errors.Is(err, types.ErrManifestUnavailable):

@@ -28,6 +28,7 @@ func TestErrorToStatus_AllSentinels(t *testing.T) {
 		{types.ErrParse, codes.InvalidArgument, "parse_error"},
 		{types.ErrManifestTooLarge, codes.ResourceExhausted, "manifest_too_large"},
 		{types.ErrChainUnavailable, codes.Unavailable, "chain_unavailable"},
+		{types.ErrRegistryUnavailable, codes.Unavailable, "registry_unavailable"},
 		{types.ErrUnknownMode, codes.InvalidArgument, "unknown_mode"},
 		{types.ErrCacheStaleFailing, codes.DeadlineExceeded, "cache_stale_failing"},
 		{types.ErrKeystoreLocked, codes.FailedPrecondition, "keystore_locked"},

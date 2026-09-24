@@ -5,6 +5,7 @@ import "errors"
 // Sentinel errors for cross-layer comparisons. New error categories
 // require a stable code string in product-specs/grpc-surface.md.
 var (
+	ErrRegistryUnavailable  = errors.New("registry_unavailable")
 	ErrNotFound             = errors.New("not_found")
 	ErrManifestUnavailable  = errors.New("manifest_unavailable")
 	ErrSignatureMismatch    = errors.New("signature_mismatch")

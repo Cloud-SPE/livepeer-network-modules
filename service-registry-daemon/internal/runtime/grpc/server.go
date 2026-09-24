@@ -110,94 +110,10 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 	if req.Offering == "" {
 		return nil, types.NewValidation(types.ErrParse, "select.offering", "required")
 	}
-	addrs, err := s.resolverSvc.CandidateAddresses()
+	filter := selection.Filter{Capability: req.Capability, Offering: req.Offering, Tier: req.Tier, MinWeight: req.MinWeight}
+	matches, err := s.resolverSvc.SelectNodes(ctx, filter)
 	if err != nil {
 		return nil, err
-	}
-	s.log.Info("resolver select_many start",
-		"capability", req.Capability,
-		"offering", req.Offering,
-		"tier", req.Tier,
-		"min_weight", req.MinWeight,
-		"known_address_count", len(addrs),
-	)
-	all := make([]types.ResolvedNode, 0, len(addrs)*2)
-	resolvedAddressCount := 0
-	zeroNodeAddressCount := 0
-	skippedAddressCount := 0
-	for _, addr := range addrs {
-		res, err := s.resolverSvc.ResolveByAddress(ctx, resolver.Request{
-			Capability:          req.Capability,
-			Offering:            req.Offering,
-			Address:             addr,
-			AllowLegacyFallback: true,
-			AllowUnsigned:       false, // Selection honors daemon/overlay unsigned policy.
-		})
-		if err != nil {
-			skippedAddressCount++
-			s.log.Warn("resolver select_many address skipped before filtering",
-				"addr", addr,
-				"capability", req.Capability,
-				"offering", req.Offering,
-				"err", err,
-			)
-			continue
-		}
-		resolvedAddressCount++
-		if len(res.Nodes) == 0 {
-			zeroNodeAddressCount++
-			s.log.Warn("resolver select_many address resolved zero nodes",
-				"addr", addr,
-				"capability", req.Capability,
-				"offering", req.Offering,
-				"mode", res.Mode,
-				"freshness_status", res.FreshnessStatus,
-			)
-			continue
-		}
-		s.log.Debug("resolver select_many address resolved nodes",
-			"addr", addr,
-			"capability", req.Capability,
-			"offering", req.Offering,
-			"mode", res.Mode,
-			"freshness_status", res.FreshnessStatus,
-			"node_count", len(res.Nodes),
-			"node_examples", summarizeResolvedNodes(res.Nodes, 3),
-		)
-		all = append(all, res.Nodes...)
-	}
-	filter := selection.Filter{
-		Capability: req.Capability,
-		Offering:   req.Offering,
-		Tier:       req.Tier,
-		MinWeight:  req.MinWeight,
-	}
-	matches := selection.Apply(all, filter)
-	s.log.Info("resolver select_many after selection",
-		"capability", req.Capability,
-		"offering", req.Offering,
-		"known_address_count", len(addrs),
-		"resolved_address_count", resolvedAddressCount,
-		"zero_node_address_count", zeroNodeAddressCount,
-		"skipped_address_count", skippedAddressCount,
-		"candidate_node_count", len(all),
-		"matched_node_count", len(matches),
-		"matched_node_examples", summarizeResolvedNodes(matches, 5),
-	)
-	if len(matches) == 0 {
-		s.log.Warn("resolver select_many no selectable routes after filtering",
-			"capability", req.Capability,
-			"offering", req.Offering,
-			"tier", req.Tier,
-			"min_weight", req.MinWeight,
-			"known_address_count", len(addrs),
-			"resolved_address_count", resolvedAddressCount,
-			"zero_node_address_count", zeroNodeAddressCount,
-			"skipped_address_count", skippedAddressCount,
-			"candidate_node_count", len(all),
-			"candidate_node_examples", summarizeResolvedNodes(all, 5),
-		)
-		return nil, fmt.Errorf("%w: no route for capability=%q offering=%q", types.ErrNotFound, req.Capability, req.Offering)
 	}
 	routes := make([]*SelectedRoute, 0, len(matches))
 	for _, match := range matches {
@@ -215,11 +131,10 @@ func (s *Server) SelectMany(ctx context.Context, req SelectRequest) ([]*Selected
 		}
 		routes = append(routes, route)
 	}
-	s.log.Info("resolver select_many success",
+	s.log.Debug("resolver select_many success",
 		"capability", req.Capability,
 		"offering", req.Offering,
 		"route_count", len(routes),
-		"route_examples", summarizeSelectedRoutes(routes, 5),
 	)
 	return routes, nil
 }
@@ -250,20 +165,6 @@ func summarizeResolvedNodes(nodes []types.ResolvedNode, max int) []string {
 			}
 		}
 		out = append(out, fmt.Sprintf("%s|%s|%s", n.ID, n.URL, strings.Join(tuples, ",")))
-	}
-	return out
-}
-
-func summarizeSelectedRoutes(routes []*SelectedRoute, max int) []string {
-	if len(routes) == 0 || max <= 0 {
-		return nil
-	}
-	if len(routes) < max {
-		max = len(routes)
-	}
-	out := make([]string, 0, max)
-	for _, r := range routes[:max] {
-		out = append(out, fmt.Sprintf("%s|%s|%s|%s", r.WorkerURL, r.Capability, r.Offering, r.PricePerWorkUnitWei))
 	}
 	return out
 }

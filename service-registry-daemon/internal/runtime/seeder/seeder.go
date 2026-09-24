@@ -1,20 +1,12 @@
-// Package seeder runs the resolver's chain-side cache seeder. On each
-// round transition (subscribed via chain-commons.services.roundclock),
-// the seeder walks the active orchestrator pool via discovery and
-// invokes ResolveByAddress with ForceRefresh=true for each address —
-// warming the cache so subsequent gateway queries hit a fresh entry
-// without doing the chain walk inline.
-//
-// One round event ≈ one ~2N+1 RPC burst (~201 calls for 100 orchs,
-// once per ~19 hours on Arbitrum One). Mid-round queries hit the
-// cache. Operators can hand-trigger Refresh() over gRPC for ad-hoc
-// invalidation without waiting for the next round.
+// Package seeder registers the active chain pool with the resolver on round
+// events. Metadata and health refresh run independently in bounded workers.
 package seeder
 
 import (
 	"context"
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/chain-commons/services/roundclock"
@@ -24,8 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 )
 
-// Seeder pairs a Discovery with a Resolver, refreshing the resolver's
-// cache on each Round event from the Clock.
+// Seeder pairs discovery with the resolver candidate set on each round event.
 type Seeder struct {
 	disc     discovery.Discovery
 	resolver *resolver.Service
@@ -41,8 +32,7 @@ type Seeder struct {
 type Config struct {
 	// Discovery returns the active-orch set on each round event.
 	Discovery discovery.Discovery
-	// Resolver receives ResolveByAddress(ForceRefresh=true) for each
-	// discovered address.
+	// Resolver receives the discovered candidate set without per-address I/O.
 	Resolver *resolver.Service
 	// Clock provides the named-subscription round-event channel.
 	Clock roundclock.NamedClock
@@ -80,15 +70,13 @@ func New(c Config) (*Seeder, error) {
 }
 
 // Run blocks until ctx is canceled or the round-event channel closes.
-// On each round transition, the seeder walks Discovery and refreshes
-// each address in the resolver cache. The first event arrives from
+// On each round transition, the seeder enumerates and registers the active pool.
+// Background workers refresh addresses independently. The first event arrives from
 // chain-commons.timesource shortly after subscription, so the cache
 // warms within one poll interval of daemon startup.
 //
-// Errors from Discovery or per-address resolves are logged and
-// swallowed — a single transient failure shouldn't take down the
-// seeder loop. Persistent failures will be visible in the
-// resolver/chain Recorder counters.
+// Enumeration failures are logged and retried every 30 seconds without
+// taking down the daemon; selection distinguishes incomplete discovery state.
 func (s *Seeder) Run(ctx context.Context) error {
 	s.mu.Lock()
 	if s.stopped {
@@ -103,8 +91,16 @@ func (s *Seeder) Run(ctx context.Context) error {
 	}
 	s.log.Info("seeder: subscribed to round events", "name", s.name)
 
+	retry := time.NewTicker(30 * time.Second)
+	defer retry.Stop()
+	var pending bool
+	var lastRound chain.Round
 	for {
 		select {
+		case <-retry.C:
+			if pending {
+				pending = !s.refresh(ctx, lastRound)
+			}
 		case <-ctx.Done():
 			s.log.Info("seeder: stopping (ctx done)")
 			return nil
@@ -113,35 +109,28 @@ func (s *Seeder) Run(ctx context.Context) error {
 				s.log.Info("seeder: round-event channel closed")
 				return nil
 			}
-			s.refresh(ctx, r)
+			lastRound = r
+			pending = !s.refresh(ctx, r)
 		}
 	}
 }
 
-// refresh walks discovery + force-refreshes each entry in the
-// resolver cache. Best-effort — per-address errors are logged and
-// loop continues.
-func (s *Seeder) refresh(ctx context.Context, r chain.Round) {
+// refresh enumerates the pool within a deadline and registers its candidates.
+func (s *Seeder) refresh(ctx context.Context, r chain.Round) bool {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
 	addrs, err := s.disc.ActiveOrchs(ctx)
 	if err != nil {
+		s.resolver.DiscoveryFailed()
 		s.log.Warn("seeder: discovery failed", "round", r.Number, "err", err)
-		return
+		return false
 	}
 	s.log.Info("seeder: refreshing cache", "round", r.Number, "orchs", len(addrs))
 
+	addresses := make([]types.EthAddress, 0, len(addrs))
 	for _, a := range addrs {
-		// Per-address ResolveByAddress with ForceRefresh re-reads the
-		// chain serviceURI + re-fetches the manifest + verifies
-		// signature, then writes the cache entry. AllowLegacyFallback
-		// matches the existing Refresh() gRPC behavior.
-		req := resolver.Request{
-			Address:             types.EthAddress(a),
-			ForceRefresh:        true,
-			AllowLegacyFallback: true,
-		}
-		if _, err := s.resolver.ResolveByAddress(ctx, req); err != nil {
-			s.log.Debug("seeder: resolve failed", "addr", a, "err", err)
-			continue
-		}
+		addresses = append(addresses, types.EthAddress(a))
 	}
+	s.resolver.Discover(addresses)
+	return true
 }

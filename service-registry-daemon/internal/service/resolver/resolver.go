@@ -62,6 +62,7 @@ type Service struct {
 	liveHealth  livehealthfetcher.Fetcher
 	liveMu      sync.RWMutex
 	liveCache   map[string]liveHealthCacheEntry
+	routes      *routeState
 }
 
 // Config wires the service.
@@ -71,6 +72,8 @@ type Config struct {
 	Verifier verifier.Verifier
 	Cache    manifestcache.Repo
 	Audit    audit.Repo
+	// Overlay returns a stable immutable configuration pointer. To change policy,
+	// atomically replace the pointer; never mutate a published overlay in place.
 	Overlay  func() *config.Overlay
 	Clock    clock.Clock
 	Logger   logger.Logger
@@ -103,7 +106,7 @@ func New(c Config) *Service {
 	if c.Recorder == nil {
 		c.Recorder = metrics.NewNoop()
 	}
-	return &Service{
+	s := &Service{
 		chain:    c.Chain,
 		fetcher:  c.Fetcher,
 		verifier: c.Verifier,
@@ -113,13 +116,8 @@ func New(c Config) *Service {
 		clock:    c.Clock,
 		log:      c.Logger,
 		rec:      c.Recorder,
-		// chainTTL governs the in-cache "is this entry still fresh?"
-		// check that the resolver's lookup logic uses. With round-
-		// anchored seeding, the seeder overwrites entries on each
-		// round event so the TTL effectively never fires for actively-
-		// pooled orchs. Hard-coded to MaxStale (the same window as
-		// last-good fallback) so a one-shot ResolveByAddress for an
-		// address not recently seeded still gets a fresh-enough entry.
+		// MaxStale also supplies the chain/source observation bound. Background
+		// refresh normally renews it earlier; selection never extends it on failure.
 		chainTTL:    nonZeroDuration(c.MaxStale, 1*time.Hour),
 		manifest:    nonZeroDuration(c.CacheManifestTTL, 10*time.Minute),
 		maxStale:    nonZeroDuration(c.MaxStale, 1*time.Hour),
@@ -128,6 +126,8 @@ func New(c Config) *Service {
 		liveHealth:  c.LiveHealth,
 		liveCache:   map[string]liveHealthCacheEntry{},
 	}
+	s.routes = newRouteState()
+	return s
 }
 
 type liveHealthCacheEntry struct {
@@ -144,10 +144,13 @@ type Request struct {
 	AllowLegacyFallback bool
 	AllowUnsigned       bool
 	ForceRefresh        bool
+	metadataOnly        bool
+	strict              bool
+	overlay             *config.Overlay
 }
 
-// CandidateAddresses includes configured discoveries even when startup fetching
-// failed, allowing Select and Refresh to retry them without restarting the daemon.
+// CandidateAddresses includes configured discoveries even when initial fetching
+// failed, allowing workers and explicit Refresh to retry them without restart.
 func (s *Service) CandidateAddresses() ([]types.EthAddress, error) {
 	var addrs []types.EthAddress
 	if !s.overlayOnly {
@@ -170,13 +173,13 @@ func (s *Service) CandidateAddresses() ([]types.EthAddress, error) {
 	return addrs, nil
 }
 
-// ResolveByAddress is the primary entrypoint.
-func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.ResolveResult, error) {
+// resolve implements explicit resolution and metadata-only background refresh.
+func (s *Service) resolve(ctx context.Context, req Request) (*types.ResolveResult, error) {
 	now := s.clock.Now()
 	start := now
 	addr := req.Address
 	overlayURL := ""
-	overlayEntry, configured := s.overlay().FindByAddress(addr)
+	overlayEntry, configured := s.requestOverlay(req).FindByAddress(addr)
 	if s.overlayOnly && (!configured || !overlayEntry.Enabled) {
 		return nil, types.ErrNotFound
 	}
@@ -200,7 +203,8 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 				return res, rerr
 			}
 			s.rec.IncCacheLookup(metrics.CacheHitStale)
-			// Stale; refresh inline. (singleflight could be added later.)
+			// Explicit resolution refreshes inline under the address lock. Selection
+			// reads a separate immutable snapshot and never enters this path.
 		} else {
 			s.rec.IncCacheLookup(metrics.CacheMiss)
 		}
@@ -218,7 +222,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	}
 	if err != nil {
 		// On chain failure, return last-good if we have one within max-stale.
-		if cached, ok, _ := s.cache.Get(addr); ok && cacheMatches(cached) && now.Sub(cached.FetchedAt) < s.maxStale {
+		if cached, ok, _ := s.cache.Get(addr); !req.strict && ok && cacheMatches(cached) && now.Sub(cached.FetchedAt) < s.maxStale {
 			s.appendAudit(addr, types.AuditFallbackUsed, cached.Mode, "chain unavailable, served last-good: "+err.Error())
 			res, rerr := s.buildResultFromEntry(ctx, cached, types.StaleFailing, req)
 			if rerr == nil {
@@ -240,6 +244,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		return nil, fmt.Errorf("%w: %w", types.ErrChainUnavailable, err)
 	}
 
+	s.invalidateSource(req, uri)
 	// 3. Overlay pointers always enter the signed manifest path.
 	mode := types.ModeWellKnown
 	if overlayURL == "" {
@@ -263,7 +268,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 			// Only transport failures can use a verified last-good publication.
 			// Never conceal invalid signatures or schema failures with stale data.
 			if errors.Is(err, types.ErrManifestUnavailable) {
-				if cached, ok, _ := s.cache.Get(addr); ok && cached.Mode == types.ModeWellKnown && cached.Manifest != nil && cached.ResolvedURI == uri && cached.OverlayManifestURL == overlayURL && now.Sub(cached.FetchedAt) < s.maxStale {
+				if cached, ok, _ := s.cache.Get(addr); !req.strict && ok && cached.Mode == types.ModeWellKnown && cached.Manifest != nil && cached.ResolvedURI == uri && cached.OverlayManifestURL == overlayURL && now.Sub(cached.FetchedAt) < s.maxStale {
 					s.appendAudit(addr, types.AuditFallbackUsed, cached.Mode, "manifest unavailable, served last-good: "+err.Error())
 					res, rerr := s.buildResultFromEntry(ctx, cached, types.StaleFailing, req)
 					if rerr == nil {
@@ -274,7 +279,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 				}
 			}
 			// An explicit manifest pointer never downgrades to a legacy node.
-			if overlayURL == "" && req.AllowLegacyFallback && (errors.Is(err, types.ErrManifestUnavailable) || errors.Is(err, types.ErrManifestTooLarge)) {
+			if !req.strict && overlayURL == "" && req.AllowLegacyFallback && (errors.Is(err, types.ErrManifestUnavailable) || errors.Is(err, types.ErrManifestTooLarge)) {
 				s.rec.IncLegacyFallback(legacyFallbackReason(err))
 				s.appendAudit(addr, types.AuditFallbackUsed, types.ModeLegacy, "manifest unavailable, synth legacy: "+err.Error())
 				mode = types.ModeLegacy
@@ -300,7 +305,7 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 	}
 
 	// 5. Overlay merge.
-	overlay := s.overlay()
+	overlay := s.requestOverlay(req)
 	nodes = applyOverlay(addr, nodes, overlay)
 	s.log.Debug("resolver: nodes after overlay",
 		"addr", addr,
@@ -321,7 +326,9 @@ func (s *Service) ResolveByAddress(ctx context.Context, req Request) (*types.Res
 		filtered = append(filtered, n)
 	}
 	nodes = filtered
-	nodes = s.filterLiveHealthy(ctx, nodes, req)
+	if !req.metadataOnly {
+		nodes = s.filterLiveHealthy(ctx, nodes, req)
+	}
 	s.logResolvedResult("resolver: returning fresh result", addr, mode, nodes, types.Fresh)
 
 	if manifest != nil {
@@ -488,7 +495,7 @@ func decodeFetchedManifest(body []byte) (*types.Manifest, []byte, string, uint64
 // when no chain entry exists. Returns ok=false when the overlay has no
 // usable entry for addr — caller falls back to ErrNotFound.
 func (s *Service) tryStaticOverlay(addr types.EthAddress, now time.Time, start time.Time, req Request) (*types.ResolveResult, bool) {
-	overlay := s.overlay()
+	overlay := s.requestOverlay(req)
 	entry, ok := overlay.FindByAddress(addr)
 	if !ok || !entry.Enabled || len(entry.Pin) == 0 {
 		return nil, false
@@ -547,7 +554,7 @@ func (s *Service) cacheFresh(e *manifestcache.Entry, now time.Time) bool {
 }
 
 func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Entry, freshness types.FreshnessStatus, req Request) (*types.ResolveResult, error) {
-	overlay := s.overlay()
+	overlay := s.requestOverlay(req)
 	allowUns := req.AllowUnsigned || !s.rejectUns
 
 	var nodes []types.ResolvedNode
@@ -600,7 +607,9 @@ func (s *Service) buildResultFromEntry(ctx context.Context, e *manifestcache.Ent
 		}
 		filtered = append(filtered, n)
 	}
-	filtered = s.filterLiveHealthy(ctx, filtered, req)
+	if !req.metadataOnly {
+		filtered = s.filterLiveHealthy(ctx, filtered, req)
+	}
 	if e.Manifest != nil {
 		if err := e.Manifest.ValidAt(s.clock.Now()); err != nil {
 			return nil, err

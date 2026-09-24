@@ -10,11 +10,12 @@ anchors, Mermaid rendering or whether code changed after a review.
 - [Architecture](architecture.md): ownership and information flow.
 - [Discovery modes](serviceuri-modes.md): chain pointers, coordinator URLs, CSV and static pins.
 - [Static overlay](static-overlay.md): parsing, trust policy and configuration.
-- [Cache](resolver-cache.md): synchronous refresh and bounded failure fallback.
+- [Cache](resolver-cache.md): verified selection snapshots, background refresh and hard expiry.
 - [gRPC design](grpc-surface.md) and [consumer contract](../product-specs/grpc-surface.md).
 - [Manifest contract](../product-specs/manifest-contract.md): implementation checks and expiry and durable replay enforcement.
 - [Protocol manifest](../../../livepeer-network-protocol/manifest/README.md) and [schema](../../../livepeer-network-protocol/manifest/schema.json): signed wire format.
 - [Observability](observability.md): metrics and operational limits.
+- [Selection performance](../operations/selection-performance.md): reproducible benchmark and local validation results.
 - [Identifiers](workload-agnostic-strings.md): workload-agnostic matching.
 - [Broker offerings](worker-offerings-endpoint.md): runner/broker/coordinator ownership.
 - [Adding a workload](adding-a-new-workload.md): integration path.

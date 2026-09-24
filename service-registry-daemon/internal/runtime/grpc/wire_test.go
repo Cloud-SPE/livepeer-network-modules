@@ -85,6 +85,7 @@ func newWireFixture(t *testing.T) *wireFixture {
 		Overlay:  func() *config.Overlay { return overlay },
 		Clock:    clk,
 	})
+	r.Discover([]types.EthAddress{addr})
 	pub := publisher.New(publisher.Config{Chain: c, Signer: sk, Audit: auditRepo, Clock: clk})
 
 	srv, err := NewServer(Config{
@@ -548,6 +549,8 @@ func TestUnixSocketResolveAndSelect_UseLiveBrokerHealth(t *testing.T) {
 		t.Fatalf("expected only healthy offering after live pruning, got %+v", gotOfferings)
 	}
 
+	resolverSvc.Discover([]types.EthAddress{addr})
+	resolverSvc.RefreshHealth(context.Background(), broker.URL)
 	_, err = cli.Select(context.Background(), &registryv1.SelectRequest{
 		Capability: "openai:chat-completions",
 		Offering:   "degraded",
@@ -576,6 +579,7 @@ func TestUnixSocketResolveAndSelect_UseLiveBrokerHealth(t *testing.T) {
 		},
 	})
 
+	resolverSvc.RefreshHealth(context.Background(), broker.URL)
 	selected, err := cli.Select(context.Background(), &registryv1.SelectRequest{
 		Capability: "openai:chat-completions",
 		Offering:   "degraded",
@@ -802,9 +806,12 @@ func TestWire_OverlayManifestSelectRetriesUncachedAddress(t *testing.T) {
 	if _, err := cli.Select(context.Background(), req); err == nil {
 		t.Fatal("expected no route before publication")
 	}
-	// A failed startup fetch leaves no cache entry. Selection must discover
-	// the configured address and retry, without a Resolve/Refresh roundtrip.
+	// A failed startup fetch leaves no cache entry. Background refresh, never
+	// selection, retries the configured address after publication appears.
 	f.signManifestForFixture([]types.Node{{ID: "broker", URL: "https://broker.example.com", Capabilities: []types.Capability{{Name: "example:work", WorkUnit: "unit", Offerings: []types.Offering{{ID: "default", PricePerWorkUnitWei: "42"}}}}}})
+	if err := f.server.resolverSvc.RefreshAddress(context.Background(), f.addr); err != nil {
+		t.Fatal(err)
+	}
 	result, err := cli.Select(context.Background(), req)
 	if err != nil {
 		t.Fatal(err)
@@ -846,7 +853,11 @@ func TestWire_SelectHonorsUnsignedPolicy(t *testing.T) {
 			f.server.resolverSvc = resolver.New(resolver.Config{Fetcher: f.fetcher, Cache: f.cache, Audit: f.auditRepo, Clock: f.clk, Overlay: func() *config.Overlay { return o }, OverlayOnly: true, RejectUnsigned: tc.rejectUnsigned})
 			cli := registryv1.NewResolverClient(f.clientConn)
 			req := &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}
-			// Both calls exercise initial synthesis and cached rehydration.
+			f.server.resolverSvc.Discover([]types.EthAddress{f.addr})
+			if err := f.server.resolverSvc.RefreshAddress(context.Background(), f.addr); err != nil {
+				t.Fatal(err)
+			}
+			// Both calls read the same verified snapshot.
 			for i := 0; i < 2; i++ {
 				result, err := cli.Select(context.Background(), req)
 				if !tc.wantRoute {

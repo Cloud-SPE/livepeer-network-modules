@@ -1,7 +1,7 @@
 ---
 title: Core beliefs
 status: accepted
-last-reviewed: 2026-09-14
+last-reviewed: 2026-09-24
 ---
 
 # Core beliefs
@@ -45,8 +45,9 @@ explicitly unsigned and separate from coordinator manifest pointers.
 - gRPC uses a local unix socket with trusted local callers. Metrics has its own
   optional TCP listener.
 - Production cache/audit storage is BoltDB. State is local to the process.
-- Fresh entries avoid chain lookup and manifest fetch; live-health work may
-  still run. Stale entries refresh synchronously. Round seeding is separate.
+- Select/SelectMany read immutable snapshots without I/O. Background workers
+  refresh metadata and health before expiry; reads enforce hard validity bounds.
+  Explicit Resolve/Refresh remain I/O operations. See plan 0015 and resolver-cache.
 - The package coverage target remains at least 75%. The current coverage-gate
   executable enforces that target for every executable cmd/internal package.
 - Documentation is updated alongside observable behavior. Active docs describe

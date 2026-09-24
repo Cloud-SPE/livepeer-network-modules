@@ -1,7 +1,7 @@
 ---
 title: Architecture
 status: verified
-last-reviewed: 2026-09-14
+last-reviewed: 2026-09-24
 ---
 
 # Architecture
@@ -16,7 +16,7 @@ flowchart LR
     Y[nodes.yaml coordinator URLs] --> R[Registry resolver]
     CH[Chain serviceURI pointers] --> R
     R -->|fetch signed manifest| C
-    R -->|request-scoped live health| B
+    R -->|background live health| B
     R <--> DB[Cache and audit store]
     G[Gateway] -->|Resolve / Select / SelectMany| R
     G -->|work protocol| B
@@ -58,15 +58,17 @@ these implemented checks from expiry and durable replay enforcement.
 6. Consult broker health and return the result; cache verified publication
    data separately from per-request health/policy pruning.
 
-A stale-cache request refreshes synchronously. The chain seeder is a separate
-round-event loop, not a background refresh spawned by each request. Initial
-overlay seeding is synchronous and best-effort; failed coordinator addresses
-remain candidates for subsequent Select/Refresh retries.
+Explicit Resolve remains an I/O diagnostic operation. Select/SelectMany instead
+read an immutable capability/offering index published by bounded background
+metadata and health workers. They check source, publication, health and advertised
+settlement-key validity against the current time, without network or cache I/O.
+A healthy route is immediately usable despite unrelated endpoint failures;
+incomplete state without a route returns unavailable rather than not-found.
 
-`Select` and `SelectMany` resolve candidates, require matching capability and
-offering, enforce enabled/tier/min-weight policy and live health, then sort by
-descending weight. Equal weights preserve input order. They return quote
-metadata and broker endpoints; they do not reserve capacity or process tickets.
+Chain round discovery registers the active candidate set; workers refresh each
+address independently. Overlay candidates warm asynchronously after listener
+startup. See [resolver cache](resolver-cache.md) for generation checks, deadlines,
+expiry and negative-result semantics.
 
 ## Boundaries
 

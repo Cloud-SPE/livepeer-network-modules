@@ -15,6 +15,7 @@ import (
 	ethcommon "github.com/ethereum/go-ethereum/common"
 
 	cchain "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/chain"
+	ccconfig "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/config"
 	cclock "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/clock"
 	cccontrollerapi "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller"
 	cccontroller "github.com/Cloud-SPE/livepeer-network-modules/chain-commons/providers/controller/eth"
@@ -176,7 +177,7 @@ func build(ctx context.Context, cfg *config.Daemon) (_ *builtProviders, buildErr
 		if err := chain.ValidateRPCChainIDs(ctx, cfg.ChainRPCURLs, cfg.ChainID); err != nil {
 			return nil, err
 		}
-		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs})
+		ccRPC, err = ccrpcmulti.Open(ccrpcmulti.Options{URLs: cfg.ChainRPCURLs, Policy: ccconfig.RPCPolicy{CallTimeout: time.Second, MaxRetries: 1, InitialBackoff: 100 * time.Millisecond, MaxBackoff: 100 * time.Millisecond}})
 		if err != nil {
 			return nil, fmt.Errorf("providers: chain-commons rpc: %w", err)
 		}

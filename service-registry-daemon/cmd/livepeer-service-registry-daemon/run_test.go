@@ -11,7 +11,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/chain"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/clock"
-	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/manifestfetcher"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/store"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/verifier"
@@ -96,7 +95,7 @@ func TestSeedOverlayCache_StaticOverlayOnly_NoChain(t *testing.T) {
 	}
 
 	r, cacheRepo := newOverlayResolverFixture(t, chain.NewInMemory(types.EthAddress("0x0")), o)
-	seedOverlayCache(context.Background(), r, o, logger.Discard())
+	warmOverlayBackground(t, r, cacheRepo)
 
 	addrs, err := cacheRepo.List()
 	if err != nil {
@@ -107,11 +106,8 @@ func TestSeedOverlayCache_StaticOverlayOnly_NoChain(t *testing.T) {
 	}
 }
 
-// TestSeedOverlayCache_OverlayOnlyWithChain validates the production
-// overlay-only path: chain has serviceURIs (no manifest published yet),
-// the seed loop walks the overlay and falls into legacy synth per
-// address. ListKnown reflects every overlay entry after seed completes.
-func TestSeedOverlayCache_OverlayOnlyWithChain(t *testing.T) {
+// Overlay-only entries without a manifest pointer or pins cannot use chain data.
+func TestOverlayOnlyDoesNotSeedChainPointers(t *testing.T) {
 	addrA, _ := types.ParseEthAddress("0xabcdef0000000000000000000000000000000000")
 	addrB, _ := types.ParseEthAddress("0xfedcba0000000000000000000000000000000000")
 	yaml := fmt.Sprintf(`overlay:
@@ -132,14 +128,16 @@ func TestSeedOverlayCache_OverlayOnlyWithChain(t *testing.T) {
 	c.PreLoad(addrB, "https://b.example.com:8935")
 
 	r, cacheRepo := newOverlayResolverFixture(t, c, o)
-	seedOverlayCache(context.Background(), r, o, logger.Discard())
+	if _, err := r.ResolveByAddress(context.Background(), resolver.Request{Address: addrA}); err == nil {
+		t.Fatal("source-less overlay unexpectedly resolved")
+	}
 
 	addrs, err := cacheRepo.List()
 	if err != nil {
 		t.Fatalf("list cache: %v", err)
 	}
-	if len(addrs) != 2 {
-		t.Fatalf("expected 2 cached entries, got %d (%v)", len(addrs), addrs)
+	if len(addrs) != 0 {
+		t.Fatalf("expected no cached entries, got %d (%v)", len(addrs), addrs)
 	}
 }
 
@@ -173,7 +171,7 @@ func TestSeedOverlayCache_SkipsDisabledEntries(t *testing.T) {
 	}
 
 	r, cacheRepo := newOverlayResolverFixture(t, chain.NewInMemory(types.EthAddress("0x0")), o)
-	seedOverlayCache(context.Background(), r, o, logger.Discard())
+	warmOverlayBackground(t, r, cacheRepo)
 
 	addrs, err := cacheRepo.List()
 	if err != nil {
@@ -192,13 +190,36 @@ func newOverlayResolverFixture(t *testing.T, c chain.Chain, o *config.Overlay) (
 	kv := store.NewMemory()
 	cacheRepo := manifestcache.New(kv)
 	r := resolver.New(resolver.Config{
-		Chain:    c,
-		Fetcher:  &manifestfetcher.Static{Bodies: map[string][]byte{}},
-		Verifier: verifier.New(),
-		Cache:    cacheRepo,
-		Audit:    audit.New(kv),
-		Overlay:  func() *config.Overlay { return o },
-		Clock:    &clock.Fixed{T: time.Unix(1745000000, 0).UTC()},
+		Chain:       c,
+		OverlayOnly: true,
+		Fetcher:     &manifestfetcher.Static{Bodies: map[string][]byte{}},
+		Verifier:    verifier.New(),
+		Cache:       cacheRepo,
+		Audit:       audit.New(kv),
+		Overlay:     func() *config.Overlay { return o },
+		Clock:       &clock.Fixed{T: time.Unix(1745000000, 0).UTC()},
 	})
 	return r, cacheRepo
+}
+
+func warmOverlayBackground(t *testing.T, r *resolver.Service, cache manifestcache.Repo) {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); r.RunRefresh(ctx) }()
+	defer func() { cancel(); <-done }()
+	deadline := time.Now().Add(time.Second)
+	for {
+		addrs, err := cache.List()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(addrs) > 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("overlay background warming did not populate cache")
+		}
+		time.Sleep(time.Millisecond)
+	}
 }

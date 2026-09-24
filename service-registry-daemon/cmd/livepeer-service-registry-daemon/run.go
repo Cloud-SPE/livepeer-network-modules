@@ -8,7 +8,6 @@ import (
 	"os"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/config"
-	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/providers/logger"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/audit"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/repo/manifestcache"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
@@ -128,15 +127,6 @@ func run(ctx context.Context, args []string) error {
 		}
 	}
 
-	// Overlay-only resolver: walk the overlay once at startup so
-	// ListKnown / Select return the operator-curated pool without a
-	// per-consumer Refresh roundtrip. Each address uses its signed manifest_url
-	// or unsigned static pins. Per-address errors are logged and swallowed;
-	// subsequent Select/Refresh calls retry configured manifest pointers.
-	if cfg.Mode == config.ModeResolver && cfg.Discovery == config.DiscoveryOverlayOnly {
-		seedOverlayCache(ctx, resolverSvc, bp.overlayAccessor(), bp.log)
-	}
-
 	bp.log.Info("daemon ready",
 		"mode", string(cfg.Mode),
 		"socket", cfg.SocketPath,
@@ -146,6 +136,7 @@ func run(ctx context.Context, args []string) error {
 	)
 	return lifecycle.Run(ctx, lifecycle.RunConfig{
 		Server:          srv,
+		Resolver:        resolverSvc,
 		Listener:        grpcListener,
 		MetricsListener: metricsListener,
 		Seeder:          seederSvc,
@@ -159,34 +150,11 @@ func run(ctx context.Context, args []string) error {
 // explicit signed-path seed that cannot resolve is a broken startup contract,
 // not an optional route to skip.
 func seedChainCache(ctx context.Context, r *resolver.Service, addresses []types.EthAddress) error {
+	r.Discover(addresses)
 	for _, addr := range addresses {
 		if _, err := r.ResolveByAddress(ctx, resolver.Request{Address: addr}); err != nil {
 			return fmt.Errorf("resolve %s: %w", addr, err)
 		}
 	}
 	return nil
-}
-
-// seedOverlayCache calls ResolveByAddress once for each enabled overlay
-// entry. Errors are non-fatal — a missing manifest for one address must
-// not prevent the others from seeding.
-func seedOverlayCache(ctx context.Context, r *resolver.Service, o *config.Overlay, log logger.Logger) {
-	if r == nil || o == nil {
-		return
-	}
-	for i := range o.Entries {
-		e := &o.Entries[i]
-		if !e.Enabled {
-			continue
-		}
-		req := resolver.Request{
-			Address:             e.EthAddress,
-			AllowLegacyFallback: true,
-			AllowUnsigned:       e.UnsignedAllowed,
-		}
-		if _, err := r.ResolveByAddress(ctx, req); err != nil {
-			log.Warn("overlay-only seed: ResolveByAddress failed",
-				"addr", e.EthAddress, "manifest_url", e.ManifestURL, "err", err)
-		}
-	}
 }

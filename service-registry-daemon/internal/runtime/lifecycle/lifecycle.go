@@ -19,10 +19,12 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/grpc"
 	rmetrics "github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/metrics"
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/runtime/seeder"
+	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/service/resolver"
 )
 
 // RunConfig is the input to Run.
 type RunConfig struct {
+	Resolver        *resolver.Service
 	Server          *grpc.Server
 	Listener        *grpc.Listener     // nil → no network listener (used by tests / dry-runs)
 	MetricsListener *rmetrics.Listener // nil → no metrics listener
@@ -89,6 +91,11 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		go func() { seederErr <- cfg.Seeder.Run(runCtx) }()
 	}
 
+	var refreshDone chan struct{}
+	if cfg.Resolver != nil {
+		refreshDone = make(chan struct{})
+		go func() { defer close(refreshDone); cfg.Resolver.RunRefresh(runCtx) }()
+	}
 	// Wait for signal, ctx cancel, or unexpected listener exit.
 	select {
 	case <-runCtx.Done():
@@ -112,6 +119,7 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		cancel()
 	}
 
+	cancel()
 	// Trigger listener shutdown. Stop calls are idempotent.
 	if cfg.Listener != nil {
 		cfg.Listener.Stop()
@@ -146,6 +154,9 @@ func Run(ctx context.Context, cfg RunConfig) error {
 		}
 	}
 
+	if refreshDone != nil {
+		<-refreshDone
+	}
 	// Close store last.
 	if cfg.Store != nil {
 		if err := cfg.Store.Close(); err != nil {

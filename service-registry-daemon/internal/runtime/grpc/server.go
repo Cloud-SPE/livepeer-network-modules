@@ -171,11 +171,19 @@ func summarizeResolvedNodes(nodes []types.ResolvedNode, max int) []string {
 
 // ListKnown returns all eth addresses currently in the cache, with
 // freshness status.
-func (s *Server) ListKnown(_ context.Context) ([]KnownEntry, error) {
+func (s *Server) ListKnown(ctx context.Context) ([]KnownEntry, error) {
 	var addrs []types.EthAddress
 	var err error
 	if s.resolverSvc != nil {
-		addrs, err = s.resolverSvc.CandidateAddresses()
+		known, err := s.resolverSvc.KnownAddresses(ctx)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]KnownEntry, 0, len(known))
+		for _, k := range known {
+			out = append(out, KnownEntry{EthAddress: k.Address, Mode: k.Mode, CachedAt: k.CachedAt, Status: k.Status})
+		}
+		return out, nil
 	} else {
 		addrs, err = s.cache.List()
 	}
@@ -341,6 +349,7 @@ type SettlementKey struct {
 
 // KnownEntry mirrors the proto message.
 type KnownEntry struct {
+	Status     types.DiscoveryStatus
 	EthAddress types.EthAddress
 	Mode       types.ResolveMode
 	CachedAt   time.Time

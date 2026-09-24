@@ -63,6 +63,7 @@ func run(ctx context.Context, args []string) error {
 			Logger:           bp.log,
 			Recorder:         bp.recorder,
 			CacheManifestTTL: cfg.CacheManifestTTL,
+			Retry:            cfg.Retry,
 			MaxStale:         cfg.MaxStale,
 			RejectUnsigned:   cfg.RejectUnsigned,
 			OverlayOnly:      cfg.Discovery == config.DiscoveryOverlayOnly,

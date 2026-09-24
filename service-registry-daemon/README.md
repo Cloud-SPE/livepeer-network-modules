@@ -8,7 +8,7 @@ process payments. Start maintenance work at [AGENTS.md](AGENTS.md).
 
 | Mode | Public surface | Dependencies |
 |---|---|---|
-| `resolver` | `ResolveByAddress`, `Select`, `SelectMany`, `ListKnown`, `Refresh`, `GetAuditLog`, `Health` | Manifest HTTP fetcher, signature verifier, cache and audit store; chain providers only for chain discovery |
+| `resolver` | `ResolveByAddress`, `Select`, `SelectMany`, `ListKnown`, `ListOfferings`, `Refresh`, `GetAuditLog`, `Health` | Manifest HTTP fetcher, signature verifier, cache and audit store; chain providers only for chain discovery |
 | `publisher` | `GetIdentity`, `Health` | Local keystore and store; no manifest building, signing, hosting or chain writes |
 
 The coordinator builds a protocol manifest from broker offerings. The operator

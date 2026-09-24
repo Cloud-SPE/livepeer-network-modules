@@ -407,6 +407,7 @@ func resolveResultToProto(r *types.ResolveResult) *registryv1.ResolveResult {
 		return &registryv1.ResolveResult{}
 	}
 	out := &registryv1.ResolveResult{
+		DiscoveryStatus: discoveryStatusToProto(r.DiscoveryStatus),
 		EthAddress:      string(r.EthAddress),
 		ResolvedUri:     r.ResolvedURI,
 		Mode:            resolveModeToProto(r.Mode),

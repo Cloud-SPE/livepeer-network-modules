@@ -32,6 +32,7 @@ type ResolvedNode struct {
 
 // ResolveResult is the full Resolve output: meta + nodes.
 type ResolveResult struct {
+	DiscoveryStatus DiscoveryStatus
 	EthAddress      EthAddress
 	ResolvedURI     string
 	Mode            ResolveMode

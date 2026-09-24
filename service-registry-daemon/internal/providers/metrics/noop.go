@@ -58,3 +58,7 @@ func (*Noop) Handler() http.Handler {
 		http.Error(w, "metrics listener not enabled (start the daemon with --metrics-listen)", http.StatusNotFound)
 	})
 }
+
+func (*Noop) ObserveDiscoveryRetry(_, _ string, _ time.Duration) {}
+func (*Noop) IncResolutionDeferred()                             {}
+func (*Noop) SetNextRetry(_ string, _ time.Time)                 {}

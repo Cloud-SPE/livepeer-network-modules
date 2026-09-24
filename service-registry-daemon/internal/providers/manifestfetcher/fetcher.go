@@ -122,7 +122,7 @@ func (f *HTTP) Fetch(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%w: HTTP %d", types.ErrManifestUnavailable, resp.StatusCode)
+		return nil, &types.FetchError{Cause: fmt.Errorf("%w: HTTP %d", types.ErrManifestUnavailable, resp.StatusCode), HTTPStatus: resp.StatusCode}
 	}
 
 	if ct := resp.Header.Get("Content-Type"); ct != "" && !strings.Contains(strings.ToLower(ct), "json") {

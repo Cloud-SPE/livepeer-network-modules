@@ -74,6 +74,12 @@ password bind mounts must be readable by runtime UID 65532.
 | `--manifest-max-bytes` | 4194304 | Body size cap, allowed range 1024 through 16 MiB |
 | `--manifest-fetch-timeout` | 5s | Per HTTP attempt, including alternate candidate paths |
 | `--max-stale` | 1h | Age bound for last-good failure fallback; also internal chain freshness bound |
+| `--retry-incompatible` | 5m,30m,2h,6h,24h | Confirmed missing/unsupported manifest or missing source retry intervals |
+| `--retry-compatible` | 5s,15s,1m,5m,15m | Previously verified transient failure intervals |
+| `--retry-unknown` | 15s,1m,5m,15m,1h | Unknown compatibility transient intervals |
+| `--retry-rejected` | 1m,5m,15m,1h | Validation/signature/expiry/replay rejection intervals |
+| `--retry-jitter` | 0.2 | Downward jitter fraction; range 0–0.5; final interval is a hard cap |
+| `--source-poll-interval` | 1m | Independent URI polling target during manifest cooldown; subject to worker capacity |
 | `--static-overlay` | empty | YAML loaded once at startup; restart to reload |
 | `--reject-unsigned` | true | Default policy for unsigned static/CSV nodes; never permits unsigned coordinator envelopes |
 | `--worker-probe-timeout` | 5s | Resolver live broker health fetch timeout |
@@ -118,7 +124,7 @@ route index. No chain lookup occurs in overlay-only mode. A cold Select returns
 `UNAVAILABLE` promptly; retries never perform network I/O themselves. Workers
 retry failed endpoints with bounded backoff. Each completed healthy route becomes
 available independently, without waiting for unrelated orchestrators. ListKnown
-shows cached candidates only; liveness does not imply a selectable route.
+shows all discovered candidates with retry diagnostics; liveness does not imply a selectable route.
 
 Selection requires unexpired verified source data and fresh ready broker health.
 It never serves a route beyond its hard freshness bounds, even when workers stall.
@@ -127,14 +133,18 @@ Do not treat `registry_unavailable` as proof that no provider offers the workloa
 
 Metadata and health operations have five-second deadlines and separate worker
 budgets. Registry chain RPC attempts use one second, one retry and 100 ms backoff.
-The health HTTP timeout flag may shorten its five-second budget. Scheduler timing
-and worker counts are fixed implementation defaults. See
+The health HTTP timeout flag may shorten its five-second budget. Worker counts
+and the 100 ms scheduler tick remain fixed; manifest retry schedules are configurable. See
 [cache semantics](../design-docs/resolver-cache.md) for expiry and retry details.
 
-Explicit Resolve/Refresh can perform I/O; forced Refresh bypasses TTL. Wildcard
+Explicit Resolve/Refresh can perform I/O outside cooldown; force bypasses TTL and
+backoff but never verification. During cooldown ordinary Resolve serves fresh cache
+or returns typed resolution_deferred without outbound I/O. Wildcard
 Refresh suppresses per-address errors. Use a specific address, logs and audit
-records to diagnose failures. After restart, background warming refetches persisted
-publications and obtains new health. Explicit Resolve may reuse source-matching
+records to diagnose failures. ListOfferings is the supported cached capability
+catalog; partial/empty/uninitialized results carry explicit coverage rather than
+triggering per-address resolution. After restart, persisted classification/cooldowns and accepted inventory are
+restored before scheduling. Broker health must be fetched anew. Explicit Resolve may reuse source-matching
 cached publications within current validity bounds; health must still warm.
 
 Health RPC provider booleans reflect the last completed operation; unused providers are healthy, and unattempted required providers are not. The timestamp is the last actual successful serviceURI read.

@@ -5,6 +5,10 @@ import "errors"
 // Sentinel errors for cross-layer comparisons. New error categories
 // require a stable code string in product-specs/grpc-surface.md.
 var (
+	ErrResolutionDeferred   = errors.New("resolution_deferred")
+	ErrManifestMissing      = errors.New("manifest_missing")
+	ErrManifestUnsupported  = errors.New("manifest_unsupported")
+	ErrPublicationReplay    = errors.New("publication_replay")
 	ErrRegistryUnavailable  = errors.New("registry_unavailable")
 	ErrNotFound             = errors.New("not_found")
 	ErrManifestUnavailable  = errors.New("manifest_unavailable")

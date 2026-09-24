@@ -41,3 +41,14 @@ does not rely on a local `replace ../proto-contracts`.
 must require it and scope their accounts accordingly. See
 [the cross-component contract](../docs/design-docs/settlement-domain-identity.md).
 Payments protobuf additions remain owned by `livepeer-network-protocol/proto/`.
+
+## 2026-09-24: cached registry catalog and retry diagnostics
+
+Additive `Resolver.ListOfferings` returns informational offering snapshots with
+provider identity, full SelectedRoute metadata, selectability and explicit
+unfiltered discovery coverage. `ResolveResult` and `KnownEntry` gain
+`DiscoveryStatus`; deferred failures carry `RegistryResolutionDetail` and
+`google.rpc.RetryInfo` alongside the existing stable Struct error code.
+See the [consumer contract](../service-registry-daemon/docs/product-specs/grpc-surface.md)
+and [JSON fixtures](livepeer/registry/v1/testdata/README.md).
+The implementation design is [plan 0016](../service-registry-daemon/docs/exec-plans/completed/0016-classified-retries-and-catalog.md).

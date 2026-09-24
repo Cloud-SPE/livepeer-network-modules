@@ -55,11 +55,28 @@ updates all its tuples in one fetch. Endpoint health requests are deduplicated;
 address refreshes serialize with explicit resolution and concurrent background
 refresh callers reuse a completed attempt.
 
-Successful refreshes schedule the next attempt at 65–75% of remaining validity,
-with deterministic per-endpoint jitter. Failures retry with 1, 2, 4, 8, 16, then
-32 second backoff. The scheduler checks due work every 100 ms, serving the oldest due work first. Worker concurrency
-and these timing bounds are currently implementation defaults, not CLI flags.
-The health HTTP client's `--worker-probe-timeout` can shorten its deadline.
+Successful refreshes schedule at 65–75% of remaining validity. Manifest failures
+use configurable interval lists, repeated at their final bound:
+
+| Retry class | Default intervals |
+|---|---|
+| incompatible (missing/unsupported manifest or missing source) | 5m, 30m, 2h, 6h, 24h |
+| compatible (previously verified, transient error) | 5s, 15s, 1m, 5m, 15m |
+| unknown (unverified, transient error) | 15s, 1m, 5m, 15m, 1h |
+| rejected (validation/signature/expiry/replay/internal failure) | 1m, 5m, 15m, 1h |
+
+Each retry uses downward jitter in [80%,100%] of its interval by default,
+seeded by address/source/policy step/attempt time; the sampled deadline is
+persisted. `--retry-jitter=0` disables jitter. Changing retry class starts that
+class at step one while consecutive_failures continues until successful
+resolution. Later transport failures at a confirmed-incompatible source retain
+the incompatible policy and original evidence deadline; they do not establish new
+negative evidence. Broker-health retries independently retain 1,2,4,8,16,32 seconds.
+Workers share per-address in-flight refreshes with forced and ordinary callers.
+The scheduler checks every 100 ms. Independent source polling (default one minute)
+uses the metadata worker budget and checks changed chain URIs during long
+manifest cooldowns; unchanged observations never reset the manifest timer.
+This is a polling target subject to worker/RPC availability, not a hard SLA.
 
 Transport failures preserve only previously verified, still-valid snapshots;
 they never renew timestamps. Validation failures revoke the in-memory address
@@ -67,7 +84,9 @@ immediately. A changed chain URI revokes the old source even if the replacement
 manifest is unreachable. Durable publication watermarks reject rollback and
 conflicting same-sequence payloads, including across restart.
 
-Chain round discovery registers the active pool without waiting for each address.
+Chain round discovery registers the active pool without waiting for each address
+and without clearing retries for unchanged candidates. Scope completeness expires
+24 hours after the last successful pool enumeration.
 Failed pool enumeration retries every 30 seconds (each enumeration is bounded
 by 30 seconds). Overlay-only candidates are scheduled directly without chain I/O.
 The registry's multi-RPC client uses a one-second attempt timeout, one retry and
@@ -95,17 +114,34 @@ This avoids translating provider failures into apparent route absence.
 
 ## Explicit resolution and persistence
 
-`ResolveByAddress` and administrative `Refresh` remain explicit I/O operations.
-Resolve preserves its diagnostic inventory behavior, including bounded last-good
-fallback and permissive inventory pruning when health is unavailable. Those
-results do not relax selection deadlines or signature policy. A force refresh
-bypasses its cache TTL; wildcard Refresh still suppresses per-address errors.
-Use an address-specific call to diagnose a failure. Selection never calls either
-operation or inherits the request's `allow_unsigned` override.
+`manifest_discovery` stores source identity, compatibility evidence/time bounds,
+last manifest availability, failure reason, streak, retry class/policy step, last
+verification and the computed retry deadline. It includes never-successful
+addresses. Accepted publications remain separately in `manifest_cache`; the
+publication watermark remains address-scoped across source changes and deletion.
+The resolver restores discovery state before scheduling or explicit resolution.
+Old legacy cache entries do not become evidence of manifest incompatibility.
 
-Failed refreshes need not delete persistent records. There is no LRU or automatic
-max-stale eviction; retention and selection eligibility are separate concerns.
-ListKnown reports cached candidate records, not selectable routes.
+Before an attempt, a durable invalidation guard is written. On completion it is
+replaced with accepted state or classified failure. A crash or persistence error
+cannot resurrect an old publication after a rejection. Transient failures may
+retain previously accepted data only within existing eligibility bounds.
+Restart restores accepted inventory but never restores broker health as fresh.
+
+Ordinary Resolve honors cooldown: it returns currently fresh cache without
+chain/manifest/health calls or a typed `resolution_deferred`. An attempted refresh
+can still return bounded diagnostic last-good after a transport failure; this
+never extends selection deadlines. A force request bypasses scheduling, not
+validation or source checks. Shared attempts have one five-second total deadline;
+individual waiter cancellation neither counts as endpoint failure nor cancels
+other waiters. The final waiter cancels and joins the operation.
+
+Source URI changes reset retry eligibility and revoke old-source data before
+retrieval. Negative evidence has its own freshness deadline (manifest TTL for
+missing/unsupported manifests, source TTL for missing chain pointers); daily
+backoff is not daily proof of absence. Successful cache reads never reset counters
+or renew evidence. ListKnown and ListOfferings expose immutable diagnostic
+snapshots without fetching or waiting. See the [consumer contract](../product-specs/grpc-surface.md).
 
 ## Audit and concurrency
 

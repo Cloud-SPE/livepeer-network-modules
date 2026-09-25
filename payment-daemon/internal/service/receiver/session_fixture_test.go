@@ -58,6 +58,9 @@ func TestSessionReceiverFixture(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(stop)
 	socket := filepath.Join(dir, "receiver.sock")
 	_ = os.Remove(socket)
 	listener, err := net.Listen("unix", socket)
@@ -68,9 +71,6 @@ func TestSessionReceiverFixture(t *testing.T) {
 	server := grpc.NewServer()
 	pb.RegisterPayeeDaemonServer(server, svc)
 	go func() { _ = server.Serve(listener) }()
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
-	defer signal.Stop(stop)
 	<-stop
 	server.GracefulStop()
 }

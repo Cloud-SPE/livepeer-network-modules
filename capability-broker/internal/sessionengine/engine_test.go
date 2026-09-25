@@ -1162,7 +1162,7 @@ func TestConcurrentOpensWithOneRequestIDFundOnce(t *testing.T) {
 // A crash between payment and the session record leaves a reservation
 // naming what was opened. Recover closes it, releases the capacity, and
 // drops the reservation, so nothing funds a session nobody holds.
-func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
+func TestLegacyAbandonedOpenStopsRunnerButRetainsFinancialObligation(t *testing.T) {
 	h := newHarness(t)
 	if err := h.store.ReserveOpen("req-crash", []byte("fp")); err != nil {
 		t.Fatal(err)
@@ -1174,8 +1174,8 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 		return nil
 	})
 	h.engine.Recover(context.Background())
-	if len(h.pay.accountSettles) != 1 {
-		t.Fatalf("authorization settled %d times, want 1", len(h.pay.accountSettles))
+	if len(h.pay.accountSettles) != 0 {
+		t.Fatalf("authorization settled %d times, want 0", len(h.pay.accountSettles))
 	}
 	if len(h.runner.terminated) != 1 || h.runner.terminated[0] != ReasonOpenFailed {
 		t.Fatalf("runner terminated: %v", h.runner.terminated)
@@ -1185,13 +1185,12 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 	}
 	n := 0
 	_ = h.store.ForEachReservation(func(sessionstore.OpenReservation) error { n++; return nil })
-	if n != 0 {
-		t.Fatal("reservation survived recovery")
+	if n != 1 {
+		t.Fatal("legacy financial obligation was discarded")
 	}
-	// The id is free again: a retry of the open proceeds fresh.
-	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2",
-		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1}, AuthorizationBytes: h.authorization(t, "auth-crash-2", "req-crash", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "slot-2"}); err != nil {
-		t.Fatalf("retry after recovery: %v", err)
+	// Without the signed authority, no fresh admission or zero-use claim is safe.
+	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2", SessionParams: json.RawMessage(`{}`), AuthorizationBytes: h.authorization(t, "auth-crash-2", "req-crash", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec}); err == nil {
+		t.Fatal("legacy open replayed")
 	}
 }
 

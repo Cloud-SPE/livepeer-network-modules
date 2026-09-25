@@ -12,7 +12,7 @@ The one document a runner sends a broker to say what it is. It is the only
 way runner facts enter the system: the operator never types them, and the
 runner can never turn them into a manifest change.
 
-This spec supersedes `paid-session/v1` §7.1.1 (the optional describe path)
+This spec supersedes the former `paid-session/v1` optional describe path
 and generalises it to every protocol. It is the protocol deliverable of
 plan 0043 §3.2 and implements decisions 2–5 of that plan.
 
@@ -214,7 +214,7 @@ capability must get an OpenAI response.
 | `descriptor_schemas[]` | ✔ for `paid-session` | non-empty unique list of `<name>/v<N>` tags | Each MUST be well-formed and present in `schema_versions`. The broker keeps no list of schemas: it never interprets a descriptor body (runtime-descriptor §4), so a tag it has not seen is a schema it can carry. | ✔ |
 | `work_unit.name` | ✔ | string, 1–64 chars | Opaque metering dimension name. | ✔ |
 | `work_unit.extractor` | ✔ for `paid-job`; MUST be absent for `paid-session` | `{ "type": "<extractor>", …params }` | `type` MUST name an extractor the broker implements (`extractors/`); params are that extractor's own, validated by it. The runner never supplies code. | ✔ (whole object) |
-| `paths` | ✔ | object of relative paths | Job: `invoke` required, `options` optional. Session: `create`, `status`, `terminate` required; `status` and `terminate` MUST contain the literal `{id}` placeholder. Every path MUST start with `/`, MUST NOT contain `..`, `?`, `#`, or a scheme. | — |
+| `paths` | ✔ | object of relative paths | Job: `invoke` required, `options` optional. Session: `create`, `status`, `terminate` required; `reconcile` optional (paid-session §4.1); `status` and `terminate` MUST contain the literal `{id}` placeholder. Every path MUST start with `/`, MUST NOT contain `..`, `?`, `#`, or a scheme. | — |
 | `readiness` | ✔ | `{ "type", "path"?, "config"? }` | `type` MUST be a broker-known *remote* probe: `http-status`, `http-jsonpath`, `http-openai-model-ready`, `tcp-connect`. `path` is relative like `paths.*`, default `/`. `config` is that probe's own parameters. Broker-local probe types (`command-exit-0`, `manual-drain`) are not valid here. | — |
 | `identity` | ✔ (MAY be `{}`) | object of string → string, ≤ 32 keys | Keys `[a-z][a-z0-9_-]*` joined by `.` (dotted paths), values ≤ 256 chars. Matched by `offers[].match`; frozen into the offer's `extra` as nested objects (`"openai.model"` → `extra.openai.model`). A key MUST NOT be both a leaf and a prefix of another key. | ✔ |
 | `schema_versions` | ✔ | object of tag → SemVer string | One entry for `protocol` and one for every `descriptor_schemas[]` tag. Each entry's major MUST equal the tag's `vN`; each MUST be a version the broker implements or is minor-compatible with (§8). | ✔ at major |

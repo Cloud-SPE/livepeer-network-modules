@@ -193,15 +193,28 @@ financial obligations to be resolved. Repeated cleanup does not release another
 session's slot.
 
 An abandoned open with a known runner session ID is retried on recovery/sweep.
-A lost create response with no runner ID is logged as `runner create outcome
-unknown`, with the request ID, broker session ID and backend binding. The current
-runner contract cannot safely query by broker session ID or replay create, so
-this case retains its slot and opening reservation. Pre-upgrade paid opening
-reservations without create evidence are treated the same way. Diagnose the
-runner using those identifiers and establish its actual outcome; do not delete
-the reservation or reset counters to make capacity appear free. Automatic
-reconciliation of this case needs a runner contract for idempotent creation and
-lookup by broker session ID.
+For a lost create response, runners can advertise `paths.reconcile`. The broker
+posts its durable broker session ID and accepts either an existing runner ID
+(which it terminates) or `fenced` (the runner has durably blocked delayed creates
+for that ID). A timeout, bare 404, unsupported endpoint or invalid reply retains
+the opening reservation and slot. Deploy the broker before runners advertise
+the optional path; older strict attach validators reject unknown path fields.
+
+Before initial admission, the broker seals the exact signed authorization and
+recovery identity. Recovery atomically fences unused authority at the receiver,
+or adopts an accepted admission and settles its verified cumulative usage.
+Compute may be released while accounting remains pending. Recovery never repeats
+funding. `GET /v1/exchange/{request_id}` reports `IN_FLIGHT`,
+`ACCOUNTING_PENDING`, `ADMISSION_REJECTED`, or a terminal `SETTLED` envelope.
+A rejected open can obtain scoped signed non-admission; pending admission cannot.
+Canceled requests cannot open again, including after restart.
+
+Pre-upgrade reservations missing the exact authorization cannot be automatically
+financially reconciled. Those missing broker create identity or a supported runner
+reconciliation path also cannot establish an unknown runner outcome. Diagnose
+using the request ID, broker session ID and backend binding; do not delete the
+reservation or reset counters to make capacity appear free. Keep the broker
+sealing key and runner state/key across upgrades and restarts.
 
 The limit applies within one broker. Runners remain responsible for physical
 capacity across brokers, and for canceling job execution when its transport ends.

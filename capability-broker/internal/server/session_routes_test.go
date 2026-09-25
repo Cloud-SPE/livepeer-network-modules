@@ -198,7 +198,7 @@ func sessionAttachDoc(token, hostID string) []byte {
 			"metering":           "runner-reported",
 			"work_unit":          map[string]any{"name": "participant_minutes"},
 			"paths": map[string]any{
-				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}", "reconcile": "/reconcile",
 			},
 			"readiness":       map[string]any{"type": "http-status", "path": "/ready"},
 			"identity":        map[string]any{},

@@ -168,6 +168,23 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// An uncertain initial admission is not absence. A canceled initial intent
+	// carries the exact authority, so bind the evidence query to it even on replay.
+	var canceledOpen *sessionstore.OpenReservation
+	if opening, err := s.sessionStore.Reservation(requestID); err == nil {
+		if !opening.AdmissionCanceled || opening.AdmissionIntent == nil {
+			livepeerheader.WriteError(w, http.StatusServiceUnavailable, "admission_pending", "initial admission is still being reconciled")
+			return
+		}
+		if err := validateAuthorizationScope(opening.AdmissionIntent.AuthorizationBytes, requestID, q); err != nil {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, err.Error())
+			return
+		}
+		canceledOpen = &opening
+	} else if !errors.Is(err, sessionstore.ErrNotFound) {
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, "admission_pending", "initial admission state unavailable")
+		return
+	}
 	// A record already issued is returned verbatim. Re-signing would
 	// produce a second signed statement about one fact, under a later
 	// observed_at, and a consumer holding both cannot tell that they
@@ -249,6 +266,13 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if canceledOpen != nil {
+		var auth pb.SpendAuthorization
+		if err := proto.Unmarshal(canceledOpen.AdmissionIntent.AuthorizationBytes, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "canceled authorization domain mismatch")
+			return
+		}
+	}
 	if rejected != nil {
 		var auth pb.SpendAuthorization
 		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
@@ -340,8 +364,24 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 // The caller cannot choose which authorization to fence. Every scope field must
 // match the exact wire authorization whose admission the receiver refused.
 func validateRejectedScope(rec *sessionstore.JobRecord, q nonAdmissionQuery, now time.Time) error {
+	if err := validateAuthorizationScope(rec.RejectedAuthorization, rec.RequestID, q); err != nil {
+		return err
+	}
 	var auth pb.SpendAuthorization
 	if err := proto.Unmarshal(rec.RejectedAuthorization, &auth); err != nil {
+		return fmt.Errorf("invalid stored authorization")
+	}
+	p := auth.GetPayload()
+	expires, err := time.Parse(time.RFC3339Nano, p.GetExpiresAt())
+	if err != nil || now.Before(expires) {
+		return fmt.Errorf("rejected authorization has not expired")
+	}
+	return nil
+}
+
+func validateAuthorizationScope(wire []byte, requestID string, q nonAdmissionQuery) error {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil {
 		return fmt.Errorf("invalid stored authorization")
 	}
 	p := auth.GetPayload()
@@ -350,12 +390,8 @@ func validateRejectedScope(rec *sessionstore.JobRecord, q nonAdmissionQuery, now
 	recipient, _ := strictHex(q.RecipientHex)
 	cfp, _ := strictHex(q.ConstraintFingerprint)
 	rfp, _ := strictHex(q.RouteFingerprint)
-	if q.QuoteVersion == nil || p.GetRequestId() != rec.RequestID || p.GetProtocol() != q.Protocol || p.GetAuthorizationId() != q.WorkID || !bytes.Equal(p.GetPayer(), sender) || !bytes.Equal(p.GetPayee(), recipient) || quote.GetQuoteId() != q.QuoteID || quote.GetQuoteVersion() != *q.QuoteVersion || !bytes.Equal(quote.GetConstraintFingerprint(), cfp) || !bytes.Equal(quote.GetRouteFingerprint(), rfp) {
+	if q.QuoteVersion == nil || p.GetRequestId() != requestID || p.GetProtocol() != q.Protocol || p.GetAuthorizationId() != q.WorkID || !bytes.Equal(p.GetPayer(), sender) || !bytes.Equal(p.GetPayee(), recipient) || quote.GetQuoteId() != q.QuoteID || quote.GetQuoteVersion() != *q.QuoteVersion || !bytes.Equal(quote.GetConstraintFingerprint(), cfp) || !bytes.Equal(quote.GetRouteFingerprint(), rfp) {
 		return fmt.Errorf("rejected authorization scope mismatch")
-	}
-	expires, err := time.Parse(time.RFC3339Nano, p.GetExpiresAt())
-	if err != nil || now.Before(expires) {
-		return fmt.Errorf("rejected authorization has not expired")
 	}
 	return nil
 }

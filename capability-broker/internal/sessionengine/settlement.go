@@ -40,6 +40,7 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		}
 		return &frozen
 	}
+	spec = acceptedSettlementSpec(rec, spec)
 	if spec == nil {
 		return nil
 	}
@@ -142,7 +143,7 @@ func (e *Engine) recordSettlementLocked(_ context.Context, sessionID string) (*p
 	if rec.Terminal() && len(rec.TerminalSettlement) > 0 {
 		return e.SettlementFor(rec, nil), nil
 	}
-	spec := e.cfg.Specs(sessionID)
+	spec := acceptedSettlementSpec(rec, e.cfg.Specs(sessionID))
 	if spec == nil {
 		return nil, fmt.Errorf("settlement offering unavailable")
 	}
@@ -172,6 +173,7 @@ func (e *Engine) freezeTerminalSettlement(r *sessionstore.Record, spec *Offering
 	if len(r.TerminalSettlement) > 0 {
 		return nil
 	}
+	spec = acceptedSettlementSpec(r, spec)
 	if spec == nil {
 		return fmt.Errorf("settlement offering unavailable")
 	}
@@ -231,4 +233,18 @@ func decimalBytes(s string) []byte {
 		return nil
 	}
 	return v.Bytes()
+}
+
+// A recovered initial open retains the signed price even when the offer is
+// changed or removed before financial cleanup finishes. Historical records
+// without this snapshot continue using their existing offering lookup.
+func acceptedSettlementSpec(rec *sessionstore.Record, spec *OfferingSpec) *OfferingSpec {
+	if rec.AcceptedPriceWei == "" {
+		return spec
+	}
+	price, ok := new(big.Int).SetString(rec.AcceptedPriceWei, 10)
+	if !ok || price.Sign() < 0 || rec.AcceptedPricePerUnits == 0 {
+		return nil
+	}
+	return &OfferingSpec{PricePerWorkUnitWei: price, PerUnits: rec.AcceptedPricePerUnits}
 }

@@ -86,6 +86,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		Metering:            c.Session.AdvertisedMetering(),
 		RunnerPaths: sessionengine.RunnerPaths{
 			Create:    c.Session.Runner.CreatePath,
+			Reconcile: c.Session.Runner.ReconcilePath,
 			Status:    c.Session.Runner.StatusPath,
 			Terminate: c.Session.Runner.TerminatePath,
 		},
@@ -120,6 +121,7 @@ func (s *Server) runnerClientFor(backendRef string) sessionengine.RunnerClient {
 		BaseURL: c.Backend.URL,
 		Paths: sessionengine.RunnerPaths{
 			Create:    c.Session.Runner.CreatePath,
+			Reconcile: c.Session.Runner.ReconcilePath,
 			Status:    c.Session.Runner.StatusPath,
 			Terminate: c.Session.Runner.TerminatePath,
 		},
@@ -175,6 +177,14 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		if rec, getErr := s.sessionStore.Get(existingID); getErr == nil && rec.Capability == capID && rec.Offering == offID {
 			if pinnedCap, pinnedOff, pair, pinned := splitSessionBackendRef(rec.BackendRef); pinned {
 				c = s.pinnedSessionCapability(pinnedCap, pinnedOff, pair)
+			}
+		}
+	}
+	if c == nil {
+		if pending, err := s.sessionStore.Reservation(r.Header.Get(livepeerheader.RequestID)); err == nil {
+			pc, po, pair, pinned := splitSessionBackendRef(pending.BackendRef)
+			if pinned && pc == capID && po == offID {
+				c = s.pinnedSessionCapability(pc, po, pair)
 			}
 		}
 	}

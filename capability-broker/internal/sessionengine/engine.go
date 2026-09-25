@@ -339,8 +339,13 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			// The same rule replay applies: one id, one content. A
 			// different open under an in-flight id is a reuse, not a
 			// retry, and is refused rather than told to try again.
-			if held, lerr := e.cfg.Store.Reservation(req.RequestID); lerr == nil && !bytesEqual(held.Fingerprint, fingerprint) {
-				return nil, protoErr("request_id_reuse", "request id reused with different open content")
+			if held, lerr := e.cfg.Store.Reservation(req.RequestID); lerr == nil {
+				if !bytesEqual(held.Fingerprint, fingerprint) {
+					return nil, protoErr("request_id_reuse", "request id reused with different open content")
+				}
+				if held.AdmissionCanceled {
+					return nil, protoErr("payment_invalid", "authorization admission canceled; use a new authorization and request id")
+				}
 			}
 			return nil, protoErr("open_in_flight", "an open with this request id is in flight; retry")
 		case errors.Is(err, sessionstore.ErrNonAdmissionIssued):
@@ -381,26 +386,29 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			releaseReservation()
 			return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
 		}
+		// Persist exact authority and recovery identity BEFORE the receiver RPC.
+		sender = append([]byte(nil), accountPayload.GetPayer()...)
+		if err := recordStage(func(r *sessionstore.OpenReservation) {
+			r.WorkID, r.Sender, r.AccountAuthorization = workID, sender, true
+			r.AdmissionIntent = &sessionstore.OpenAdmissionIntent{AuthorizationBytes: append([]byte(nil), req.AuthorizationBytes...), Record: *e.openRecoveryRecord(req, sessionID, accountPayload, fingerprint)}
+		}); err != nil {
+			e.release(req.CapacityRef)
+			releaseReservation() // The receiver has not been called.
+			return nil, &RetryableError{Err: err}
+		}
 		admitted, err := ac.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: req.AuthorizationBytes, PaymentBytes: req.PaymentBytes, Reservation: req.InitialReservationWei})
 		if err != nil {
-			e.release(req.CapacityRef)
-			releaseReservation()
-			return nil, protoErr("payment_invalid", "authorization admission rejected: %v", err)
+			return nil, e.reconcileFailedOpen(ctx, req.RequestID)
 		}
 		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
-			e.release(req.CapacityRef)
-			releaseReservation()
-			return nil, &RetryableError{Err: errors.New("payment daemon returned an invalid account admission")}
+			return nil, e.reconcileFailedOpen(ctx, req.RequestID)
 		}
-		sender = append([]byte(nil), accountPayload.GetPayer()...)
 		credited = admitted.Credited
 		if err := recordStage(func(r *sessionstore.OpenReservation) {
-			r.Stage, r.WorkID, r.CapacityRef, r.BackendRef, r.Sender = sessionstore.ReservationPaid, workID, req.CapacityRef, req.Spec.BackendRef, sender
-			r.AccountAuthorization = true
+			r.Stage = sessionstore.ReservationPaid
+			r.AdmissionIntent.Record.FundedWei = bigIntString(credited)
 		}); err != nil {
-			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
-			e.release(req.CapacityRef)
-			releaseReservation()
+			// Retain the pre-RPC intent even if recording success failed.
 			return nil, &RetryableError{Err: fmt.Errorf("record account admission: %w", err)}
 		}
 	}
@@ -581,6 +589,12 @@ func (e *Engine) replayOpen(sessionID string, fingerprint []byte) (*OpenResult, 
 	if rec.CloseReason == ReasonCapacityExhausted {
 		return nil, &CapacityError{SessionID: rec.SessionID, GatewaySessionID: rec.GatewaySessionID,
 			WorkID: rec.WorkID, BackoffSeconds: 5}
+	}
+	if rec.CloseReason == ReasonOpenFailed {
+		if !rec.Terminal() {
+			return nil, &RetryableError{Err: errors.New("failed open accounting pending; query exchange by request id")}
+		}
+		return nil, protoErr("session_terminal", "initial open failed and was settled; query exchange by request id")
 	}
 	out := &OpenResult{
 		SessionID: rec.SessionID,

@@ -291,7 +291,14 @@ func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authoriz
 	if res.GetWholesaleAccountId() != wholesaleAccountID || res.GetSettlementDomainId() != g.settlementDomainID || len(res.GetPayee()) != 20 {
 		return nil, fmt.Errorf("receiver authorization account mismatch")
 	}
-	return &SpendAuthorizationStatus{Payee: append([]byte(nil), res.GetPayee()...), SettlementDomainID: res.GetSettlementDomainId(), WholesaleAccountID: res.GetWholesaleAccountId(), State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}, nil
+	return authorizationStatusFromProto(res), nil
+}
+
+func authorizationStatusFromProto(res *pb.GetSpendAuthorizationResponse) *SpendAuthorizationStatus {
+	if res == nil {
+		return nil
+	}
+	return &SpendAuthorizationStatus{WholesaleAccountID: res.GetWholesaleAccountId(), SettlementDomainID: res.GetSettlementDomainId(), Payee: append([]byte(nil), res.GetPayee()...), State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}
 }
 
 func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {

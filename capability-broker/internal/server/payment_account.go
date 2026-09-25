@@ -147,6 +147,8 @@ func authorizationStateJSON(state int32) string {
 		return "settled"
 	case pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED:
 		return "expired_unused"
+	case pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED:
+		return "canceled_unused"
 	case pb.SpendAuthorizationState_SPEND_AUTHORIZATION_OUTCOME_UNKNOWN:
 		return "outcome_unknown"
 	case pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED:

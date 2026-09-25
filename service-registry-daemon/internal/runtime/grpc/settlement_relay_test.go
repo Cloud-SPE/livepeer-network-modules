@@ -60,7 +60,12 @@ func TestWire_SelectManyRelaysManifestSettlementKeys(t *testing.T) {
 	client := registryv1.NewResolverClient(f.clientConn)
 	for _, phase := range []string{"cold", "cached", "refreshed"} {
 		t.Run(phase, func(t *testing.T) {
-			if phase == "refreshed" {
+			if phase == "cold" {
+				if _, err := client.SelectMany(context.Background(), &registryv1.SelectRequest{Capability: "example:work", Offering: "default"}); err == nil {
+					t.Fatal("cold selection must be unavailable")
+				}
+			}
+			if phase == "refreshed" || phase == "cold" {
 				if _, err := client.Refresh(context.Background(), &registryv1.RefreshRequest{EthAddress: string(f.addr), Force: true}); err != nil {
 					t.Fatal(err)
 				}

@@ -8,7 +8,7 @@ process payments. Start maintenance work at [AGENTS.md](AGENTS.md).
 
 | Mode | Public surface | Dependencies |
 |---|---|---|
-| `resolver` | `ResolveByAddress`, `Select`, `SelectMany`, `ListKnown`, `Refresh`, `GetAuditLog`, `Health` | Manifest HTTP fetcher, signature verifier, cache and audit store; chain providers only for chain discovery |
+| `resolver` | `ResolveByAddress`, `Select`, `SelectMany`, `ListKnown`, `ListOfferings`, `Refresh`, `GetAuditLog`, `Health` | Manifest HTTP fetcher, signature verifier, cache and audit store; chain providers only for chain discovery |
 | `publisher` | `GetIdentity`, `Health` | Local keystore and store; no manifest building, signing, hosting or chain writes |
 
 The coordinator builds a protocol manifest from broker offerings. The operator
@@ -96,12 +96,13 @@ console. Do not move the cold orchestrator key to a gateway or broker host.
 
 `Select` returns the first ranked route; `SelectMany` returns the ordered set.
 Both require a capability and offering, apply tier/weight policy, and consult
-broker live health. Route discovery does not authorize work or validate ticket
+cached, fresh broker health without outbound I/O. Route discovery does not authorize work or validate ticket
 funding; those checks belong to the broker and payment components.
 
-Manifest TTL refresh is synchronous on demand. A forced `Refresh` bypasses TTL.
-An unavailable source can use bounded last-good data; invalid publications do
-not use that manifest-outage fallback. Restart to reload edited YAML.
+Bounded background workers refresh verified publications and broker health before
+expiry. Selection checks hard deadlines on every read: cold or incomplete state
+returns `UNAVAILABLE`; a fresh, known absence returns `NOT_FOUND`. A forced
+`Refresh` remains an explicit I/O operation. Restart to reload edited YAML.
 
 Read the [gRPC contract](docs/product-specs/grpc-surface.md),
 [cache behavior](docs/design-docs/resolver-cache.md), and

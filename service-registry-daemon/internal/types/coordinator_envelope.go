@@ -121,6 +121,9 @@ func DecodeCoordinatorEnvelope(raw []byte) (*CoordinatorSignedManifest, error) {
 	if len(raw) == 0 {
 		return nil, NewValidation(ErrParse, "", "empty body")
 	}
+	if unsupportedManifestShape(raw) {
+		return nil, NewValidation(fmt.Errorf("%w: %w", ErrManifestUnsupported, ErrParse), "", "unsupported manifest envelope")
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	var sm CoordinatorSignedManifest
@@ -478,4 +481,19 @@ func cloneEstimator(in *CoordinatorEstimator) *Estimator {
 		Package:   in.Package,
 		Fixtures:  in.Fixtures,
 	}
+}
+
+// Explicit foreign envelope/version declarations are evidence; malformed JSON,
+// HTML error pages and broken signatures are not protocol classifications.
+func unsupportedManifestShape(body []byte) bool {
+	var v struct {
+		SchemaVersion string `json:"schema_version"`
+		Manifest      *struct {
+			SpecVersion string `json:"spec_version"`
+		} `json:"manifest"`
+	}
+	if json.Unmarshal(body, &v) != nil {
+		return false
+	}
+	return v.Manifest == nil && v.SchemaVersion != ""
 }

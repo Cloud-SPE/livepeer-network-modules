@@ -220,12 +220,21 @@ func (s *Server) handleSessionWSFrame(ctx context.Context, sessionID string, wc 
 		}
 		res, err := s.sessionEngine.ReviseAuthorization(ctx, sessionID, requestID, authorizationBytes, paymentBytes, sessionRunwayReservation(p, spec))
 		if err != nil {
-			fail(sessionErrCode(err), err.Error())
+			if decision := revisionFromError(err); decision != nil {
+				code := "refill_refused"
+				if decision.Outcome == "pending" {
+					code = "revision_pending"
+				}
+				_ = wc.send(wsFrame{Type: "error", Body: map[string]any{"op": f.Type, "code": code, "revision": decision}})
+			} else {
+				fail(sessionErrCode(err), err.Error())
+			}
 			return
 		}
 		_ = wc.send(wsFrame{Type: "ack", Body: map[string]any{
-			"op":    "session.topup",
-			"lease": map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
+			"op":       "session.topup",
+			"revision": res.Revision,
+			"lease":    map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
 		}})
 	case "session.end":
 		reason, _ := f.Body["reason"].(string)

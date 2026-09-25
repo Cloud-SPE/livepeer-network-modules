@@ -46,6 +46,12 @@ func parseFlags(args []string) (*config.Daemon, bool, error) {
 	fs.StringVar(&cfg.StaticOverlayPath, "static-overlay", cfg.StaticOverlayPath, "path to nodes.yaml")
 	fs.BoolVar(&cfg.RejectUnsigned, "reject-unsigned", cfg.RejectUnsigned, "reject unsigned static/CSV nodes by default; signed envelopes always require verification")
 
+	fs.Var(&cfg.Retry.Incompatible, "retry-incompatible", "comma-separated retry intervals for confirmed missing/unsupported manifests")
+	fs.Var(&cfg.Retry.Compatible, "retry-compatible", "retry intervals for previously verified transient failures")
+	fs.Var(&cfg.Retry.Unknown, "retry-unknown", "retry intervals for unknown compatibility transport failures")
+	fs.Var(&cfg.Retry.Rejected, "retry-rejected", "retry intervals for rejected publications")
+	fs.Float64Var(&cfg.Retry.Jitter, "retry-jitter", cfg.Retry.Jitter, "downward retry jitter fraction (0–0.5); final interval is a hard cap")
+	fs.DurationVar(&cfg.Retry.SourcePollInterval, "source-poll-interval", cfg.Retry.SourcePollInterval, "independent service URI observation interval during manifest backoff")
 	// Publisher-only
 	fs.StringVar(&cfg.KeystorePath, "keystore-path", cfg.KeystorePath, "V3 JSON keystore for orchestrator key (publisher only)")
 	keystorePasswordFile := fs.String("keystore-password-file", "", "file containing keystore password (defaults to LIVEPEER_KEYSTORE_PASSWORD env)")

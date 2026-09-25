@@ -11,17 +11,32 @@ import (
 // RevisionIntent is sealed with the session record before receiver admission.
 // The exact financial request and promised lease survive a lost response.
 type RevisionIntent struct {
-	RequestID          string    `json:"request_id"`
-	AuthorizationBytes []byte    `json:"authorization_bytes"`
-	PaymentBytes       []byte    `json:"payment_bytes"`
-	Fingerprint        []byte    `json:"fingerprint"`
-	ReservationWei     string    `json:"reservation_wei"`
-	LeaseExpiresAt     time.Time `json:"lease_expires_at"`
+	RequestID          string            `json:"request_id"`
+	AuthorizationBytes []byte            `json:"authorization_bytes"`
+	PaymentBytes       []byte            `json:"payment_bytes"`
+	Fingerprint        []byte            `json:"fingerprint"`
+	ReservationWei     string            `json:"reservation_wei"`
+	LeaseExpiresAt     time.Time         `json:"lease_expires_at"`
+	Failures           uint32            `json:"failures,omitempty"`
+	NextRetryAt        time.Time         `json:"next_retry_at,omitempty"`
+	Decision           *RevisionDecision `json:"decision,omitempty"`
+	CancelRequested    bool              `json:"cancel_requested,omitempty"`
+	Evidence           []byte            `json:"evidence,omitempty"`
 }
 
 // CommitRevision changes authority and records its idempotent response in one
 // transaction. There is no crash interval between those two facts.
 func (s *Store) CommitRevision(id, requestID string, fingerprint []byte, lease time.Time, balance string, mutate func(*Record) error) error {
+	return s.commitRevision(id, requestID, fingerprint, lease, balance, "", "", mutate)
+}
+
+// RefuseRevision retains the idempotent refusal together with removal of an
+// intent whose non-admission has been durably established by the receiver.
+func (s *Store) RefuseRevision(id string, intent *RevisionIntent, code, detail string) error {
+	return s.commitRevision(id, intent.RequestID, intent.Fingerprint, intent.LeaseExpiresAt, "", code, detail, func(*Record) error { return nil })
+}
+
+func (s *Store) commitRevision(id, requestID string, fingerprint []byte, lease time.Time, balance, code, detail string, mutate func(*Record) error) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket([]byte(sessionsBucket))
 		raw := bucket.Get([]byte(id))
@@ -38,6 +53,8 @@ func (s *Store) CommitRevision(id, requestID string, fingerprint []byte, lease t
 		if err = mutate(rec); err != nil {
 			return err
 		}
+		intent := rec.RevisionIntent
+		rec.LastRevision = intent.Decision
 		rec.RevisionIntent = nil
 		rec.UpdatedAt = time.Now().UTC()
 		encoded, err := s.seal(rec)
@@ -47,13 +64,20 @@ func (s *Store) CommitRevision(id, requestID string, fingerprint []byte, lease t
 		if err = bucket.Put([]byte(id), encoded); err != nil {
 			return err
 		}
-		response := TopUpRecord{RequestID: requestID, SessionID: id, Fingerprint: bytes.Clone(fingerprint), LeaseExpiresAt: lease, BalanceWei: balance, CreatedAt: rec.UpdatedAt}
+		response := TopUpRecord{RequestID: requestID, SessionID: id, Fingerprint: bytes.Clone(fingerprint), LeaseExpiresAt: lease, BalanceWei: balance, CreatedAt: rec.UpdatedAt, ErrorCode: code, ErrorDetail: detail, Decision: intent.Decision, RevisionEvidence: bytes.Clone(intent.Evidence)}
 		encoded, err = json.Marshal(response)
 		if err != nil {
 			return err
 		}
 		topups, err := tx.CreateBucketIfNotExists([]byte(topupsBucket))
 		if err != nil {
+			return err
+		}
+		index, err := tx.CreateBucketIfNotExists([]byte(revisionRequestsBucket))
+		if err != nil {
+			return err
+		}
+		if err := index.Put([]byte(requestID), []byte(id)); err != nil {
 			return err
 		}
 		key := topupKey(id, requestID)

@@ -79,6 +79,7 @@ func (a *resolverAdapter) ListKnown(ctx context.Context, _ *registryv1.ListKnown
 			Mode:            resolveModeToProto(e.Mode),
 			FreshnessStatus: registryv1.FreshnessStatus_FRESHNESS_STATUS_UNSPECIFIED,
 			CachedAt:        timeToProto(e.CachedAt),
+			DiscoveryStatus: discoveryStatusToProto(e.Status),
 		})
 	}
 	return out, nil

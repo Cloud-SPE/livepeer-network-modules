@@ -16,7 +16,7 @@ func (s *Service) requireUnfrozenSource() error {
 		return status.Error(codes.Internal, "source fence unavailable")
 	}
 	if fence.Frozen {
-		return status.Error(codes.FailedPrecondition, "receiver source permanently frozen for retirement")
+		return admissionFailure("RECEIVER_SOURCE_FROZEN", "receiver source permanently frozen for retirement")
 	}
 	return nil
 }

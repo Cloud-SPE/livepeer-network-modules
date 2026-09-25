@@ -8,6 +8,7 @@ package selection
 
 import (
 	"math"
+	"sort"
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
@@ -125,17 +126,9 @@ func contains(s []string, v string) bool {
 	return false
 }
 
-// stableSortByWeightDesc sorts nodes in place by Weight descending,
-// preserving input order among equal weights. Insertion sort — slices
-// here are small (low hundreds at most).
+// stableSortByWeightDesc preserves deterministic input order among equal weights.
 func stableSortByWeightDesc(s []types.ResolvedNode) {
-	for i := 1; i < len(s); i++ {
-		j := i
-		for j > 0 && s[j-1].Weight < s[j].Weight {
-			s[j-1], s[j] = s[j], s[j-1]
-			j--
-		}
-	}
+	sort.SliceStable(s, func(i, j int) bool { return s[i].Weight > s[j].Weight })
 }
 
 // Haversine returns the great-circle distance between two points in

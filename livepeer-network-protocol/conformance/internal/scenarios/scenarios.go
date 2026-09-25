@@ -16,7 +16,8 @@ import (
 
 // All returns the full suite.
 func All() []harness.Scenario {
-	return append(append(append(jobScenarios(), sessionScenarios()...), descriptorScenarios()...), attachScenarios()...)
+	all := append(append(append(jobScenarios(), sessionScenarios()...), descriptorScenarios()...), attachScenarios()...)
+	return append(all, terminalEvidenceScenario())
 }
 
 // ---------------------------------------------------------------------------
@@ -1295,7 +1296,7 @@ func sessionScenarios() []harness.Scenario {
 			}
 			return nil
 		}},
-		{Name: "paid-session/restart-terminal-when-unbillable", Spec: "paid-session §9", Run: func(c *harness.Ctx) error {
+		{Name: "paid-session/restart-holds-unreconciled-payment", Spec: "paid-session §9", Run: func(c *harness.Ctx) error {
 			if c.RestartBrokerLosingPayment == nil {
 				return fmt.Errorf("%w: suite cannot discard the payment layer's state (URL mode)", harness.ErrSkip)
 			}
@@ -1318,15 +1319,8 @@ func sessionScenarios() []harness.Scenario {
 				return fmt.Errorf("restart: %w", err)
 			}
 
-			// The session cannot be billed any more, so §9.2's terminal
-			// branch is required: never serve work you cannot charge for.
-			//
-			// Recovery is asynchronous — a broker whose runners reconnect
-			// after restart cannot reach them at the instant it comes
-			// back — so this waits. The window is deliberately far
-			// shorter than any heartbeat deadline: a broker that only
-			// fails the session closed when the heartbeat sweep notices
-			// has not taken the recovery branch, and still fails here.
+			// Stop unbillable work promptly while preserving uncertain financial
+			// obligations. A missing ledger is not a successful settlement.
 			var sm map[string]any
 			var state string
 			deadline := time.Now().Add(5 * time.Second)
@@ -1340,23 +1334,23 @@ func sessionScenarios() []harness.Scenario {
 				}
 				sm = st.JSON()
 				state = harness.FieldString(sm, "state")
-				if state == "ended" || state == "failed" || time.Now().After(deadline) {
+				if (state == "winding_down" && len(c.Runner.Terminated()) > terminatedBefore) || time.Now().After(deadline) {
 					break
 				}
 				time.Sleep(100 * time.Millisecond)
 			}
-			if state != "ended" && state != "failed" {
-				return fmt.Errorf("session still %s 5s after losing its payment layer; must reach a terminal outcome", state)
+			if state != "winding_down" {
+				return fmt.Errorf("session is %s after losing its payment layer; must retain winding_down until financial reconciliation", state)
 			}
 			if reason := harness.FieldString(sm, "close_reason"); reason == "" {
-				return fmt.Errorf("terminal with no close_reason")
+				return fmt.Errorf("winding_down with no close_reason")
 			}
 			// Forbidden outcomes still hold on this branch.
 			if got := harness.FieldString(sm, "work_id"); got != workID {
 				return fmt.Errorf("work_id changed: %q -> %q", workID, got)
 			}
 			if len(c.Runner.Terminated()) <= terminatedBefore {
-				return fmt.Errorf("terminal outcome but runner left serving")
+				return fmt.Errorf("unreconciled payment but runner left serving")
 			}
 			return nil
 		}},

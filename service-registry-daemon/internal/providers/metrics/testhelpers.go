@@ -16,6 +16,9 @@ import (
 // Not exported as part of the production API surface — file is
 // _testhelpers.go-style but kept buildable so go vet runs against it.
 type Counter struct {
+	DiscoveryRetries    atomic.Int64
+	DeferredResolutions atomic.Int64
+	NextRetrySets       atomic.Int64
 	GRPCReqs            atomic.Int64
 	GRPCObserves        atomic.Int64
 	GRPCInFlight        atomic.Int64
@@ -99,3 +102,7 @@ func (c *Counter) SetBuildInfo(_ string, _ string, _ string) {}
 func (c *Counter) Handler() http.Handler {
 	return http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
 }
+
+func (c *Counter) ObserveDiscoveryRetry(_, _ string, _ time.Duration) { c.DiscoveryRetries.Add(1) }
+func (c *Counter) IncResolutionDeferred()                             { c.DeferredResolutions.Add(1) }
+func (c *Counter) SetNextRetry(_ string, _ time.Time)                 { c.NextRetrySets.Add(1) }

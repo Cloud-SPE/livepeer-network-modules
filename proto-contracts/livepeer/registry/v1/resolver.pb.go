@@ -23,6 +23,243 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type ManifestCompatibility int32
+
+const (
+	ManifestCompatibility_MANIFEST_COMPATIBILITY_UNSPECIFIED            ManifestCompatibility = 0
+	ManifestCompatibility_MANIFEST_COMPATIBILITY_UNKNOWN                ManifestCompatibility = 1
+	ManifestCompatibility_MANIFEST_COMPATIBILITY_VERIFIED_COMPATIBLE    ManifestCompatibility = 2
+	ManifestCompatibility_MANIFEST_COMPATIBILITY_CONFIRMED_INCOMPATIBLE ManifestCompatibility = 3
+)
+
+// Enum value maps for ManifestCompatibility.
+var (
+	ManifestCompatibility_name = map[int32]string{
+		0: "MANIFEST_COMPATIBILITY_UNSPECIFIED",
+		1: "MANIFEST_COMPATIBILITY_UNKNOWN",
+		2: "MANIFEST_COMPATIBILITY_VERIFIED_COMPATIBLE",
+		3: "MANIFEST_COMPATIBILITY_CONFIRMED_INCOMPATIBLE",
+	}
+	ManifestCompatibility_value = map[string]int32{
+		"MANIFEST_COMPATIBILITY_UNSPECIFIED":            0,
+		"MANIFEST_COMPATIBILITY_UNKNOWN":                1,
+		"MANIFEST_COMPATIBILITY_VERIFIED_COMPATIBLE":    2,
+		"MANIFEST_COMPATIBILITY_CONFIRMED_INCOMPATIBLE": 3,
+	}
+)
+
+func (x ManifestCompatibility) Enum() *ManifestCompatibility {
+	p := new(ManifestCompatibility)
+	*p = x
+	return p
+}
+
+func (x ManifestCompatibility) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ManifestCompatibility) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_registry_v1_resolver_proto_enumTypes[0].Descriptor()
+}
+
+func (ManifestCompatibility) Type() protoreflect.EnumType {
+	return &file_livepeer_registry_v1_resolver_proto_enumTypes[0]
+}
+
+func (x ManifestCompatibility) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ManifestCompatibility.Descriptor instead.
+func (ManifestCompatibility) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{0}
+}
+
+// Availability of manifest retrieval/verification at the last attempt, not
+// worker readiness or a grant to route work.
+type ManifestAvailability int32
+
+const (
+	ManifestAvailability_MANIFEST_AVAILABILITY_UNSPECIFIED ManifestAvailability = 0
+	ManifestAvailability_MANIFEST_AVAILABILITY_UNKNOWN     ManifestAvailability = 1
+	ManifestAvailability_MANIFEST_AVAILABILITY_AVAILABLE   ManifestAvailability = 2
+	ManifestAvailability_MANIFEST_AVAILABILITY_UNAVAILABLE ManifestAvailability = 3
+)
+
+// Enum value maps for ManifestAvailability.
+var (
+	ManifestAvailability_name = map[int32]string{
+		0: "MANIFEST_AVAILABILITY_UNSPECIFIED",
+		1: "MANIFEST_AVAILABILITY_UNKNOWN",
+		2: "MANIFEST_AVAILABILITY_AVAILABLE",
+		3: "MANIFEST_AVAILABILITY_UNAVAILABLE",
+	}
+	ManifestAvailability_value = map[string]int32{
+		"MANIFEST_AVAILABILITY_UNSPECIFIED": 0,
+		"MANIFEST_AVAILABILITY_UNKNOWN":     1,
+		"MANIFEST_AVAILABILITY_AVAILABLE":   2,
+		"MANIFEST_AVAILABILITY_UNAVAILABLE": 3,
+	}
+)
+
+func (x ManifestAvailability) Enum() *ManifestAvailability {
+	p := new(ManifestAvailability)
+	*p = x
+	return p
+}
+
+func (x ManifestAvailability) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (ManifestAvailability) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_registry_v1_resolver_proto_enumTypes[1].Descriptor()
+}
+
+func (ManifestAvailability) Type() protoreflect.EnumType {
+	return &file_livepeer_registry_v1_resolver_proto_enumTypes[1]
+}
+
+func (x ManifestAvailability) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use ManifestAvailability.Descriptor instead.
+func (ManifestAvailability) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{1}
+}
+
+type DiscoveryFailureReason int32
+
+const (
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_UNSPECIFIED          DiscoveryFailureReason = 0
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_NONE                 DiscoveryFailureReason = 1
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_TRANSPORT            DiscoveryFailureReason = 2
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_HTTP                 DiscoveryFailureReason = 3
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_MANIFEST_MISSING     DiscoveryFailureReason = 4
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_MANIFEST_UNSUPPORTED DiscoveryFailureReason = 5
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_MANIFEST_INVALID     DiscoveryFailureReason = 6
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_SIGNATURE_INVALID    DiscoveryFailureReason = 7
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_MANIFEST_EXPIRED     DiscoveryFailureReason = 8
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_PUBLICATION_REPLAY   DiscoveryFailureReason = 9
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_CHAIN_UNAVAILABLE    DiscoveryFailureReason = 10
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_SOURCE_MISSING       DiscoveryFailureReason = 11
+	DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_INTERNAL             DiscoveryFailureReason = 12
+)
+
+// Enum value maps for DiscoveryFailureReason.
+var (
+	DiscoveryFailureReason_name = map[int32]string{
+		0:  "DISCOVERY_FAILURE_REASON_UNSPECIFIED",
+		1:  "DISCOVERY_FAILURE_REASON_NONE",
+		2:  "DISCOVERY_FAILURE_REASON_TRANSPORT",
+		3:  "DISCOVERY_FAILURE_REASON_HTTP",
+		4:  "DISCOVERY_FAILURE_REASON_MANIFEST_MISSING",
+		5:  "DISCOVERY_FAILURE_REASON_MANIFEST_UNSUPPORTED",
+		6:  "DISCOVERY_FAILURE_REASON_MANIFEST_INVALID",
+		7:  "DISCOVERY_FAILURE_REASON_SIGNATURE_INVALID",
+		8:  "DISCOVERY_FAILURE_REASON_MANIFEST_EXPIRED",
+		9:  "DISCOVERY_FAILURE_REASON_PUBLICATION_REPLAY",
+		10: "DISCOVERY_FAILURE_REASON_CHAIN_UNAVAILABLE",
+		11: "DISCOVERY_FAILURE_REASON_SOURCE_MISSING",
+		12: "DISCOVERY_FAILURE_REASON_INTERNAL",
+	}
+	DiscoveryFailureReason_value = map[string]int32{
+		"DISCOVERY_FAILURE_REASON_UNSPECIFIED":          0,
+		"DISCOVERY_FAILURE_REASON_NONE":                 1,
+		"DISCOVERY_FAILURE_REASON_TRANSPORT":            2,
+		"DISCOVERY_FAILURE_REASON_HTTP":                 3,
+		"DISCOVERY_FAILURE_REASON_MANIFEST_MISSING":     4,
+		"DISCOVERY_FAILURE_REASON_MANIFEST_UNSUPPORTED": 5,
+		"DISCOVERY_FAILURE_REASON_MANIFEST_INVALID":     6,
+		"DISCOVERY_FAILURE_REASON_SIGNATURE_INVALID":    7,
+		"DISCOVERY_FAILURE_REASON_MANIFEST_EXPIRED":     8,
+		"DISCOVERY_FAILURE_REASON_PUBLICATION_REPLAY":   9,
+		"DISCOVERY_FAILURE_REASON_CHAIN_UNAVAILABLE":    10,
+		"DISCOVERY_FAILURE_REASON_SOURCE_MISSING":       11,
+		"DISCOVERY_FAILURE_REASON_INTERNAL":             12,
+	}
+)
+
+func (x DiscoveryFailureReason) Enum() *DiscoveryFailureReason {
+	p := new(DiscoveryFailureReason)
+	*p = x
+	return p
+}
+
+func (x DiscoveryFailureReason) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (DiscoveryFailureReason) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_registry_v1_resolver_proto_enumTypes[2].Descriptor()
+}
+
+func (DiscoveryFailureReason) Type() protoreflect.EnumType {
+	return &file_livepeer_registry_v1_resolver_proto_enumTypes[2]
+}
+
+func (x DiscoveryFailureReason) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use DiscoveryFailureReason.Descriptor instead.
+func (DiscoveryFailureReason) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{2}
+}
+
+type CatalogCompleteness int32
+
+const (
+	CatalogCompleteness_CATALOG_COMPLETENESS_UNSPECIFIED   CatalogCompleteness = 0
+	CatalogCompleteness_CATALOG_COMPLETENESS_UNINITIALIZED CatalogCompleteness = 1
+	CatalogCompleteness_CATALOG_COMPLETENESS_PARTIAL       CatalogCompleteness = 2
+	CatalogCompleteness_CATALOG_COMPLETENESS_COMPLETE      CatalogCompleteness = 3
+)
+
+// Enum value maps for CatalogCompleteness.
+var (
+	CatalogCompleteness_name = map[int32]string{
+		0: "CATALOG_COMPLETENESS_UNSPECIFIED",
+		1: "CATALOG_COMPLETENESS_UNINITIALIZED",
+		2: "CATALOG_COMPLETENESS_PARTIAL",
+		3: "CATALOG_COMPLETENESS_COMPLETE",
+	}
+	CatalogCompleteness_value = map[string]int32{
+		"CATALOG_COMPLETENESS_UNSPECIFIED":   0,
+		"CATALOG_COMPLETENESS_UNINITIALIZED": 1,
+		"CATALOG_COMPLETENESS_PARTIAL":       2,
+		"CATALOG_COMPLETENESS_COMPLETE":      3,
+	}
+)
+
+func (x CatalogCompleteness) Enum() *CatalogCompleteness {
+	p := new(CatalogCompleteness)
+	*p = x
+	return p
+}
+
+func (x CatalogCompleteness) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CatalogCompleteness) Descriptor() protoreflect.EnumDescriptor {
+	return file_livepeer_registry_v1_resolver_proto_enumTypes[3].Descriptor()
+}
+
+func (CatalogCompleteness) Type() protoreflect.EnumType {
+	return &file_livepeer_registry_v1_resolver_proto_enumTypes[3]
+}
+
+func (x CatalogCompleteness) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CatalogCompleteness.Descriptor instead.
+func (CatalogCompleteness) EnumDescriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{3}
+}
+
 type ResolveByAddressRequest struct {
 	state               protoimpl.MessageState `protogen:"open.v1"`
 	EthAddress          string                 `protobuf:"bytes,1,opt,name=eth_address,json=ethAddress,proto3" json:"eth_address,omitempty"`
@@ -101,6 +338,7 @@ type ResolveResult struct {
 	CachedAt        *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=cached_at,json=cachedAt,proto3" json:"cached_at,omitempty"`
 	FetchedAt       *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=fetched_at,json=fetchedAt,proto3" json:"fetched_at,omitempty"`
 	SchemaVersion   string                 `protobuf:"bytes,8,opt,name=schema_version,json=schemaVersion,proto3" json:"schema_version,omitempty"`
+	DiscoveryStatus *DiscoveryStatus       `protobuf:"bytes,9,opt,name=discovery_status,json=discoveryStatus,proto3" json:"discovery_status,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -189,6 +427,13 @@ func (x *ResolveResult) GetSchemaVersion() string {
 		return x.SchemaVersion
 	}
 	return ""
+}
+
+func (x *ResolveResult) GetDiscoveryStatus() *DiscoveryStatus {
+	if x != nil {
+		return x.DiscoveryStatus
+	}
+	return nil
 }
 
 type SelectRequest struct {
@@ -707,6 +952,7 @@ type KnownEntry struct {
 	Mode            ResolveMode            `protobuf:"varint,2,opt,name=mode,proto3,enum=livepeer.registry.v1.ResolveMode" json:"mode,omitempty"`
 	FreshnessStatus FreshnessStatus        `protobuf:"varint,3,opt,name=freshness_status,json=freshnessStatus,proto3,enum=livepeer.registry.v1.FreshnessStatus" json:"freshness_status,omitempty"`
 	CachedAt        *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=cached_at,json=cachedAt,proto3" json:"cached_at,omitempty"`
+	DiscoveryStatus *DiscoveryStatus       `protobuf:"bytes,5,opt,name=discovery_status,json=discoveryStatus,proto3" json:"discovery_status,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
 }
@@ -769,6 +1015,615 @@ func (x *KnownEntry) GetCachedAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *KnownEntry) GetDiscoveryStatus() *DiscoveryStatus {
+	if x != nil {
+		return x.DiscoveryStatus
+	}
+	return nil
+}
+
+type DiscoveryStatus struct {
+	state                   protoimpl.MessageState `protogen:"open.v1"`
+	SourceUri               string                 `protobuf:"bytes,1,opt,name=source_uri,json=sourceUri,proto3" json:"source_uri,omitempty"`
+	Compatibility           ManifestCompatibility  `protobuf:"varint,2,opt,name=compatibility,proto3,enum=livepeer.registry.v1.ManifestCompatibility" json:"compatibility,omitempty"`
+	Availability            ManifestAvailability   `protobuf:"varint,3,opt,name=availability,proto3,enum=livepeer.registry.v1.ManifestAvailability" json:"availability,omitempty"`
+	FailureReason           DiscoveryFailureReason `protobuf:"varint,4,opt,name=failure_reason,json=failureReason,proto3,enum=livepeer.registry.v1.DiscoveryFailureReason" json:"failure_reason,omitempty"`
+	ConsecutiveFailures     uint32                 `protobuf:"varint,5,opt,name=consecutive_failures,json=consecutiveFailures,proto3" json:"consecutive_failures,omitempty"`
+	LastVerifiedAt          *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=last_verified_at,json=lastVerifiedAt,proto3" json:"last_verified_at,omitempty"`
+	NextRetryAt             *timestamppb.Timestamp `protobuf:"bytes,7,opt,name=next_retry_at,json=nextRetryAt,proto3" json:"next_retry_at,omitempty"`
+	LastAttemptAt           *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=last_attempt_at,json=lastAttemptAt,proto3" json:"last_attempt_at,omitempty"`
+	CompatibilityCheckedAt  *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=compatibility_checked_at,json=compatibilityCheckedAt,proto3" json:"compatibility_checked_at,omitempty"`
+	CompatibilityValidUntil *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=compatibility_valid_until,json=compatibilityValidUntil,proto3" json:"compatibility_valid_until,omitempty"`
+	SourceCheckedAt         *timestamppb.Timestamp `protobuf:"bytes,11,opt,name=source_checked_at,json=sourceCheckedAt,proto3" json:"source_checked_at,omitempty"`
+	RetryClass              string                 `protobuf:"bytes,12,opt,name=retry_class,json=retryClass,proto3" json:"retry_class,omitempty"`
+	PolicyStep              uint32                 `protobuf:"varint,13,opt,name=policy_step,json=policyStep,proto3" json:"policy_step,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
+}
+
+func (x *DiscoveryStatus) Reset() {
+	*x = DiscoveryStatus{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DiscoveryStatus) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DiscoveryStatus) ProtoMessage() {}
+
+func (x *DiscoveryStatus) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DiscoveryStatus.ProtoReflect.Descriptor instead.
+func (*DiscoveryStatus) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *DiscoveryStatus) GetSourceUri() string {
+	if x != nil {
+		return x.SourceUri
+	}
+	return ""
+}
+
+func (x *DiscoveryStatus) GetCompatibility() ManifestCompatibility {
+	if x != nil {
+		return x.Compatibility
+	}
+	return ManifestCompatibility_MANIFEST_COMPATIBILITY_UNSPECIFIED
+}
+
+func (x *DiscoveryStatus) GetAvailability() ManifestAvailability {
+	if x != nil {
+		return x.Availability
+	}
+	return ManifestAvailability_MANIFEST_AVAILABILITY_UNSPECIFIED
+}
+
+func (x *DiscoveryStatus) GetFailureReason() DiscoveryFailureReason {
+	if x != nil {
+		return x.FailureReason
+	}
+	return DiscoveryFailureReason_DISCOVERY_FAILURE_REASON_UNSPECIFIED
+}
+
+func (x *DiscoveryStatus) GetConsecutiveFailures() uint32 {
+	if x != nil {
+		return x.ConsecutiveFailures
+	}
+	return 0
+}
+
+func (x *DiscoveryStatus) GetLastVerifiedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastVerifiedAt
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetNextRetryAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.NextRetryAt
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetLastAttemptAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.LastAttemptAt
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetCompatibilityCheckedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CompatibilityCheckedAt
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetCompatibilityValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CompatibilityValidUntil
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetSourceCheckedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SourceCheckedAt
+	}
+	return nil
+}
+
+func (x *DiscoveryStatus) GetRetryClass() string {
+	if x != nil {
+		return x.RetryClass
+	}
+	return ""
+}
+
+func (x *DiscoveryStatus) GetPolicyStep() uint32 {
+	if x != nil {
+		return x.PolicyStep
+	}
+	return 0
+}
+
+// Attached to google.rpc.Status.details on resolution_deferred and attempted
+// resolution failures. The existing Struct registry_error_code is retained.
+// Deferred status is UNAVAILABLE and also carries google.rpc.RetryInfo.
+type RegistryResolutionDetail struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	EthAddress      string                 `protobuf:"bytes,1,opt,name=eth_address,json=ethAddress,proto3" json:"eth_address,omitempty"`
+	DiscoveryStatus *DiscoveryStatus       `protobuf:"bytes,2,opt,name=discovery_status,json=discoveryStatus,proto3" json:"discovery_status,omitempty"`
+	EvaluatedAt     *timestamppb.Timestamp `protobuf:"bytes,3,opt,name=evaluated_at,json=evaluatedAt,proto3" json:"evaluated_at,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *RegistryResolutionDetail) Reset() {
+	*x = RegistryResolutionDetail{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RegistryResolutionDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RegistryResolutionDetail) ProtoMessage() {}
+
+func (x *RegistryResolutionDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RegistryResolutionDetail.ProtoReflect.Descriptor instead.
+func (*RegistryResolutionDetail) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *RegistryResolutionDetail) GetEthAddress() string {
+	if x != nil {
+		return x.EthAddress
+	}
+	return ""
+}
+
+func (x *RegistryResolutionDetail) GetDiscoveryStatus() *DiscoveryStatus {
+	if x != nil {
+		return x.DiscoveryStatus
+	}
+	return nil
+}
+
+func (x *RegistryResolutionDetail) GetEvaluatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.EvaluatedAt
+	}
+	return nil
+}
+
+type ListOfferingsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Optional exact, case-insensitive filters, as in SelectMany.
+	Capability string `protobuf:"bytes,1,opt,name=capability,proto3" json:"capability,omitempty"`
+	Offering   string `protobuf:"bytes,2,opt,name=offering,proto3" json:"offering,omitempty"`
+	Tier       string `protobuf:"bytes,3,opt,name=tier,proto3" json:"tier,omitempty"`
+	MinWeight  int32  `protobuf:"varint,4,opt,name=min_weight,json=minWeight,proto3" json:"min_weight,omitempty"`
+	// Diagnostic inventory only. Expired entries are always nonselectable.
+	IncludeExpired bool `protobuf:"varint,5,opt,name=include_expired,json=includeExpired,proto3" json:"include_expired,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *ListOfferingsRequest) Reset() {
+	*x = ListOfferingsRequest{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOfferingsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOfferingsRequest) ProtoMessage() {}
+
+func (x *ListOfferingsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOfferingsRequest.ProtoReflect.Descriptor instead.
+func (*ListOfferingsRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *ListOfferingsRequest) GetCapability() string {
+	if x != nil {
+		return x.Capability
+	}
+	return ""
+}
+
+func (x *ListOfferingsRequest) GetOffering() string {
+	if x != nil {
+		return x.Offering
+	}
+	return ""
+}
+
+func (x *ListOfferingsRequest) GetTier() string {
+	if x != nil {
+		return x.Tier
+	}
+	return ""
+}
+
+func (x *ListOfferingsRequest) GetMinWeight() int32 {
+	if x != nil {
+		return x.MinWeight
+	}
+	return 0
+}
+
+func (x *ListOfferingsRequest) GetIncludeExpired() bool {
+	if x != nil {
+		return x.IncludeExpired
+	}
+	return false
+}
+
+type CatalogOffering struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Informational snapshot, including price denominator, estimator, opaque
+	// protocol axes in extra_json, constraints and settlement metadata. Always
+	// select again to authorize paid work. eth_address is orchestrator/payee;
+	// worker_url identifies the advertised broker, never an internal runner.
+	Offering *SelectedRoute `protobuf:"bytes,1,opt,name=offering,proto3" json:"offering,omitempty"`
+	// Resolver node identity, scoped by offering.eth_address.
+	WorkerId string `protobuf:"bytes,2,opt,name=worker_id,json=workerId,proto3" json:"worker_id,omitempty"`
+	// Same eligibility predicate as SelectMany at evaluated_at, including request
+	// tier/min_weight. It is not a guarantee of future admission.
+	Selectable      bool                   `protobuf:"varint,3,opt,name=selectable,proto3" json:"selectable,omitempty"`
+	ExclusionReason string                 `protobuf:"bytes,4,opt,name=exclusion_reason,json=exclusionReason,proto3" json:"exclusion_reason,omitempty"`
+	VerifiedAt      *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=verified_at,json=verifiedAt,proto3" json:"verified_at,omitempty"`
+	// Earliest source, publication and cache deadline. Health has its own bound.
+	ValidUntil       *timestamppb.Timestamp `protobuf:"bytes,6,opt,name=valid_until,json=validUntil,proto3" json:"valid_until,omitempty"`
+	Expired          bool                   `protobuf:"varint,7,opt,name=expired,proto3" json:"expired,omitempty"`
+	HealthValidUntil *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=health_valid_until,json=healthValidUntil,proto3" json:"health_valid_until,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *CatalogOffering) Reset() {
+	*x = CatalogOffering{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogOffering) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogOffering) ProtoMessage() {}
+
+func (x *CatalogOffering) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogOffering.ProtoReflect.Descriptor instead.
+func (*CatalogOffering) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CatalogOffering) GetOffering() *SelectedRoute {
+	if x != nil {
+		return x.Offering
+	}
+	return nil
+}
+
+func (x *CatalogOffering) GetWorkerId() string {
+	if x != nil {
+		return x.WorkerId
+	}
+	return ""
+}
+
+func (x *CatalogOffering) GetSelectable() bool {
+	if x != nil {
+		return x.Selectable
+	}
+	return false
+}
+
+func (x *CatalogOffering) GetExclusionReason() string {
+	if x != nil {
+		return x.ExclusionReason
+	}
+	return ""
+}
+
+func (x *CatalogOffering) GetVerifiedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.VerifiedAt
+	}
+	return nil
+}
+
+func (x *CatalogOffering) GetValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.ValidUntil
+	}
+	return nil
+}
+
+func (x *CatalogOffering) GetExpired() bool {
+	if x != nil {
+		return x.Expired
+	}
+	return false
+}
+
+func (x *CatalogOffering) GetHealthValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.HealthValidUntil
+	}
+	return nil
+}
+
+type CatalogCoverage struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// All counts describe the UNFILTERED discovery scope. Compatibility counts
+	// partition known_addresses; expired/deferred/unavailable may overlap them.
+	KnownAddresses                 uint32 `protobuf:"varint,1,opt,name=known_addresses,json=knownAddresses,proto3" json:"known_addresses,omitempty"`
+	VerifiedCompatibleAddresses    uint32 `protobuf:"varint,2,opt,name=verified_compatible_addresses,json=verifiedCompatibleAddresses,proto3" json:"verified_compatible_addresses,omitempty"`
+	ConfirmedIncompatibleAddresses uint32 `protobuf:"varint,3,opt,name=confirmed_incompatible_addresses,json=confirmedIncompatibleAddresses,proto3" json:"confirmed_incompatible_addresses,omitempty"`
+	UnknownAddresses               uint32 `protobuf:"varint,4,opt,name=unknown_addresses,json=unknownAddresses,proto3" json:"unknown_addresses,omitempty"`
+	ExpiredAddresses               uint32 `protobuf:"varint,5,opt,name=expired_addresses,json=expiredAddresses,proto3" json:"expired_addresses,omitempty"`
+	DeferredAddresses              uint32 `protobuf:"varint,6,opt,name=deferred_addresses,json=deferredAddresses,proto3" json:"deferred_addresses,omitempty"`
+	UnavailableAddresses           uint32 `protobuf:"varint,7,opt,name=unavailable_addresses,json=unavailableAddresses,proto3" json:"unavailable_addresses,omitempty"`
+	unknownFields                  protoimpl.UnknownFields
+	sizeCache                      protoimpl.SizeCache
+}
+
+func (x *CatalogCoverage) Reset() {
+	*x = CatalogCoverage{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CatalogCoverage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CatalogCoverage) ProtoMessage() {}
+
+func (x *CatalogCoverage) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CatalogCoverage.ProtoReflect.Descriptor instead.
+func (*CatalogCoverage) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CatalogCoverage) GetKnownAddresses() uint32 {
+	if x != nil {
+		return x.KnownAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetVerifiedCompatibleAddresses() uint32 {
+	if x != nil {
+		return x.VerifiedCompatibleAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetConfirmedIncompatibleAddresses() uint32 {
+	if x != nil {
+		return x.ConfirmedIncompatibleAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetUnknownAddresses() uint32 {
+	if x != nil {
+		return x.UnknownAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetExpiredAddresses() uint32 {
+	if x != nil {
+		return x.ExpiredAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetDeferredAddresses() uint32 {
+	if x != nil {
+		return x.DeferredAddresses
+	}
+	return 0
+}
+
+func (x *CatalogCoverage) GetUnavailableAddresses() uint32 {
+	if x != nil {
+		return x.UnavailableAddresses
+	}
+	return 0
+}
+
+type ListOfferingsResult struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	Entries      []*CatalogOffering     `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	Completeness CatalogCompleteness    `protobuf:"varint,2,opt,name=completeness,proto3,enum=livepeer.registry.v1.CatalogCompleteness" json:"completeness,omitempty"`
+	Coverage     *CatalogCoverage       `protobuf:"bytes,3,opt,name=coverage,proto3" json:"coverage,omitempty"`
+	SnapshotAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=snapshot_at,json=snapshotAt,proto3" json:"snapshot_at,omitempty"`
+	EvaluatedAt  *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=evaluated_at,json=evaluatedAt,proto3" json:"evaluated_at,omitempty"`
+	// "chain_active_pool_and_overlay" or "overlay_only".
+	DiscoveryScope              string                 `protobuf:"bytes,6,opt,name=discovery_scope,json=discoveryScope,proto3" json:"discovery_scope,omitempty"`
+	DiscoveryScopeAuthoritative bool                   `protobuf:"varint,7,opt,name=discovery_scope_authoritative,json=discoveryScopeAuthoritative,proto3" json:"discovery_scope_authoritative,omitempty"`
+	DiscoveryObservedAt         *timestamppb.Timestamp `protobuf:"bytes,8,opt,name=discovery_observed_at,json=discoveryObservedAt,proto3" json:"discovery_observed_at,omitempty"`
+	// Absent for immutable overlay-only configuration, valid until replacement.
+	DiscoveryValidUntil *timestamppb.Timestamp `protobuf:"bytes,9,opt,name=discovery_valid_until,json=discoveryValidUntil,proto3" json:"discovery_valid_until,omitempty"`
+	// Earliest address evidence/health bound; absent for an empty scope.
+	CoverageValidUntil *timestamppb.Timestamp `protobuf:"bytes,10,opt,name=coverage_valid_until,json=coverageValidUntil,proto3" json:"coverage_valid_until,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *ListOfferingsResult) Reset() {
+	*x = ListOfferingsResult{}
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListOfferingsResult) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListOfferingsResult) ProtoMessage() {}
+
+func (x *ListOfferingsResult) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListOfferingsResult.ProtoReflect.Descriptor instead.
+func (*ListOfferingsResult) Descriptor() ([]byte, []int) {
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ListOfferingsResult) GetEntries() []*CatalogOffering {
+	if x != nil {
+		return x.Entries
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetCompleteness() CatalogCompleteness {
+	if x != nil {
+		return x.Completeness
+	}
+	return CatalogCompleteness_CATALOG_COMPLETENESS_UNSPECIFIED
+}
+
+func (x *ListOfferingsResult) GetCoverage() *CatalogCoverage {
+	if x != nil {
+		return x.Coverage
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetSnapshotAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.SnapshotAt
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetEvaluatedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.EvaluatedAt
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetDiscoveryScope() string {
+	if x != nil {
+		return x.DiscoveryScope
+	}
+	return ""
+}
+
+func (x *ListOfferingsResult) GetDiscoveryScopeAuthoritative() bool {
+	if x != nil {
+		return x.DiscoveryScopeAuthoritative
+	}
+	return false
+}
+
+func (x *ListOfferingsResult) GetDiscoveryObservedAt() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DiscoveryObservedAt
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetDiscoveryValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.DiscoveryValidUntil
+	}
+	return nil
+}
+
+func (x *ListOfferingsResult) GetCoverageValidUntil() *timestamppb.Timestamp {
+	if x != nil {
+		return x.CoverageValidUntil
+	}
+	return nil
+}
+
 type RefreshRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EthAddress    string                 `protobuf:"bytes,1,opt,name=eth_address,json=ethAddress,proto3" json:"eth_address,omitempty"` // "*" means all
@@ -779,7 +1634,7 @@ type RefreshRequest struct {
 
 func (x *RefreshRequest) Reset() {
 	*x = RefreshRequest{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -791,7 +1646,7 @@ func (x *RefreshRequest) String() string {
 func (*RefreshRequest) ProtoMessage() {}
 
 func (x *RefreshRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[10]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -804,7 +1659,7 @@ func (x *RefreshRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshRequest.ProtoReflect.Descriptor instead.
 func (*RefreshRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{10}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *RefreshRequest) GetEthAddress() string {
@@ -832,7 +1687,7 @@ type GetAuditLogRequest struct {
 
 func (x *GetAuditLogRequest) Reset() {
 	*x = GetAuditLogRequest{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -844,7 +1699,7 @@ func (x *GetAuditLogRequest) String() string {
 func (*GetAuditLogRequest) ProtoMessage() {}
 
 func (x *GetAuditLogRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[11]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -857,7 +1712,7 @@ func (x *GetAuditLogRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetAuditLogRequest.ProtoReflect.Descriptor instead.
 func (*GetAuditLogRequest) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{11}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetAuditLogRequest) GetEthAddress() string {
@@ -890,7 +1745,7 @@ type AuditLogResult struct {
 
 func (x *AuditLogResult) Reset() {
 	*x = AuditLogResult{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -902,7 +1757,7 @@ func (x *AuditLogResult) String() string {
 func (*AuditLogResult) ProtoMessage() {}
 
 func (x *AuditLogResult) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[12]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -915,7 +1770,7 @@ func (x *AuditLogResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditLogResult.ProtoReflect.Descriptor instead.
 func (*AuditLogResult) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{12}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *AuditLogResult) GetEvents() []*AuditEvent {
@@ -938,7 +1793,7 @@ type AuditEvent struct {
 
 func (x *AuditEvent) Reset() {
 	*x = AuditEvent{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -950,7 +1805,7 @@ func (x *AuditEvent) String() string {
 func (*AuditEvent) ProtoMessage() {}
 
 func (x *AuditEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[13]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -963,7 +1818,7 @@ func (x *AuditEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuditEvent.ProtoReflect.Descriptor instead.
 func (*AuditEvent) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{13}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *AuditEvent) GetAt() *timestamppb.Timestamp {
@@ -1014,7 +1869,7 @@ type HealthResult struct {
 
 func (x *HealthResult) Reset() {
 	*x = HealthResult{}
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1026,7 +1881,7 @@ func (x *HealthResult) String() string {
 func (*HealthResult) ProtoMessage() {}
 
 func (x *HealthResult) ProtoReflect() protoreflect.Message {
-	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[14]
+	mi := &file_livepeer_registry_v1_resolver_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1039,7 +1894,7 @@ func (x *HealthResult) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthResult.ProtoReflect.Descriptor instead.
 func (*HealthResult) Descriptor() ([]byte, []int) {
-	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{14}
+	return file_livepeer_registry_v1_resolver_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *HealthResult) GetMode() string {
@@ -1087,7 +1942,7 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"ethAddress\x122\n" +
 	"\x15allow_legacy_fallback\x18\x02 \x01(\bR\x13allowLegacyFallback\x12%\n" +
 	"\x0eallow_unsigned\x18\x03 \x01(\bR\rallowUnsigned\x12#\n" +
-	"\rforce_refresh\x18\x04 \x01(\bR\fforceRefresh\"\xa9\x03\n" +
+	"\rforce_refresh\x18\x04 \x01(\bR\fforceRefresh\"\xfb\x03\n" +
 	"\rResolveResult\x12\x1f\n" +
 	"\veth_address\x18\x01 \x01(\tR\n" +
 	"ethAddress\x12!\n" +
@@ -1098,7 +1953,8 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\tcached_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\bcachedAt\x129\n" +
 	"\n" +
 	"fetched_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\tfetchedAt\x12%\n" +
-	"\x0eschema_version\x18\b \x01(\tR\rschemaVersion\"~\n" +
+	"\x0eschema_version\x18\b \x01(\tR\rschemaVersion\x12P\n" +
+	"\x10discovery_status\x18\t \x01(\v2%.livepeer.registry.v1.DiscoveryStatusR\x0fdiscoveryStatus\"~\n" +
 	"\rSelectRequest\x12\x1e\n" +
 	"\n" +
 	"capability\x18\x01 \x01(\tR\n" +
@@ -1145,14 +2001,81 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\x1dintroduced_in_publication_seq\x18\x04 \x01(\x04R\x1aintroducedInPublicationSeq\"\x12\n" +
 	"\x10ListKnownRequest\"M\n" +
 	"\x0fListKnownResult\x12:\n" +
-	"\aentries\x18\x01 \x03(\v2 .livepeer.registry.v1.KnownEntryR\aentries\"\xef\x01\n" +
+	"\aentries\x18\x01 \x03(\v2 .livepeer.registry.v1.KnownEntryR\aentries\"\xc1\x02\n" +
 	"\n" +
 	"KnownEntry\x12\x1f\n" +
 	"\veth_address\x18\x01 \x01(\tR\n" +
 	"ethAddress\x125\n" +
 	"\x04mode\x18\x02 \x01(\x0e2!.livepeer.registry.v1.ResolveModeR\x04mode\x12P\n" +
 	"\x10freshness_status\x18\x03 \x01(\x0e2%.livepeer.registry.v1.FreshnessStatusR\x0ffreshnessStatus\x127\n" +
-	"\tcached_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\bcachedAt\"G\n" +
+	"\tcached_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\bcachedAt\x12P\n" +
+	"\x10discovery_status\x18\x05 \x01(\v2%.livepeer.registry.v1.DiscoveryStatusR\x0fdiscoveryStatus\"\xdd\x06\n" +
+	"\x0fDiscoveryStatus\x12\x1d\n" +
+	"\n" +
+	"source_uri\x18\x01 \x01(\tR\tsourceUri\x12Q\n" +
+	"\rcompatibility\x18\x02 \x01(\x0e2+.livepeer.registry.v1.ManifestCompatibilityR\rcompatibility\x12N\n" +
+	"\favailability\x18\x03 \x01(\x0e2*.livepeer.registry.v1.ManifestAvailabilityR\favailability\x12S\n" +
+	"\x0efailure_reason\x18\x04 \x01(\x0e2,.livepeer.registry.v1.DiscoveryFailureReasonR\rfailureReason\x121\n" +
+	"\x14consecutive_failures\x18\x05 \x01(\rR\x13consecutiveFailures\x12D\n" +
+	"\x10last_verified_at\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\x0elastVerifiedAt\x12>\n" +
+	"\rnext_retry_at\x18\a \x01(\v2\x1a.google.protobuf.TimestampR\vnextRetryAt\x12B\n" +
+	"\x0flast_attempt_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\rlastAttemptAt\x12T\n" +
+	"\x18compatibility_checked_at\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\x16compatibilityCheckedAt\x12V\n" +
+	"\x19compatibility_valid_until\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\x17compatibilityValidUntil\x12F\n" +
+	"\x11source_checked_at\x18\v \x01(\v2\x1a.google.protobuf.TimestampR\x0fsourceCheckedAt\x12\x1f\n" +
+	"\vretry_class\x18\f \x01(\tR\n" +
+	"retryClass\x12\x1f\n" +
+	"\vpolicy_step\x18\r \x01(\rR\n" +
+	"policyStep\"\xcc\x01\n" +
+	"\x18RegistryResolutionDetail\x12\x1f\n" +
+	"\veth_address\x18\x01 \x01(\tR\n" +
+	"ethAddress\x12P\n" +
+	"\x10discovery_status\x18\x02 \x01(\v2%.livepeer.registry.v1.DiscoveryStatusR\x0fdiscoveryStatus\x12=\n" +
+	"\fevaluated_at\x18\x03 \x01(\v2\x1a.google.protobuf.TimestampR\vevaluatedAt\"\xae\x01\n" +
+	"\x14ListOfferingsRequest\x12\x1e\n" +
+	"\n" +
+	"capability\x18\x01 \x01(\tR\n" +
+	"capability\x12\x1a\n" +
+	"\boffering\x18\x02 \x01(\tR\boffering\x12\x12\n" +
+	"\x04tier\x18\x03 \x01(\tR\x04tier\x12\x1d\n" +
+	"\n" +
+	"min_weight\x18\x04 \x01(\x05R\tminWeight\x12'\n" +
+	"\x0finclude_expired\x18\x05 \x01(\bR\x0eincludeExpired\"\x98\x03\n" +
+	"\x0fCatalogOffering\x12?\n" +
+	"\boffering\x18\x01 \x01(\v2#.livepeer.registry.v1.SelectedRouteR\boffering\x12\x1b\n" +
+	"\tworker_id\x18\x02 \x01(\tR\bworkerId\x12\x1e\n" +
+	"\n" +
+	"selectable\x18\x03 \x01(\bR\n" +
+	"selectable\x12)\n" +
+	"\x10exclusion_reason\x18\x04 \x01(\tR\x0fexclusionReason\x12;\n" +
+	"\vverified_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"verifiedAt\x12;\n" +
+	"\vvalid_until\x18\x06 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"validUntil\x12\x18\n" +
+	"\aexpired\x18\a \x01(\bR\aexpired\x12H\n" +
+	"\x12health_valid_until\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x10healthValidUntil\"\x86\x03\n" +
+	"\x0fCatalogCoverage\x12'\n" +
+	"\x0fknown_addresses\x18\x01 \x01(\rR\x0eknownAddresses\x12B\n" +
+	"\x1dverified_compatible_addresses\x18\x02 \x01(\rR\x1bverifiedCompatibleAddresses\x12H\n" +
+	" confirmed_incompatible_addresses\x18\x03 \x01(\rR\x1econfirmedIncompatibleAddresses\x12+\n" +
+	"\x11unknown_addresses\x18\x04 \x01(\rR\x10unknownAddresses\x12+\n" +
+	"\x11expired_addresses\x18\x05 \x01(\rR\x10expiredAddresses\x12-\n" +
+	"\x12deferred_addresses\x18\x06 \x01(\rR\x11deferredAddresses\x123\n" +
+	"\x15unavailable_addresses\x18\a \x01(\rR\x14unavailableAddresses\"\xbf\x05\n" +
+	"\x13ListOfferingsResult\x12?\n" +
+	"\aentries\x18\x01 \x03(\v2%.livepeer.registry.v1.CatalogOfferingR\aentries\x12M\n" +
+	"\fcompleteness\x18\x02 \x01(\x0e2).livepeer.registry.v1.CatalogCompletenessR\fcompleteness\x12A\n" +
+	"\bcoverage\x18\x03 \x01(\v2%.livepeer.registry.v1.CatalogCoverageR\bcoverage\x12;\n" +
+	"\vsnapshot_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
+	"snapshotAt\x12=\n" +
+	"\fevaluated_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\vevaluatedAt\x12'\n" +
+	"\x0fdiscovery_scope\x18\x06 \x01(\tR\x0ediscoveryScope\x12B\n" +
+	"\x1ddiscovery_scope_authoritative\x18\a \x01(\bR\x1bdiscoveryScopeAuthoritative\x12N\n" +
+	"\x15discovery_observed_at\x18\b \x01(\v2\x1a.google.protobuf.TimestampR\x13discoveryObservedAt\x12N\n" +
+	"\x15discovery_valid_until\x18\t \x01(\v2\x1a.google.protobuf.TimestampR\x13discoveryValidUntil\x12L\n" +
+	"\x14coverage_valid_until\x18\n" +
+	" \x01(\v2\x1a.google.protobuf.TimestampR\x12coverageValidUntil\"G\n" +
 	"\x0eRefreshRequest\x12\x1f\n" +
 	"\veth_address\x18\x01 \x01(\tR\n" +
 	"ethAddress\x12\x14\n" +
@@ -1178,13 +2101,44 @@ const file_livepeer_registry_v1_resolver_proto_rawDesc = "" +
 	"\x13manifest_fetcher_ok\x18\x03 \x01(\bR\x11manifestFetcherOk\x12\x1d\n" +
 	"\n" +
 	"cache_size\x18\x04 \x01(\x05R\tcacheSize\x12H\n" +
-	"\x12last_chain_success\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x10lastChainSuccess2\xea\x04\n" +
+	"\x12last_chain_success\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\x10lastChainSuccess*\xc6\x01\n" +
+	"\x15ManifestCompatibility\x12&\n" +
+	"\"MANIFEST_COMPATIBILITY_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eMANIFEST_COMPATIBILITY_UNKNOWN\x10\x01\x12.\n" +
+	"*MANIFEST_COMPATIBILITY_VERIFIED_COMPATIBLE\x10\x02\x121\n" +
+	"-MANIFEST_COMPATIBILITY_CONFIRMED_INCOMPATIBLE\x10\x03*\xac\x01\n" +
+	"\x14ManifestAvailability\x12%\n" +
+	"!MANIFEST_AVAILABILITY_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dMANIFEST_AVAILABILITY_UNKNOWN\x10\x01\x12#\n" +
+	"\x1fMANIFEST_AVAILABILITY_AVAILABLE\x10\x02\x12%\n" +
+	"!MANIFEST_AVAILABILITY_UNAVAILABLE\x10\x03*\xd5\x04\n" +
+	"\x16DiscoveryFailureReason\x12(\n" +
+	"$DISCOVERY_FAILURE_REASON_UNSPECIFIED\x10\x00\x12!\n" +
+	"\x1dDISCOVERY_FAILURE_REASON_NONE\x10\x01\x12&\n" +
+	"\"DISCOVERY_FAILURE_REASON_TRANSPORT\x10\x02\x12!\n" +
+	"\x1dDISCOVERY_FAILURE_REASON_HTTP\x10\x03\x12-\n" +
+	")DISCOVERY_FAILURE_REASON_MANIFEST_MISSING\x10\x04\x121\n" +
+	"-DISCOVERY_FAILURE_REASON_MANIFEST_UNSUPPORTED\x10\x05\x12-\n" +
+	")DISCOVERY_FAILURE_REASON_MANIFEST_INVALID\x10\x06\x12.\n" +
+	"*DISCOVERY_FAILURE_REASON_SIGNATURE_INVALID\x10\a\x12-\n" +
+	")DISCOVERY_FAILURE_REASON_MANIFEST_EXPIRED\x10\b\x12/\n" +
+	"+DISCOVERY_FAILURE_REASON_PUBLICATION_REPLAY\x10\t\x12.\n" +
+	"*DISCOVERY_FAILURE_REASON_CHAIN_UNAVAILABLE\x10\n" +
+	"\x12+\n" +
+	"'DISCOVERY_FAILURE_REASON_SOURCE_MISSING\x10\v\x12%\n" +
+	"!DISCOVERY_FAILURE_REASON_INTERNAL\x10\f*\xa8\x01\n" +
+	"\x13CatalogCompleteness\x12$\n" +
+	" CATALOG_COMPLETENESS_UNSPECIFIED\x10\x00\x12&\n" +
+	"\"CATALOG_COMPLETENESS_UNINITIALIZED\x10\x01\x12 \n" +
+	"\x1cCATALOG_COMPLETENESS_PARTIAL\x10\x02\x12!\n" +
+	"\x1dCATALOG_COMPLETENESS_COMPLETE\x10\x032\xd2\x05\n" +
 	"\bResolver\x12f\n" +
 	"\x10ResolveByAddress\x12-.livepeer.registry.v1.ResolveByAddressRequest\x1a#.livepeer.registry.v1.ResolveResult\x12Q\n" +
 	"\x06Select\x12#.livepeer.registry.v1.SelectRequest\x1a\".livepeer.registry.v1.SelectResult\x12Y\n" +
 	"\n" +
 	"SelectMany\x12#.livepeer.registry.v1.SelectRequest\x1a&.livepeer.registry.v1.SelectManyResult\x12Z\n" +
-	"\tListKnown\x12&.livepeer.registry.v1.ListKnownRequest\x1a%.livepeer.registry.v1.ListKnownResult\x12G\n" +
+	"\tListKnown\x12&.livepeer.registry.v1.ListKnownRequest\x1a%.livepeer.registry.v1.ListKnownResult\x12f\n" +
+	"\rListOfferings\x12*.livepeer.registry.v1.ListOfferingsRequest\x1a).livepeer.registry.v1.ListOfferingsResult\x12G\n" +
 	"\aRefresh\x12$.livepeer.registry.v1.RefreshRequest\x1a\x16.google.protobuf.Empty\x12]\n" +
 	"\vGetAuditLog\x12(.livepeer.registry.v1.GetAuditLogRequest\x1a$.livepeer.registry.v1.AuditLogResult\x12D\n" +
 	"\x06Health\x12\x16.google.protobuf.Empty\x1a\".livepeer.registry.v1.HealthResultB_Z]github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1;registryv1b\x06proto3"
@@ -1201,68 +2155,106 @@ func file_livepeer_registry_v1_resolver_proto_rawDescGZIP() []byte {
 	return file_livepeer_registry_v1_resolver_proto_rawDescData
 }
 
-var file_livepeer_registry_v1_resolver_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_livepeer_registry_v1_resolver_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
+var file_livepeer_registry_v1_resolver_proto_msgTypes = make([]protoimpl.MessageInfo, 21)
 var file_livepeer_registry_v1_resolver_proto_goTypes = []any{
-	(*ResolveByAddressRequest)(nil), // 0: livepeer.registry.v1.ResolveByAddressRequest
-	(*ResolveResult)(nil),           // 1: livepeer.registry.v1.ResolveResult
-	(*SelectRequest)(nil),           // 2: livepeer.registry.v1.SelectRequest
-	(*SelectResult)(nil),            // 3: livepeer.registry.v1.SelectResult
-	(*SelectManyResult)(nil),        // 4: livepeer.registry.v1.SelectManyResult
-	(*SelectedRoute)(nil),           // 5: livepeer.registry.v1.SelectedRoute
-	(*SettlementKey)(nil),           // 6: livepeer.registry.v1.SettlementKey
-	(*ListKnownRequest)(nil),        // 7: livepeer.registry.v1.ListKnownRequest
-	(*ListKnownResult)(nil),         // 8: livepeer.registry.v1.ListKnownResult
-	(*KnownEntry)(nil),              // 9: livepeer.registry.v1.KnownEntry
-	(*RefreshRequest)(nil),          // 10: livepeer.registry.v1.RefreshRequest
-	(*GetAuditLogRequest)(nil),      // 11: livepeer.registry.v1.GetAuditLogRequest
-	(*AuditLogResult)(nil),          // 12: livepeer.registry.v1.AuditLogResult
-	(*AuditEvent)(nil),              // 13: livepeer.registry.v1.AuditEvent
-	(*HealthResult)(nil),            // 14: livepeer.registry.v1.HealthResult
-	(ResolveMode)(0),                // 15: livepeer.registry.v1.ResolveMode
-	(*Node)(nil),                    // 16: livepeer.registry.v1.Node
-	(FreshnessStatus)(0),            // 17: livepeer.registry.v1.FreshnessStatus
-	(*timestamppb.Timestamp)(nil),   // 18: google.protobuf.Timestamp
-	(*Estimator)(nil),               // 19: livepeer.registry.v1.Estimator
-	(*emptypb.Empty)(nil),           // 20: google.protobuf.Empty
+	(ManifestCompatibility)(0),       // 0: livepeer.registry.v1.ManifestCompatibility
+	(ManifestAvailability)(0),        // 1: livepeer.registry.v1.ManifestAvailability
+	(DiscoveryFailureReason)(0),      // 2: livepeer.registry.v1.DiscoveryFailureReason
+	(CatalogCompleteness)(0),         // 3: livepeer.registry.v1.CatalogCompleteness
+	(*ResolveByAddressRequest)(nil),  // 4: livepeer.registry.v1.ResolveByAddressRequest
+	(*ResolveResult)(nil),            // 5: livepeer.registry.v1.ResolveResult
+	(*SelectRequest)(nil),            // 6: livepeer.registry.v1.SelectRequest
+	(*SelectResult)(nil),             // 7: livepeer.registry.v1.SelectResult
+	(*SelectManyResult)(nil),         // 8: livepeer.registry.v1.SelectManyResult
+	(*SelectedRoute)(nil),            // 9: livepeer.registry.v1.SelectedRoute
+	(*SettlementKey)(nil),            // 10: livepeer.registry.v1.SettlementKey
+	(*ListKnownRequest)(nil),         // 11: livepeer.registry.v1.ListKnownRequest
+	(*ListKnownResult)(nil),          // 12: livepeer.registry.v1.ListKnownResult
+	(*KnownEntry)(nil),               // 13: livepeer.registry.v1.KnownEntry
+	(*DiscoveryStatus)(nil),          // 14: livepeer.registry.v1.DiscoveryStatus
+	(*RegistryResolutionDetail)(nil), // 15: livepeer.registry.v1.RegistryResolutionDetail
+	(*ListOfferingsRequest)(nil),     // 16: livepeer.registry.v1.ListOfferingsRequest
+	(*CatalogOffering)(nil),          // 17: livepeer.registry.v1.CatalogOffering
+	(*CatalogCoverage)(nil),          // 18: livepeer.registry.v1.CatalogCoverage
+	(*ListOfferingsResult)(nil),      // 19: livepeer.registry.v1.ListOfferingsResult
+	(*RefreshRequest)(nil),           // 20: livepeer.registry.v1.RefreshRequest
+	(*GetAuditLogRequest)(nil),       // 21: livepeer.registry.v1.GetAuditLogRequest
+	(*AuditLogResult)(nil),           // 22: livepeer.registry.v1.AuditLogResult
+	(*AuditEvent)(nil),               // 23: livepeer.registry.v1.AuditEvent
+	(*HealthResult)(nil),             // 24: livepeer.registry.v1.HealthResult
+	(ResolveMode)(0),                 // 25: livepeer.registry.v1.ResolveMode
+	(*Node)(nil),                     // 26: livepeer.registry.v1.Node
+	(FreshnessStatus)(0),             // 27: livepeer.registry.v1.FreshnessStatus
+	(*timestamppb.Timestamp)(nil),    // 28: google.protobuf.Timestamp
+	(*Estimator)(nil),                // 29: livepeer.registry.v1.Estimator
+	(*emptypb.Empty)(nil),            // 30: google.protobuf.Empty
 }
 var file_livepeer_registry_v1_resolver_proto_depIdxs = []int32{
-	15, // 0: livepeer.registry.v1.ResolveResult.mode:type_name -> livepeer.registry.v1.ResolveMode
-	16, // 1: livepeer.registry.v1.ResolveResult.nodes:type_name -> livepeer.registry.v1.Node
-	17, // 2: livepeer.registry.v1.ResolveResult.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
-	18, // 3: livepeer.registry.v1.ResolveResult.cached_at:type_name -> google.protobuf.Timestamp
-	18, // 4: livepeer.registry.v1.ResolveResult.fetched_at:type_name -> google.protobuf.Timestamp
-	5,  // 5: livepeer.registry.v1.SelectResult.route:type_name -> livepeer.registry.v1.SelectedRoute
-	5,  // 6: livepeer.registry.v1.SelectManyResult.routes:type_name -> livepeer.registry.v1.SelectedRoute
-	6,  // 7: livepeer.registry.v1.SelectedRoute.settlement_keys:type_name -> livepeer.registry.v1.SettlementKey
-	19, // 8: livepeer.registry.v1.SelectedRoute.work_unit_estimator:type_name -> livepeer.registry.v1.Estimator
-	9,  // 9: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
-	15, // 10: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
-	17, // 11: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
-	18, // 12: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
-	18, // 13: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
-	13, // 14: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
-	18, // 15: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
-	15, // 16: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
-	18, // 17: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
-	0,  // 18: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
-	2,  // 19: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
-	2,  // 20: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
-	7,  // 21: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
-	10, // 22: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
-	11, // 23: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
-	20, // 24: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
-	1,  // 25: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
-	3,  // 26: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
-	4,  // 27: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
-	8,  // 28: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
-	20, // 29: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
-	12, // 30: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
-	14, // 31: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
-	25, // [25:32] is the sub-list for method output_type
-	18, // [18:25] is the sub-list for method input_type
-	18, // [18:18] is the sub-list for extension type_name
-	18, // [18:18] is the sub-list for extension extendee
-	0,  // [0:18] is the sub-list for field type_name
+	25, // 0: livepeer.registry.v1.ResolveResult.mode:type_name -> livepeer.registry.v1.ResolveMode
+	26, // 1: livepeer.registry.v1.ResolveResult.nodes:type_name -> livepeer.registry.v1.Node
+	27, // 2: livepeer.registry.v1.ResolveResult.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
+	28, // 3: livepeer.registry.v1.ResolveResult.cached_at:type_name -> google.protobuf.Timestamp
+	28, // 4: livepeer.registry.v1.ResolveResult.fetched_at:type_name -> google.protobuf.Timestamp
+	14, // 5: livepeer.registry.v1.ResolveResult.discovery_status:type_name -> livepeer.registry.v1.DiscoveryStatus
+	9,  // 6: livepeer.registry.v1.SelectResult.route:type_name -> livepeer.registry.v1.SelectedRoute
+	9,  // 7: livepeer.registry.v1.SelectManyResult.routes:type_name -> livepeer.registry.v1.SelectedRoute
+	10, // 8: livepeer.registry.v1.SelectedRoute.settlement_keys:type_name -> livepeer.registry.v1.SettlementKey
+	29, // 9: livepeer.registry.v1.SelectedRoute.work_unit_estimator:type_name -> livepeer.registry.v1.Estimator
+	13, // 10: livepeer.registry.v1.ListKnownResult.entries:type_name -> livepeer.registry.v1.KnownEntry
+	25, // 11: livepeer.registry.v1.KnownEntry.mode:type_name -> livepeer.registry.v1.ResolveMode
+	27, // 12: livepeer.registry.v1.KnownEntry.freshness_status:type_name -> livepeer.registry.v1.FreshnessStatus
+	28, // 13: livepeer.registry.v1.KnownEntry.cached_at:type_name -> google.protobuf.Timestamp
+	14, // 14: livepeer.registry.v1.KnownEntry.discovery_status:type_name -> livepeer.registry.v1.DiscoveryStatus
+	0,  // 15: livepeer.registry.v1.DiscoveryStatus.compatibility:type_name -> livepeer.registry.v1.ManifestCompatibility
+	1,  // 16: livepeer.registry.v1.DiscoveryStatus.availability:type_name -> livepeer.registry.v1.ManifestAvailability
+	2,  // 17: livepeer.registry.v1.DiscoveryStatus.failure_reason:type_name -> livepeer.registry.v1.DiscoveryFailureReason
+	28, // 18: livepeer.registry.v1.DiscoveryStatus.last_verified_at:type_name -> google.protobuf.Timestamp
+	28, // 19: livepeer.registry.v1.DiscoveryStatus.next_retry_at:type_name -> google.protobuf.Timestamp
+	28, // 20: livepeer.registry.v1.DiscoveryStatus.last_attempt_at:type_name -> google.protobuf.Timestamp
+	28, // 21: livepeer.registry.v1.DiscoveryStatus.compatibility_checked_at:type_name -> google.protobuf.Timestamp
+	28, // 22: livepeer.registry.v1.DiscoveryStatus.compatibility_valid_until:type_name -> google.protobuf.Timestamp
+	28, // 23: livepeer.registry.v1.DiscoveryStatus.source_checked_at:type_name -> google.protobuf.Timestamp
+	14, // 24: livepeer.registry.v1.RegistryResolutionDetail.discovery_status:type_name -> livepeer.registry.v1.DiscoveryStatus
+	28, // 25: livepeer.registry.v1.RegistryResolutionDetail.evaluated_at:type_name -> google.protobuf.Timestamp
+	9,  // 26: livepeer.registry.v1.CatalogOffering.offering:type_name -> livepeer.registry.v1.SelectedRoute
+	28, // 27: livepeer.registry.v1.CatalogOffering.verified_at:type_name -> google.protobuf.Timestamp
+	28, // 28: livepeer.registry.v1.CatalogOffering.valid_until:type_name -> google.protobuf.Timestamp
+	28, // 29: livepeer.registry.v1.CatalogOffering.health_valid_until:type_name -> google.protobuf.Timestamp
+	17, // 30: livepeer.registry.v1.ListOfferingsResult.entries:type_name -> livepeer.registry.v1.CatalogOffering
+	3,  // 31: livepeer.registry.v1.ListOfferingsResult.completeness:type_name -> livepeer.registry.v1.CatalogCompleteness
+	18, // 32: livepeer.registry.v1.ListOfferingsResult.coverage:type_name -> livepeer.registry.v1.CatalogCoverage
+	28, // 33: livepeer.registry.v1.ListOfferingsResult.snapshot_at:type_name -> google.protobuf.Timestamp
+	28, // 34: livepeer.registry.v1.ListOfferingsResult.evaluated_at:type_name -> google.protobuf.Timestamp
+	28, // 35: livepeer.registry.v1.ListOfferingsResult.discovery_observed_at:type_name -> google.protobuf.Timestamp
+	28, // 36: livepeer.registry.v1.ListOfferingsResult.discovery_valid_until:type_name -> google.protobuf.Timestamp
+	28, // 37: livepeer.registry.v1.ListOfferingsResult.coverage_valid_until:type_name -> google.protobuf.Timestamp
+	28, // 38: livepeer.registry.v1.GetAuditLogRequest.since:type_name -> google.protobuf.Timestamp
+	23, // 39: livepeer.registry.v1.AuditLogResult.events:type_name -> livepeer.registry.v1.AuditEvent
+	28, // 40: livepeer.registry.v1.AuditEvent.at:type_name -> google.protobuf.Timestamp
+	25, // 41: livepeer.registry.v1.AuditEvent.mode:type_name -> livepeer.registry.v1.ResolveMode
+	28, // 42: livepeer.registry.v1.HealthResult.last_chain_success:type_name -> google.protobuf.Timestamp
+	4,  // 43: livepeer.registry.v1.Resolver.ResolveByAddress:input_type -> livepeer.registry.v1.ResolveByAddressRequest
+	6,  // 44: livepeer.registry.v1.Resolver.Select:input_type -> livepeer.registry.v1.SelectRequest
+	6,  // 45: livepeer.registry.v1.Resolver.SelectMany:input_type -> livepeer.registry.v1.SelectRequest
+	11, // 46: livepeer.registry.v1.Resolver.ListKnown:input_type -> livepeer.registry.v1.ListKnownRequest
+	16, // 47: livepeer.registry.v1.Resolver.ListOfferings:input_type -> livepeer.registry.v1.ListOfferingsRequest
+	20, // 48: livepeer.registry.v1.Resolver.Refresh:input_type -> livepeer.registry.v1.RefreshRequest
+	21, // 49: livepeer.registry.v1.Resolver.GetAuditLog:input_type -> livepeer.registry.v1.GetAuditLogRequest
+	30, // 50: livepeer.registry.v1.Resolver.Health:input_type -> google.protobuf.Empty
+	5,  // 51: livepeer.registry.v1.Resolver.ResolveByAddress:output_type -> livepeer.registry.v1.ResolveResult
+	7,  // 52: livepeer.registry.v1.Resolver.Select:output_type -> livepeer.registry.v1.SelectResult
+	8,  // 53: livepeer.registry.v1.Resolver.SelectMany:output_type -> livepeer.registry.v1.SelectManyResult
+	12, // 54: livepeer.registry.v1.Resolver.ListKnown:output_type -> livepeer.registry.v1.ListKnownResult
+	19, // 55: livepeer.registry.v1.Resolver.ListOfferings:output_type -> livepeer.registry.v1.ListOfferingsResult
+	30, // 56: livepeer.registry.v1.Resolver.Refresh:output_type -> google.protobuf.Empty
+	22, // 57: livepeer.registry.v1.Resolver.GetAuditLog:output_type -> livepeer.registry.v1.AuditLogResult
+	24, // 58: livepeer.registry.v1.Resolver.Health:output_type -> livepeer.registry.v1.HealthResult
+	51, // [51:59] is the sub-list for method output_type
+	43, // [43:51] is the sub-list for method input_type
+	43, // [43:43] is the sub-list for extension type_name
+	43, // [43:43] is the sub-list for extension extendee
+	0,  // [0:43] is the sub-list for field type_name
 }
 
 func init() { file_livepeer_registry_v1_resolver_proto_init() }
@@ -1276,13 +2268,14 @@ func file_livepeer_registry_v1_resolver_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_registry_v1_resolver_proto_rawDesc), len(file_livepeer_registry_v1_resolver_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   15,
+			NumEnums:      4,
+			NumMessages:   21,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
 		GoTypes:           file_livepeer_registry_v1_resolver_proto_goTypes,
 		DependencyIndexes: file_livepeer_registry_v1_resolver_proto_depIdxs,
+		EnumInfos:         file_livepeer_registry_v1_resolver_proto_enumTypes,
 		MessageInfos:      file_livepeer_registry_v1_resolver_proto_msgTypes,
 	}.Build()
 	File_livepeer_registry_v1_resolver_proto = out.File

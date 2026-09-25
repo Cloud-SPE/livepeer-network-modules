@@ -78,6 +78,11 @@ func newSessionTestServer(t *testing.T) (*httptest.Server, *fakeSessionRunner) {
 // caller-supplied runner, for the tests that need a descriptor the
 // standard fake does not produce.
 func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *httptest.Server {
+	srv, _ := newSessionTestServerConfigured(t, runnerHandler, nil)
+	return srv
+}
+
+func newSessionTestServerConfigured(t *testing.T, runnerHandler http.Handler, configure func(*config.Config), options ...Options) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
@@ -126,10 +131,17 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 			Price:      config.Price{AmountWei: "10", PerUnits: 1},
 		}},
 	}
+	if configure != nil {
+		configure(cfg)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	s, err := New(cfg, Options{})
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	s, err := New(cfg, opts)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}
@@ -141,7 +153,7 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 	srv := httptest.NewServer(s.mux)
 	t.Cleanup(srv.Close)
 	attachSessionRunner(t, s, srv, runnerHandler)
-	return srv
+	return srv, s
 }
 
 // attachSessionRunner enrols a host and attaches the runner that serves
@@ -186,7 +198,7 @@ func sessionAttachDoc(token, hostID string) []byte {
 			"metering":           "runner-reported",
 			"work_unit":          map[string]any{"name": "participant_minutes"},
 			"paths": map[string]any{
-				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}", "reconcile": "/reconcile",
 			},
 			"readiness":       map[string]any{"type": "http-status", "path": "/ready"},
 			"identity":        map[string]any{},

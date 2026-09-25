@@ -43,10 +43,11 @@ type persistedSession struct {
 }
 
 type persistedState struct {
-	Sessions       map[string]persistedSession       `json:"sessions"`
-	Debits         map[string]int64                  `json:"debits"`
-	Accounts       map[string]persistedAccount       `json:"wholesale_accounts,omitempty"`
-	Authorizations map[string]persistedAuthorization `json:"spend_authorizations,omitempty"`
+	CanceledAdmissions map[string][]byte                 `json:"canceled_admissions,omitempty"`
+	Sessions           map[string]persistedSession       `json:"sessions"`
+	Debits             map[string]int64                  `json:"debits"`
+	Accounts           map[string]persistedAccount       `json:"wholesale_accounts,omitempty"`
+	Authorizations     map[string]persistedAuthorization `json:"spend_authorizations,omitempty"`
 }
 
 type persistedAccount struct {
@@ -59,6 +60,8 @@ type persistedAccount struct {
 }
 
 type persistedAuthorization struct {
+	Units, Seq                 uint64
+	Fingerprint                []byte
 	Payload                    []byte
 	Reserved, Billed, Released string
 	State                      int32
@@ -131,12 +134,15 @@ func (m *Mock) loadLocked() error {
 		}
 		m.wholesaleAccounts[k] = &WholesaleAccount{WholesaleAccountID: pa.WholesaleAccountID, SettlementDomainID: pa.SettlementDomainID, Payer: pa.Payer, Payee: pa.Payee, Credited: decimal(pa.Credited), Reserved: decimal(pa.Reserved), Debited: decimal(pa.Debited), Available: decimal(pa.Available), Version: pa.Version, ObservedAt: pa.ObservedAt, ChainID: pa.ChainID, Denomination: pa.Denomination}
 	}
+	if st.CanceledAdmissions != nil {
+		m.canceledAdmissions = st.CanceledAdmissions
+	}
 	for k, pa := range st.Authorizations {
 		var payload pb.SpendAuthorizationPayload
 		if proto.Unmarshal(pa.Payload, &payload) != nil {
 			continue
 		}
-		m.accountAuthorizations[k] = &mockAuthorization{payload: &payload, reserved: decimal(pa.Reserved), billed: decimal(pa.Billed), released: decimal(pa.Released), state: pa.State}
+		m.accountAuthorizations[k] = &mockAuthorization{payload: &payload, reserved: decimal(pa.Reserved), billed: decimal(pa.Billed), released: decimal(pa.Released), state: pa.State, units: pa.Units, seq: pa.Seq, fingerprint: pa.Fingerprint}
 	}
 	return nil
 }
@@ -149,10 +155,11 @@ func (m *Mock) flushLocked() {
 		return
 	}
 	st := persistedState{
-		Sessions:       make(map[string]persistedSession, len(m.sessions)),
-		Debits:         make(map[string]int64, len(m.debits)),
-		Accounts:       make(map[string]persistedAccount, len(m.wholesaleAccounts)),
-		Authorizations: make(map[string]persistedAuthorization, len(m.accountAuthorizations)),
+		Sessions:           make(map[string]persistedSession, len(m.sessions)),
+		Debits:             make(map[string]int64, len(m.debits)),
+		Accounts:           make(map[string]persistedAccount, len(m.wholesaleAccounts)),
+		Authorizations:     make(map[string]persistedAuthorization, len(m.accountAuthorizations)),
+		CanceledAdmissions: m.canceledAdmissions,
 	}
 	for k, s := range m.sessions {
 		price, bal := "0", "0"
@@ -181,7 +188,7 @@ func (m *Mock) flushLocked() {
 		if err != nil {
 			continue
 		}
-		st.Authorizations[k] = persistedAuthorization{Payload: payload, Reserved: a.reserved.String(), Billed: a.billed.String(), Released: a.released.String(), State: a.state}
+		st.Authorizations[k] = persistedAuthorization{Payload: payload, Reserved: a.reserved.String(), Billed: a.billed.String(), Released: a.released.String(), State: a.state, Units: a.units, Seq: a.seq, Fingerprint: a.fingerprint}
 	}
 	raw, err := json.Marshal(&st)
 	if err != nil {

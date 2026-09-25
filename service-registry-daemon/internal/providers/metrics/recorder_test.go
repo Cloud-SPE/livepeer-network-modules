@@ -230,3 +230,20 @@ func mustContain(t *testing.T, body, sub string) {
 		t.Fatalf("body missing %q. body:\n%s", sub, body)
 	}
 }
+
+func TestDiscoveryRetryMetrics(t *testing.T) {
+	p := NewPrometheus(PrometheusConfig{})
+	p.ObserveDiscoveryRetry("incompatible", "manifest_missing", 24*time.Hour)
+	p.IncResolutionDeferred()
+	p.SetNextRetry("incompatible", time.Unix(123, 0))
+	req := httptest.NewRequest("GET", "/metrics", nil)
+	w := httptest.NewRecorder()
+	p.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	for _, want := range []string{`livepeer_registry_discovery_retries_total{class="incompatible",reason="manifest_missing"} 1`, `livepeer_registry_resolution_deferred_total 1`, `livepeer_registry_discovery_next_retry_timestamp_seconds{class="incompatible"} 123`, `livepeer_registry_discovery_retry_delay_seconds_count{class="incompatible"} 1`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %s", want)
+		}
+	}
+	p.SetNextRetry("incompatible", time.Time{})
+}

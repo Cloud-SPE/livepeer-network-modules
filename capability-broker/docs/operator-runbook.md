@@ -160,7 +160,7 @@ Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
 `heartbeat_lost`, `insufficient_balance`, `recovery_failed`,
 `open_failed`, `output_failed`. Every winddown is the same idempotent path
-(terminate runner → settle authorization → release capacity → record reason); a repeated
+(terminate runner → persist stopped state and release capacity → settle authorization → record reason); a repeated
 trigger is a no-op.
 
 Restart behavior: before serving, the broker verifies that every nonterminal
@@ -169,6 +169,127 @@ daemon and runner. Both still hold it → resume with the same authorization,
 credentials, grants, and usage watermark. Missing authorization state or a
 lost runner → terminate fail closed as `recovery_failed`. An undrained legacy
 record without authorization state refuses broker startup.
+
+### Concurrency and pending cleanup
+
+`offers[].capacity.max_in_flight` limits each runner's host/local-capability pair.
+Starting and active sessions each occupy one slot; replay, status, control sockets
+and refill use the same slot. Unary, multipart and streamed jobs occupy one slot
+until the response completes or the exchange aborts. A zero limit is unlimited.
+`queue_limit` is inactive and does not admit extra waiting requests. At capacity,
+the broker tries another eligible runner, otherwise returns `503
+capacity_exhausted` with `Livepeer-Backoff`.
+
+Before serving after restart, the broker restores opening and live session
+ownership from the sealed store. Existing records without an ownership reference
+are migrated. Live work without a pinned runner binding fails startup rather than
+being left out of occupancy. Lowering a limit does not discard existing occupancy: new work
+waits for enough slots to become free by receiving capacity refusals.
+
+Runner disconnects and failed termination retain ownership. A confirmed stop is
+persisted before freeing capacity, even when a receiver outage leaves the session
+`winding_down`. Settlement and signed terminal publication still require all
+financial obligations to be resolved. Repeated cleanup does not release another
+session's slot.
+
+An abandoned open with a known runner session ID is retried on recovery/sweep.
+For a lost create response, runners can advertise `paths.reconcile`. The broker
+posts its durable broker session ID and accepts either an existing runner ID
+(which it terminates) or `fenced` (the runner has durably blocked delayed creates
+for that ID). A timeout, bare 404, unsupported endpoint or invalid reply retains
+the opening reservation and slot. Deploy the broker before runners advertise
+the optional path; older strict attach validators reject unknown path fields.
+
+Before initial admission, the broker seals the exact signed authorization and
+recovery identity. Recovery atomically fences unused authority at the receiver,
+or adopts an accepted admission and settles its verified cumulative usage.
+Compute may be released while accounting remains pending. Recovery never repeats
+funding. `GET /v1/exchange/{request_id}` reports `IN_FLIGHT`,
+`ACCOUNTING_PENDING`, `ADMISSION_REJECTED`, or a terminal `SETTLED` envelope.
+A rejected open can obtain scoped signed non-admission; pending admission cannot.
+Canceled requests cannot open again, including after restart.
+
+Pre-upgrade reservations missing the exact authorization cannot be automatically
+financially reconciled. Those missing broker create identity or a supported runner
+reconciliation path also cannot establish an unknown runner outcome. Diagnose
+using the request ID, broker session ID and backend binding; do not delete the
+reservation or reset counters to make capacity appear free. Keep the broker
+sealing key and runner state/key across upgrades and restarts.
+
+The limit applies within one broker. Runners remain responsible for physical
+capacity across brokers, and for canceling job execution when its transport ends.
+
+### Authorization revisions and stuck winddown
+
+Revision reservations use the successor's remaining cumulative debit allowance,
+after receiver billing is reconciled. A 120-unit runway against a 180-unit
+successor with 74 units already billed reserves 106 units at the accepted price.
+Both HTTP and control WebSocket top-ups use the same engine path.
+
+Upgrade the payment daemon before the broker: recovery uses the additive
+`CancelAuthorizationAdmission` RPC. An older receiver returns `Unimplemented`;
+the broker retains an uncertain intent until the recovery RPC is available.
+No new authorization, ticket batch or session ID is needed to repair an old
+oversized intent. Startup and sweeps repair active-session reservations before
+replaying the original admission. During winddown, an unadmitted successor is
+atomically fenced; an already-admitted successor is adopted and settled.
+An expired-unused revision becomes a durable `refill_refused` response.
+
+Before repairing a reported production session, verify the running broker and
+receiver image digests/source revisions and back up their stores together with
+the broker sealing key. Inspect the sealed intent through the normal store
+reader in a protected environment, retaining only sanitized authorization IDs,
+limits, reservation, cumulative billing and sequence in the incident record.
+Do not delete intents or hand-edit Bolt records: admission may have succeeded
+before its response was lost.
+
+`session revision recovery held` means accounting remains uncertain. Background
+retries increase from one second to a one-minute cap, with the next retry time
+persisted across restart; an explicit identical top-up retry may bypass that
+cooldown. Runner termination continues while payment closure is pending.
+`session revision refused; predecessor retained` records a resolved refusal.
+Persistent receiver conflicts or outages remain visible as `winding_down` and
+must not be treated as a final zero-use settlement.
+
+Revision decisions now preserve the original safe receiver refusal before
+cancellation. The `session revision decision` log includes session, gateway,
+request, predecessor/successor, revision, outcome, stage, reason, receiver code,
+requested/effective reservation, receiver cumulative billing and signed caps.
+It never includes authorization/payment bytes. The metric
+`livepeer_protocol_session_revision_decisions_total{outcome,stage,reason}` counts
+observations (including retries), with bounded labels and no identity labels.
+`revision_pending` means retry the identical request or read
+`GET /v1/session/{id}/revisions/{request_id}`; a final `refill_refused` response
+retains the predecessor. Signed revision evidence gives LOC an independently
+queryable successor outcome; the generic non-admission endpoint cannot replace it.
+Previously erased rejection reasons cannot be reconstructed by upgrading.
+
+Terminal settlement now freezes its payload and positive broker session sequence
+durably. Repeated settlement lookup or close replays the original signed envelope.
+Historical terminal records without a snapshot are repaired once before their
+next publication. Do not substitute the receiver's sequence into the signed
+envelope. A previously rejected sequence-zero terminal can be fetched again after
+upgrade; LOC must verify the replacement normally. Existing frozen evidence can
+be served even if its offering is subsequently removed.
+
+`authorization_exhausted` with 124 claimed / 120 debited is a valid cap overshoot
+when receiver accounting and signed limits confirm it. Only 120 is billed;
+`claim_debit_gap_reason: authorization_cap` distinguishes this from an unexplained
+gap. A refused successor's `canceled_unused` state survives receiver restart and
+prevents future admission; its signed evidence applies to the successor alone.
+See the [wire contract](../../livepeer-network-protocol/protocols/paid-session.md#revision-decisions-and-evidence)
+for identity checks, retention boundaries and replay rules.
+
+After recovery, verify the active receiver authorization is settled, its
+reservation is released, and the signed settlement fetched by broker or gateway
+session ID matches cumulative units and billed wei and retains the original
+close reason. For a final total of 74 units at 10^12 wei/unit, the bill is
+74 × 10^12 wei. The temporary 106 × 10^12 wei reservation is not another charge.
+Insufficient wholesale credit remains a separate admission/funding issue.
+
+Run `make test-revisions` from `capability-broker/` for Docker-based race tests
+covering the real receiver ledger, restart/lost-response recovery, HTTP/WS
+parity and signed cumulative settlement.
 
 Output-producing runners may additionally report `output_state` as `waiting`,
 `producing`, or `stalled`, plus a sanitized `last_failure_code`. These are

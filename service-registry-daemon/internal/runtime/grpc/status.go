@@ -1,7 +1,11 @@
 package grpc
 
 import (
+	"context"
 	"errors"
+	registryv1 "github.com/Cloud-SPE/livepeer-network-modules/proto-contracts/livepeer/registry/v1"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/protobuf/types/known/durationpb"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/service-registry-daemon/internal/types"
 	"google.golang.org/grpc/codes"
@@ -21,17 +25,34 @@ func errorToStatus(err error) error {
 	}
 	code, sentinel := classifyError(err)
 	st := status.New(code, err.Error())
-	if d := codeDetail(sentinel); d != nil {
-		if withDet, addErr := st.WithDetails(protoadapt.MessageV1Of(d)); addErr == nil {
-			return withDet.Err()
+	details := []protoadapt.MessageV1{protoadapt.MessageV1Of(codeDetail(sentinel))}
+	var resolution *types.ResolutionError
+	if errors.As(err, &resolution) {
+		details = append(details, protoadapt.MessageV1Of(&registryv1.RegistryResolutionDetail{EthAddress: string(resolution.Address), DiscoveryStatus: discoveryStatusToProto(resolution.Status), EvaluatedAt: timeToProto(resolution.EvaluatedAt)}))
+		if resolution.RetryAfter > 0 {
+			details = append(details, &errdetails.RetryInfo{RetryDelay: durationpb.New(resolution.RetryAfter)})
 		}
 	}
+	if with, addErr := st.WithDetails(details...); addErr == nil {
+		return with.Err()
+	}
+
 	return st.Err()
 }
 
 // classifyError returns (gRPC code, the sentinel string used in status detail).
 func classifyError(err error) (codes.Code, string) {
 	switch {
+	case errors.Is(err, context.Canceled):
+		return codes.Canceled, "canceled"
+	case errors.Is(err, types.ErrResolutionDeferred):
+		return codes.Unavailable, "resolution_deferred"
+	case errors.Is(err, context.DeadlineExceeded):
+		return codes.DeadlineExceeded, "deadline_exceeded"
+	case errors.Is(err, types.ErrManifestUnsupported):
+		return codes.FailedPrecondition, "manifest_unsupported"
+	case errors.Is(err, types.ErrRegistryUnavailable):
+		return codes.Unavailable, "registry_unavailable"
 	case errors.Is(err, types.ErrNotFound):
 		return codes.NotFound, "not_found"
 	case errors.Is(err, types.ErrManifestUnavailable):

@@ -14,10 +14,11 @@ import (
 )
 
 const (
-	AuthorizationAdmitted      = "admitted"
-	AuthorizationSettled       = "settled"
-	AuthorizationExpiredUnused = "expired_unused"
-	AuthorizationSuperseded    = "superseded"
+	AuthorizationAdmitted       = "admitted"
+	AuthorizationSettled        = "settled"
+	AuthorizationExpiredUnused  = "expired_unused"
+	AuthorizationSuperseded     = "superseded"
+	AuthorizationCanceledUnused = "canceled_unused"
 )
 
 var (
@@ -177,6 +178,16 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 	err := s.db.Update(func(tx *bolt.Tx) error {
 		auths := tx.Bucket([]byte(spendAuthorizationsBucket))
 		authKey := wholesaleAuthorizationKey(seed.Payer, seed.ID, seed.WholesaleAccountID)
+		fence, err := canceledAdmissionIn(tx, authKey)
+		if err != nil {
+			return err
+		}
+		if fence != nil {
+			if !bytes.Equal(fence.Fingerprint, seed.Fingerprint) {
+				return ErrAuthorizationFingerprint
+			}
+			return ErrAuthorizationCanceled
+		}
 		if fences := tx.Bucket([]byte(unexecutedFencesBucket)); fences != nil && fences.Get(authKey) != nil {
 			return ErrAuthorizationState
 		}
@@ -266,11 +277,11 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 				return err
 			}
 			if pred.State != AuthorizationAdmitted || pred.SessionID == "" || pred.SessionID != seed.SessionID || pred.Protocol != seed.Protocol || pred.Capability != seed.Capability || pred.Offering != seed.Offering || pred.PriceWei != seed.PriceWei || pred.PerUnits != seed.PerUnits || pred.WorkUnit != seed.WorkUnit || seed.Revision <= pred.Revision {
-				return ErrAuthorizationState
+				return ErrRevisionPredecessor
 			}
 			inheritedUnits, inheritedSeq, inheritedBilled = pred.ActualUnits, pred.SettlementSeq, parseDecimalBig(pred.BilledWei)
 			if seed.MaxTotalUnits < inheritedUnits || maxDebit.Cmp(inheritedBilled) < 0 {
-				return ErrAuthorizationState
+				return ErrRevisionLimits
 			}
 			oldReserve.Set(parseDecimalBig(pred.ReservedWei))
 			predecessor = &pred
@@ -279,7 +290,7 @@ func (s *Store) AdmitWholesale(seed WholesaleAuthorizationSeed, fundingWorkID st
 			reservation = new(big.Int).Sub(new(big.Int).Set(maxDebit), inheritedBilled)
 		}
 		if reservation.Sign() < 0 || reservation.Cmp(new(big.Int).Sub(new(big.Int).Set(maxDebit), inheritedBilled)) > 0 {
-			return ErrAuthorizationState
+			return ErrReservationExceedsRemaining
 		}
 		// A successor atomically replaces its predecessor's reservation.
 		// Count that reservation as reusable for the admission decision, but
@@ -576,6 +587,14 @@ func (s *Store) GetWholesaleAuthorization(payer []byte, id string, accountID ...
 	err := s.db.View(func(tx *bolt.Tx) error {
 		raw := tx.Bucket([]byte(spendAuthorizationsBucket)).Get(wholesaleAuthorizationKey(payer, id, accountID...))
 		if raw == nil {
+			fence, err := canceledAdmissionIn(tx, wholesaleAuthorizationKey(payer, id, accountID...))
+			if err != nil {
+				return err
+			}
+			if fence != nil {
+				auth = WholesaleAuthorization{WholesaleAccountID: accountScope(accountID), Payee: bytes.Clone(fence.Payee), ID: id, Payer: bytes.Clone(payer), Fingerprint: bytes.Clone(fence.Fingerprint), State: AuthorizationCanceledUnused, UpdatedAt: fence.At}
+				return nil
+			}
 			return ErrAuthorizationNotFound
 		}
 		return json.Unmarshal(raw, &auth)

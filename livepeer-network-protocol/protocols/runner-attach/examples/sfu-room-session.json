@@ -15,7 +15,8 @@
       "paths": {
         "create": "/sessions",
         "status": "/sessions/{id}",
-        "terminate": "/sessions/{id}"
+        "terminate": "/sessions/{id}",
+        "reconcile": "/session-creates/reconcile"
       },
       "readiness": { "type": "http-status", "path": "/ready" },
       "identity": { "provider": "livekit" },

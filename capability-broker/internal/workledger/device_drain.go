@@ -82,7 +82,7 @@ func (s *Store) authorizationDeviceDraining(id string) (bool, error) {
 }
 func (c *Client) DeviceDrainStatus(ctx context.Context, host, device string, generation uint64) (DeviceDrain, error) {
 	var out DeviceDrain
-	var auths []pb.SpendAuthorization
+	var auths []*pb.SpendAuthorization
 	// Lock admission through receiver verification. Existing execution may settle;
 	// any nonterminal observation keeps the transfer held until a later retry.
 	c.admissionGate.Lock()
@@ -126,7 +126,7 @@ func (c *Client) DeviceDrainStatus(ctx context.Context, host, device string, gen
 			if err := proto.Unmarshal(rawAuth, &auth); err != nil {
 				return err
 			}
-			auths = append(auths, auth)
+			auths = append(auths, &auth)
 			return nil
 		}); err != nil {
 			return err
@@ -166,7 +166,7 @@ func (c *Client) DeviceDrainStatus(ctx context.Context, host, device string, gen
 			return out, fmt.Errorf("receiver authorization proof missing")
 		}
 		switch state.State {
-		case int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED), int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED):
+		case int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED), int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED), int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED):
 		default:
 			out.ActiveAuthorizations++
 		}

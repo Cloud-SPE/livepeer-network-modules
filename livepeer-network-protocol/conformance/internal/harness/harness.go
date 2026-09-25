@@ -355,7 +355,7 @@ func (c *Ctx) QuerySettlement(id string) (*HTTPResult, error) {
 // signed NOT_ADMITTED claim. It is intentionally separate from workload
 // invocation: silence or an HTTP refusal alone is not financial evidence.
 func (c *Ctx) QueryNonAdmission(requestID, protocol string) (*HTTPResult, error) {
-	body := fmt.Sprintf(`{"protocol":%q,"work_id":%q,"sender":%q,"recipient":%q,`+
+	body := fmt.Sprintf(`{"wholesale_account_id":"conformance","protocol":%q,"work_id":%q,"sender":%q,"recipient":%q,`+
 		`"quote_id":"conformance-quote","quote_version":1,`+
 		`"constraint_fingerprint":"01","route_fingerprint":"02","job_issued_at":%q}`,
 		protocol, "conf-auth-"+requestID, strings.Repeat("01", 20), strings.Repeat("02", 20),

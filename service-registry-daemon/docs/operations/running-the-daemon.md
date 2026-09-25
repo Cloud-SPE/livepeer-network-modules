@@ -70,10 +70,16 @@ password bind mounts must be readable by runtime UID 65532.
 | `--chain-id` | 42161 | Expected identity; every production chain-discovery RPC endpoint must respond with this chain ID at startup |
 | `--discovery` | chain | chain enumeration or overlay-only configured list |
 | `--round-poll-interval` | 1m | Round-transition polling in chain mode |
-| `--cache-manifest-ttl` | 10m | Synchronous on-demand manifest refresh after this age |
+| `--cache-manifest-ttl` | 10m | Hard selection freshness bound; background refresh starts before this age |
 | `--manifest-max-bytes` | 4194304 | Body size cap, allowed range 1024 through 16 MiB |
 | `--manifest-fetch-timeout` | 5s | Per HTTP attempt, including alternate candidate paths |
 | `--max-stale` | 1h | Age bound for last-good failure fallback; also internal chain freshness bound |
+| `--retry-incompatible` | 5m,30m,2h,6h,24h | Confirmed missing/unsupported manifest or missing source retry intervals |
+| `--retry-compatible` | 5s,15s,1m,5m,15m | Previously verified transient failure intervals |
+| `--retry-unknown` | 15s,1m,5m,15m,1h | Unknown compatibility transient intervals |
+| `--retry-rejected` | 1m,5m,15m,1h | Validation/signature/expiry/replay rejection intervals |
+| `--retry-jitter` | 0.2 | Downward jitter fraction; range 0–0.5; final interval is a hard cap |
+| `--source-poll-interval` | 1m | Independent URI polling target during manifest cooldown; subject to worker capacity |
 | `--static-overlay` | empty | YAML loaded once at startup; restart to reload |
 | `--reject-unsigned` | true | Default policy for unsigned static/CSV nodes; never permits unsigned coordinator envelopes |
 | `--worker-probe-timeout` | 5s | Resolver live broker health fetch timeout |
@@ -113,16 +119,33 @@ test fixture; publisher mode cannot generate one through RPC.
 
 ## Startup, refresh and diagnostics
 
-Overlay seeding resolves enabled entries before readiness, best-effort.
-Manifest pointers fetch signed publications; static pins synthesize nodes.
-There is no chain lookup in overlay-only. Failed seeds are logged and skipped;
-configured pointers are retried on subsequent Select/Refresh calls. ListKnown
-shows cached candidates only. A successful startup may still have zero routes.
+Listeners start while four metadata and four independent health workers warm the
+route index. No chain lookup occurs in overlay-only mode. A cold Select returns
+`UNAVAILABLE` promptly; retries never perform network I/O themselves. Workers
+retry failed endpoints with bounded backoff. Each completed healthy route becomes
+available independently, without waiting for unrelated orchestrators. ListKnown
+shows all discovered candidates with retry diagnostics; liveness does not imply a selectable route.
 
-Fresh manifest cache entries are reused; stale requests refresh synchronously.
-Forced Refresh bypasses TTL. Wildcard Refresh retries candidates but suppresses
-per-address errors. Use a specific address, logs and audit records to diagnose
-failures. See [cache semantics](../design-docs/resolver-cache.md).
+Selection requires unexpired verified source data and fresh ready broker health.
+It never serves a route beyond its hard freshness bounds, even when workers stall.
+Known fresh absence returns `NOT_FOUND`; an incomplete view returns `UNAVAILABLE`.
+Do not treat `registry_unavailable` as proof that no provider offers the workload.
+
+Metadata and health operations have five-second deadlines and separate worker
+budgets. Registry chain RPC attempts use one second, one retry and 100 ms backoff.
+The health HTTP timeout flag may shorten its five-second budget. Worker counts
+and the 100 ms scheduler tick remain fixed; manifest retry schedules are configurable. See
+[cache semantics](../design-docs/resolver-cache.md) for expiry and retry details.
+
+Explicit Resolve/Refresh can perform I/O outside cooldown; force bypasses TTL and
+backoff but never verification. During cooldown ordinary Resolve serves fresh cache
+or returns typed resolution_deferred without outbound I/O. Wildcard
+Refresh suppresses per-address errors. Use a specific address, logs and audit
+records to diagnose failures. ListOfferings is the supported cached capability
+catalog; partial/empty/uninitialized results carry explicit coverage rather than
+triggering per-address resolution. After restart, persisted classification/cooldowns and accepted inventory are
+restored before scheduling. Broker health must be fetched anew. Explicit Resolve may reuse source-matching
+cached publications within current validity bounds; health must still warm.
 
 Health RPC provider booleans reflect the last completed operation; unused providers are healthy, and unattempted required providers are not. The timestamp is the last actual successful serviceURI read.
 Standard gRPC health and metrics `/healthz` report liveness, not route readiness.
@@ -136,9 +159,9 @@ Audit events are separately queryable through GetAuditLog.
 
 ## Shutdown
 
-SIGINT/SIGTERM starts shutdown of listeners and chain seeder. The lifecycle
+SIGINT/SIGTERM starts shutdown of listeners, chain seeder and refresh workers. The lifecycle
 uses a 10-second drain timeout, though individual graceful-stop operations may
-block before that drain. BoltDB closes afterward. A second signal is not
+block before that drain. Refresh workers are cancelled and joined before BoltDB closes. A second signal is not
 special-cased. SIGHUP is not an overlay reload gesture; restart the process to
 load edited configuration.
 

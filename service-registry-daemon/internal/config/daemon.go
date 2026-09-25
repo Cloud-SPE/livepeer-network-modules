@@ -35,6 +35,7 @@ const (
 // runtime layer from CLI flags. Fields are immutable once built; a
 // overlay changes require a daemon restart.
 type Daemon struct {
+	Retry      RetryPolicy
 	Mode       Mode
 	SocketPath string
 	StorePath  string
@@ -97,6 +98,7 @@ type Daemon struct {
 // applied. Used as the base struct that flag parsing mutates.
 func DefaultDaemon() *Daemon {
 	return &Daemon{
+		Retry:                     DefaultRetryPolicy(),
 		SocketPath:                "/var/run/livepeer-service-registry.sock",
 		StorePath:                 "/var/lib/livepeer/registry-cache.db",
 		ChainID:                   42161,
@@ -142,6 +144,9 @@ func (d *Daemon) Validate() error {
 			"are unsigned, which is the reason to use a seed in the first place")
 	}
 	if d.Mode == ModeResolver {
+		if err := d.Retry.Validate(); err != nil {
+			return fmt.Errorf("config: retry: %w", err)
+		}
 		switch d.Discovery {
 		case DiscoveryChain, DiscoveryOverlayOnly:
 		default:

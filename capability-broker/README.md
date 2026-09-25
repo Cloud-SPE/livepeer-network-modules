@@ -218,12 +218,21 @@ and frozen per plan 0043 §3.4;
 disagreeing field named. Paid work is dispatched only to runners that are
 eligible for the offer it was sold under.
 
-The offer's `capacity.max_in_flight` is enforced before dispatch, per
-eligible runner — capacity is operator-owned, so a runner never declares
-its own. For long-lived remote-runner sessions, the capacity slot is held
-until session finalization. `capacity.queue_limit` is rendered for policy
-visibility and future queueing, but v1 dispatch currently fail-fasts when
-no eligible capacity is available.
+The offer's `capacity.max_in_flight` bounds concurrent work per eligible
+runner (host plus local capability), shared by offers using that runner.
+Zero means unlimited at the broker. Jobs hold a slot through the full unary,
+multipart or streaming response. Sessions acquire one before payment and runner
+creation; starting sessions count, and replay or refill does not take another.
+Session ownership survives restart, including migration of existing live records.
+A session frees its slot after runner termination or absence is durably confirmed;
+pending financial settlement continues separately. An unreachable runner or a
+lost create response does not establish that capacity is free.
+
+`capacity.queue_limit` is inactive: the broker has no waiting queue. With
+`max_in_flight: 10` and `queue_limit: 8`, at most ten exchanges/sessions occupy
+a runner; excess requests try another eligible runner, then receive `503
+capacity_exhausted` with `Livepeer-Backoff`. This broker-local limit is not a
+cross-broker physical resource lock; runners still enforce resource admission.
 
 **This binary contains zero capability-specific code.** All workload knowledge
 lives in the two protocol engines and the extractor implementations, both

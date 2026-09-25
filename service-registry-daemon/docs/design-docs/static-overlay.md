@@ -105,14 +105,15 @@ mode.
 
 ## Refresh and failure behavior
 
-Startup warms enabled entries best-effort. Failed coordinator fetches are
-retried by subsequent Select/SelectMany and Refresh calls. ListKnown lists
-cached candidates only. Manifest TTL refresh is synchronous on demand, not a
-background polling loop. Forced Refresh fetches immediately.
+Background workers warm enabled entries after listener startup and refresh before
+expiry. Failed coordinator fetches retry with bounded backoff. Select/SelectMany
+read cached verified snapshots only; cold/expired state returns unavailable.
+ListKnown lists cached candidates only. Explicit forced Refresh performs I/O.
 
 Source-aware cache entries prevent reuse when a configured pointer changes or
 is removed. Transport failure may use the same source's verified last-good
-publication within max-stale. Invalid publications do not use that fallback;
+publication within its hard freshness bounds for selection; explicit Resolve
+retains its diagnostic max-stale fallback. Invalid publications do not use that fallback;
 explicit manifest pointers never downgrade to legacy nodes. See
 [cache behavior](resolver-cache.md) and
 [manifest enforcement limits](../product-specs/manifest-contract.md).

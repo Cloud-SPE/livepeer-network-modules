@@ -567,17 +567,11 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 			"no backend group for "+capID+"/"+offID)
 		return
 	}
-	c, err := s.selectBackend(group)
+	c, release, err := s.reserveJobBackend(group)
 	if err != nil {
-		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted,
-			"backend selection: "+err.Error())
-		return
-	}
-	release, ok := s.reserveBackend(c)
-	if !ok {
 		w.Header().Set(livepeerheader.Backoff, "5")
 		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted,
-			"backend at capacity")
+			"backend selection: "+err.Error())
 		return
 	}
 	defer release()

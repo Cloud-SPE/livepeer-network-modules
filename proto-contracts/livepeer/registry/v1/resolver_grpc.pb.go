@@ -24,6 +24,7 @@ const (
 	Resolver_Select_FullMethodName           = "/livepeer.registry.v1.Resolver/Select"
 	Resolver_SelectMany_FullMethodName       = "/livepeer.registry.v1.Resolver/SelectMany"
 	Resolver_ListKnown_FullMethodName        = "/livepeer.registry.v1.Resolver/ListKnown"
+	Resolver_ListOfferings_FullMethodName    = "/livepeer.registry.v1.Resolver/ListOfferings"
 	Resolver_Refresh_FullMethodName          = "/livepeer.registry.v1.Resolver/Refresh"
 	Resolver_GetAuditLog_FullMethodName      = "/livepeer.registry.v1.Resolver/GetAuditLog"
 	Resolver_Health_FullMethodName           = "/livepeer.registry.v1.Resolver/Health"
@@ -37,6 +38,8 @@ type ResolverClient interface {
 	Select(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectResult, error)
 	SelectMany(ctx context.Context, in *SelectRequest, opts ...grpc.CallOption) (*SelectManyResult, error)
 	ListKnown(ctx context.Context, in *ListKnownRequest, opts ...grpc.CallOption) (*ListKnownResult, error)
+	// Snapshot-only discovery. Never resolves addresses or waits for refresh.
+	ListOfferings(ctx context.Context, in *ListOfferingsRequest, opts ...grpc.CallOption) (*ListOfferingsResult, error)
 	Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
 	GetAuditLog(ctx context.Context, in *GetAuditLogRequest, opts ...grpc.CallOption) (*AuditLogResult, error)
 	Health(ctx context.Context, in *emptypb.Empty, opts ...grpc.CallOption) (*HealthResult, error)
@@ -90,6 +93,16 @@ func (c *resolverClient) ListKnown(ctx context.Context, in *ListKnownRequest, op
 	return out, nil
 }
 
+func (c *resolverClient) ListOfferings(ctx context.Context, in *ListOfferingsRequest, opts ...grpc.CallOption) (*ListOfferingsResult, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ListOfferingsResult)
+	err := c.cc.Invoke(ctx, Resolver_ListOfferings_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *resolverClient) Refresh(ctx context.Context, in *RefreshRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(emptypb.Empty)
@@ -128,6 +141,8 @@ type ResolverServer interface {
 	Select(context.Context, *SelectRequest) (*SelectResult, error)
 	SelectMany(context.Context, *SelectRequest) (*SelectManyResult, error)
 	ListKnown(context.Context, *ListKnownRequest) (*ListKnownResult, error)
+	// Snapshot-only discovery. Never resolves addresses or waits for refresh.
+	ListOfferings(context.Context, *ListOfferingsRequest) (*ListOfferingsResult, error)
 	Refresh(context.Context, *RefreshRequest) (*emptypb.Empty, error)
 	GetAuditLog(context.Context, *GetAuditLogRequest) (*AuditLogResult, error)
 	Health(context.Context, *emptypb.Empty) (*HealthResult, error)
@@ -151,6 +166,9 @@ func (UnimplementedResolverServer) SelectMany(context.Context, *SelectRequest) (
 }
 func (UnimplementedResolverServer) ListKnown(context.Context, *ListKnownRequest) (*ListKnownResult, error) {
 	return nil, status.Error(codes.Unimplemented, "method ListKnown not implemented")
+}
+func (UnimplementedResolverServer) ListOfferings(context.Context, *ListOfferingsRequest) (*ListOfferingsResult, error) {
+	return nil, status.Error(codes.Unimplemented, "method ListOfferings not implemented")
 }
 func (UnimplementedResolverServer) Refresh(context.Context, *RefreshRequest) (*emptypb.Empty, error) {
 	return nil, status.Error(codes.Unimplemented, "method Refresh not implemented")
@@ -253,6 +271,24 @@ func _Resolver_ListKnown_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Resolver_ListOfferings_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListOfferingsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ResolverServer).ListOfferings(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Resolver_ListOfferings_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ResolverServer).ListOfferings(ctx, req.(*ListOfferingsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Resolver_Refresh_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(RefreshRequest)
 	if err := dec(in); err != nil {
@@ -329,6 +365,10 @@ var Resolver_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ListKnown",
 			Handler:    _Resolver_ListKnown_Handler,
+		},
+		{
+			MethodName: "ListOfferings",
+			Handler:    _Resolver_ListOfferings_Handler,
 		},
 		{
 			MethodName: "Refresh",

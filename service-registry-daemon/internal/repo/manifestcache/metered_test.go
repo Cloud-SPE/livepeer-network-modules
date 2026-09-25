@@ -85,3 +85,7 @@ func TestWithMetrics_NilRecorderReturnsInner(t *testing.T) {
 		t.Fatal("nil recorder should return the inner repo unchanged")
 	}
 }
+
+func (*fakeRecorder) ObserveDiscoveryRetry(_, _ string, _ time.Duration) {}
+func (*fakeRecorder) IncResolutionDeferred()                             {}
+func (*fakeRecorder) SetNextRetry(_ string, _ time.Time)                 {}

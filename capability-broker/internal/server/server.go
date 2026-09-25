@@ -76,6 +76,7 @@ type Server struct {
 	extractors           *extractors.Registry
 	backend              backend.Forwarder
 	backendInFlight      map[string]int
+	capacityOwners       map[string]string // durable session ownership ref -> runner
 	backendCapacityUntil map[string]time.Time
 	secrets              backend.SecretResolver
 	workAccounting       *workledger.Client

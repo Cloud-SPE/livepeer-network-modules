@@ -393,7 +393,7 @@ The resolver is where Layer 1 and Layer 2 get composed for routing:
 
 1. verify and cache signed manifests from chain `serviceURI` or configured
    coordinator `manifest_url`
-2. maintain a short-TTL cache of broker live health
+2. maintain a short-TTL cache of broker live health through bounded background workers
 3. return only tuples that pass both checks:
    - present in a valid signed manifest
    - currently `ready` in broker live health
@@ -401,6 +401,12 @@ The resolver is where Layer 1 and Layer 2 get composed for routing:
 If live-health data is stale past policy TTL, the resolver should treat
 that route as unavailable for hot-path selection rather than silently
 assuming green.
+
+Selection reads an immutable verified route/health snapshot with zero outbound
+network calls. Publication/source deadlines and broker health expiry are checked
+at read time; refresh stalls never extend eligibility. Cold or incomplete state
+without a matching route returns `UNAVAILABLE`, while a fresh known absence
+returns `NOT_FOUND`. See [registry cache semantics](../../service-registry-daemon/docs/design-docs/resolver-cache.md).
 
 ### Gateway responsibilities
 

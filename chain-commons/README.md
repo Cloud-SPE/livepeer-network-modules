@@ -91,3 +91,16 @@ and [`../AGENTS.md`](../AGENTS.md).
 ## License
 
 MIT.
+
+## RPC deadlines and failover
+
+Every RPC wrapper receives the derived per-attempt timeout context, including
+contract calls, logs, block/receipt reads and transaction submission. Each attempt
+is bounded by the earlier of `RPCPolicy.CallTimeout` and the caller deadline.
+A timed-out attempt may retry and fail over under the configured policy; backoff
+uses the caller context. Caller cancellation stops attempts, backoff and failover
+without counting as an endpoint failure. Permanent errors do not retry or fail over.
+
+The timeout is per attempt, not a total operation budget. Callers should supply
+a total deadline covering their acceptable retries and endpoints. The library
+keeps its existing defaults; the registry sets a shorter policy for discovery.

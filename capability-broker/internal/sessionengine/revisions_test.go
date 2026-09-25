@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math/big"
 	"testing"
+	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -29,9 +30,11 @@ func (p *revisionPayment) AdmitAuthorization(ctx context.Context, req payment.Ad
 			p.accepted = true
 			p.mutations++
 		}
+		result, err := p.fakePayment.AdmitAuthorization(ctx, req)
 		if p.unavailable {
 			return nil, errors.New("accepted but response lost")
 		}
+		return result, err
 	}
 	return p.fakePayment.AdmitAuthorization(ctx, req)
 }
@@ -112,6 +115,7 @@ func TestRevisionLostAdmissionResponseRestartsWithoutSettlingPredecessor(t *test
 		t.Fatalf("unresolved revision discarded: %+v", rec)
 	}
 	p.unavailable = false
+	h.advance(2 * time.Second)
 	h.engine.Recover(ctx)
 	rec, _ = h.store.Get(session.SessionID)
 	if rec.RevisionIntent != nil || rec.AccountAuthorizationID != "auth-revised" || rec.PaymentClosed || rec.Terminal() {

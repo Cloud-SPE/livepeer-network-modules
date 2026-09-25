@@ -89,8 +89,8 @@ type MultiRPC struct {
 	logger    logger.Logger
 	metrics   metrics.Recorder
 
-	stop  chan struct{}
-	wg    sync.WaitGroup
+	stop chan struct{}
+	wg   sync.WaitGroup
 }
 
 // Open dials each configured URL and returns a MultiRPC. Returns an error
@@ -202,10 +202,13 @@ func (m *MultiRPC) Endpoints() []rpc.EndpointInfo {
 
 // call routes fn through the multi-URL endpoints with retry + circuit
 // breaker semantics. fn is invoked with the active *ethclient.Client.
-func (m *MultiRPC) call(ctx context.Context, method string, fn func(*ethclient.Client) error) error {
+func (m *MultiRPC) call(ctx context.Context, method string, fn func(context.Context, *ethclient.Client) error) error {
 	allOpen := true
 	var lastErr error
 	for _, ep := range m.endpoints {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		if circuitState(ep.state.Load()) == circuitOpen {
 			continue
 		}
@@ -214,6 +217,9 @@ func (m *MultiRPC) call(ctx context.Context, method string, fn func(*ethclient.C
 		err := m.callWithRetry(ctx, ep, method, fn)
 		if err == nil {
 			return nil
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
 		}
 		lastErr = err
 		// Permanent errors: surface immediately, do not failover.
@@ -242,14 +248,21 @@ func (m *MultiRPC) call(ctx context.Context, method string, fn func(*ethclient.C
 
 // callWithRetry runs fn against a single endpoint with exponential-backoff
 // retry on transient errors, up to MaxRetries.
-func (m *MultiRPC) callWithRetry(ctx context.Context, ep *endpoint, method string, fn func(*ethclient.Client) error) error {
+func (m *MultiRPC) callWithRetry(ctx context.Context, ep *endpoint, method string, fn func(context.Context, *ethclient.Client) error) error {
 	var lastErr error
 	for attempt := 0; attempt <= m.policy.MaxRetries; attempt++ {
 		// Per-call deadline only bounds fn; sleep uses the outer ctx so a
 		// cancelled per-call ctx doesn't masquerade as success.
-		_, cancel := context.WithTimeout(ctx, m.policy.CallTimeout)
-		err := fn(ep.client)
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, m.policy.CallTimeout)
+		err := fn(attemptCtx, ep.client)
 		cancel()
+		// Caller cancellation is not an endpoint fault.
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 
 		m.recordAttempt(ep, method, err)
 
@@ -410,7 +423,7 @@ func (m *MultiRPC) metricsCounter(name string, labels metrics.Labels) {
 
 func (m *MultiRPC) CallContract(ctx context.Context, msg ethereum.CallMsg, blockNumber *big.Int) ([]byte, error) {
 	var out []byte
-	err := m.call(ctx, "CallContract", func(c *ethclient.Client) error {
+	err := m.call(ctx, "CallContract", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.CallContract(ctx, msg, blockNumber)
 		return err
@@ -420,7 +433,7 @@ func (m *MultiRPC) CallContract(ctx context.Context, msg ethereum.CallMsg, block
 
 func (m *MultiRPC) PendingCallContract(ctx context.Context, msg ethereum.CallMsg) ([]byte, error) {
 	var out []byte
-	err := m.call(ctx, "PendingCallContract", func(c *ethclient.Client) error {
+	err := m.call(ctx, "PendingCallContract", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.PendingCallContract(ctx, msg)
 		return err
@@ -430,7 +443,7 @@ func (m *MultiRPC) PendingCallContract(ctx context.Context, msg ethereum.CallMsg
 
 func (m *MultiRPC) CodeAt(ctx context.Context, addr chain.Address, blockNumber *big.Int) ([]byte, error) {
 	var out []byte
-	err := m.call(ctx, "CodeAt", func(c *ethclient.Client) error {
+	err := m.call(ctx, "CodeAt", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.CodeAt(ctx, addr, blockNumber)
 		return err
@@ -440,7 +453,7 @@ func (m *MultiRPC) CodeAt(ctx context.Context, addr chain.Address, blockNumber *
 
 func (m *MultiRPC) EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint64, error) {
 	var out uint64
-	err := m.call(ctx, "EstimateGas", func(c *ethclient.Client) error {
+	err := m.call(ctx, "EstimateGas", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.EstimateGas(ctx, msg)
 		return err
@@ -449,7 +462,7 @@ func (m *MultiRPC) EstimateGas(ctx context.Context, msg ethereum.CallMsg) (uint6
 }
 
 func (m *MultiRPC) SendTransaction(ctx context.Context, tx *types.Transaction) error {
-	return m.call(ctx, "SendTransaction", func(c *ethclient.Client) error {
+	return m.call(ctx, "SendTransaction", func(ctx context.Context, c *ethclient.Client) error {
 		return c.SendTransaction(ctx, tx)
 	})
 }
@@ -459,7 +472,7 @@ func (m *MultiRPC) TransactionByHash(ctx context.Context, hash chain.TxHash) (*t
 		tx        *types.Transaction
 		isPending bool
 	)
-	err := m.call(ctx, "TransactionByHash", func(c *ethclient.Client) error {
+	err := m.call(ctx, "TransactionByHash", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		tx, isPending, err = c.TransactionByHash(ctx, hash)
 		return err
@@ -469,7 +482,7 @@ func (m *MultiRPC) TransactionByHash(ctx context.Context, hash chain.TxHash) (*t
 
 func (m *MultiRPC) TransactionReceipt(ctx context.Context, hash chain.TxHash) (*types.Receipt, error) {
 	var out *types.Receipt
-	err := m.call(ctx, "TransactionReceipt", func(c *ethclient.Client) error {
+	err := m.call(ctx, "TransactionReceipt", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.TransactionReceipt(ctx, hash)
 		return err
@@ -479,7 +492,7 @@ func (m *MultiRPC) TransactionReceipt(ctx context.Context, hash chain.TxHash) (*
 
 func (m *MultiRPC) BlockByNumber(ctx context.Context, number *big.Int) (*types.Block, error) {
 	var out *types.Block
-	err := m.call(ctx, "BlockByNumber", func(c *ethclient.Client) error {
+	err := m.call(ctx, "BlockByNumber", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.BlockByNumber(ctx, number)
 		return err
@@ -489,7 +502,7 @@ func (m *MultiRPC) BlockByNumber(ctx context.Context, number *big.Int) (*types.B
 
 func (m *MultiRPC) HeaderByNumber(ctx context.Context, number *big.Int) (*types.Header, error) {
 	var out *types.Header
-	err := m.call(ctx, "HeaderByNumber", func(c *ethclient.Client) error {
+	err := m.call(ctx, "HeaderByNumber", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.HeaderByNumber(ctx, number)
 		return err
@@ -499,7 +512,7 @@ func (m *MultiRPC) HeaderByNumber(ctx context.Context, number *big.Int) (*types.
 
 func (m *MultiRPC) FilterLogs(ctx context.Context, query ethereum.FilterQuery) ([]types.Log, error) {
 	var out []types.Log
-	err := m.call(ctx, "FilterLogs", func(c *ethclient.Client) error {
+	err := m.call(ctx, "FilterLogs", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.FilterLogs(ctx, query)
 		return err
@@ -509,7 +522,7 @@ func (m *MultiRPC) FilterLogs(ctx context.Context, query ethereum.FilterQuery) (
 
 func (m *MultiRPC) PendingNonceAt(ctx context.Context, addr chain.Address) (uint64, error) {
 	var out uint64
-	err := m.call(ctx, "PendingNonceAt", func(c *ethclient.Client) error {
+	err := m.call(ctx, "PendingNonceAt", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.PendingNonceAt(ctx, addr)
 		return err
@@ -519,7 +532,7 @@ func (m *MultiRPC) PendingNonceAt(ctx context.Context, addr chain.Address) (uint
 
 func (m *MultiRPC) BalanceAt(ctx context.Context, addr chain.Address, blockNumber *big.Int) (*big.Int, error) {
 	var out *big.Int
-	err := m.call(ctx, "BalanceAt", func(c *ethclient.Client) error {
+	err := m.call(ctx, "BalanceAt", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.BalanceAt(ctx, addr, blockNumber)
 		return err
@@ -529,7 +542,7 @@ func (m *MultiRPC) BalanceAt(ctx context.Context, addr chain.Address, blockNumbe
 
 func (m *MultiRPC) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
 	var out *big.Int
-	err := m.call(ctx, "SuggestGasPrice", func(c *ethclient.Client) error {
+	err := m.call(ctx, "SuggestGasPrice", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.SuggestGasPrice(ctx)
 		return err
@@ -539,7 +552,7 @@ func (m *MultiRPC) SuggestGasPrice(ctx context.Context) (*big.Int, error) {
 
 func (m *MultiRPC) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 	var out *big.Int
-	err := m.call(ctx, "SuggestGasTipCap", func(c *ethclient.Client) error {
+	err := m.call(ctx, "SuggestGasTipCap", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.SuggestGasTipCap(ctx)
 		return err
@@ -549,7 +562,7 @@ func (m *MultiRPC) SuggestGasTipCap(ctx context.Context) (*big.Int, error) {
 
 func (m *MultiRPC) ChainID(ctx context.Context) (chain.ChainID, error) {
 	var out *big.Int
-	err := m.call(ctx, "ChainID", func(c *ethclient.Client) error {
+	err := m.call(ctx, "ChainID", func(ctx context.Context, c *ethclient.Client) error {
 		var err error
 		out, err = c.ChainID(ctx)
 		return err

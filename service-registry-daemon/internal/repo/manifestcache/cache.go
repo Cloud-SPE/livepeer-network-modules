@@ -95,6 +95,9 @@ type Entry struct {
 
 // Repo is the cache repository interface used by service/.
 type Repo interface {
+	ListDiscovery() ([]types.EthAddress, error)
+	GetDiscovery(types.EthAddress) (types.DiscoveryStatus, bool, error)
+	PutDiscovery(types.EthAddress, types.DiscoveryStatus) error
 	Get(addr types.EthAddress) (*Entry, bool, error)
 	Put(e *Entry) error
 	Delete(addr types.EthAddress) error
@@ -240,7 +243,7 @@ func (h publicationMark) check(e *Entry) error {
 		}
 	}
 	if conflict {
-		return types.NewValidation(types.ErrParse, "manifest.publication_seq", "publication rollback or conflicting payload at an accepted sequence")
+		return types.NewValidation(errors.Join(types.ErrParse, types.ErrPublicationReplay), "manifest.publication_seq", "publication rollback or conflicting payload at an accepted sequence")
 	}
 	return nil
 }

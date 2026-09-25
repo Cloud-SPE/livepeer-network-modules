@@ -70,9 +70,10 @@ possession for this exact authorization.
 
 Successful admission:
 
-1. verifies the envelope and optional caller proof;
+1. verifies the envelope and optional caller proof, deduplicates the request,
+   and durably acquires one runner-capacity slot;
 2. atomically funds any shortfall and reserves bounded runway;
-3. acquires capacity and creates the runner session;
+3. creates the runner session using the reserved capacity;
 4. durably records authorization, quote binding, usage watermark, credential,
    runner binding, and recovery obligations;
 5. returns `session_id`, `gateway_session_id`, `work_id`, session credential,
@@ -83,8 +84,10 @@ the authorization from step 2 has already been admitted. The broker MUST
 settle it at zero cumulative units, release its reservation, persist signed
 terminal settlement evidence, and return public `503 capacity_exhausted` with
 `Livepeer-Backoff`. A retry replays that terminal outcome and cannot create a
-session. A broker that rejects capacity before step 2 instead records signed
-`NOT_ADMITTED` evidence; one request can never acquire both records.
+session. A broker that rejects capacity before step 2 instead supports signed
+`NOT_ADMITTED` evidence through the scoped non-admission query; one request can
+never acquire both records. Capacity refusal is `503 capacity_exhausted` with
+`Livepeer-Backoff`; a concurrency limit does not imply a request queue.
 
 `work_id` equals the active `authorization_id`; it is correlation state, not a
 balance account. The stable economic owner is the payer-payee account.
@@ -124,12 +127,142 @@ Ticket-session rotation and `Livepeer-Rebind-From` are not part of this
 contract. Funding generations are internal to the stable account and cannot
 change workload identity.
 
+Successor limits are cumulative, including usage billed under the predecessor.
+The broker MUST bound the requested reservation by the successor's remaining
+debit allowance after reconciling receiver billing and pending usage. HTTP and
+control WebSocket revisions follow the same rule. For 180 authorized units,
+74 billed units and a requested runway of 120 at 10^12 wei/unit, reserve
+106 × 10^12 wei. A reservation is not an additional charge.
+
+The broker persists revision identity, exact authorization/payment bytes,
+fingerprint, derived reservation and promised lease before admission. Recovery
+may correct an oversized derived reservation while preserving those identities
+and bytes. An already-admitted successor wins over a replayed reservation;
+recovery must adopt the receiver's actual result and inherited billing.
+Authority replacement and the replayable response commit atomically.
+
+On winddown or definitive refusal, `CancelAuthorizationAdmission` on the
+receiver's trusted socket atomically fences an absent admission or returns the
+existing authorization unchanged, checked against SHA-256 of its signed bytes.
+A `NotFound` lookup alone cannot authorize abandoning an in-flight admission.
+A durable cancellation or expired-unused successor produces a replayable
+`refill_refused` result and retains the predecessor. An accepted successor must
+be reconciled and settled as the current authority. Receiver outages retain
+the intent and financial obligations; background retry schedules survive
+restart. Signed terminal settlement is withheld until financial closure is
+confirmed. Usage and billed totals never reset at a revision boundary.
+`GetSpendAuthorization` reports a fenced identity as
+`SPEND_AUTHORIZATION_CANCELED_UNUSED`, distinct from an unknown authorization;
+regional drain checks treat that state as terminal with no usage.
+
+Expected receiver admission refusals use gRPC `FailedPrecondition` with
+`google.rpc.ErrorInfo.domain = "payments.livepeer.org"`. Defined reasons are
+`RESERVATION_EXCEEDS_REMAINING_DEBIT`, `REVISION_PREDECESSOR_INVALID`,
+`REVISION_LIMITS_BELOW_USAGE`, `AUTHORIZATION_EXPIRED_UNUSED`,
+`AUTHORIZATION_ADMISSION_CANCELED`, `AUTHORIZATION_NOT_ACTIVE`,
+`AUTHORIZATION_NOT_ADMITTED`, `AUTHORIZATION_STATE_INVALID`, and
+`INSUFFICIENT_WHOLESALE_CREDIT`. `AUTHORIZATION_NOT_ACTIVE` is retryable;
+the broker reconciles/fences other refusals before discarding an intent.
+An `Internal` error or transport timeout is not proof of non-admission.
+
+#### Revision decisions and evidence
+
+After a revision intent is persisted, HTTP responses, control-WebSocket acks or
+errors, and session status expose a `revision` object. Its `outcome` is `pending`,
+`admitted`, or `refused`. It includes `reason`, `stage`, `receiver_code`, broker
+`session_id`, `gateway_session_id`, `request_id`, `authorization_id`,
+`predecessor_authorization_id`, `revision`, `observed_at`, and, while deferred,
+`next_retry_at`. Optional decimal-wei diagnostics are `requested_reservation_wei`,
+`reservation_wei`, `receiver_billed_wei`, and `max_debit_wei`; unit diagnostics are
+`receiver_actual_units` and `max_total_units`. These are observations, not bills.
+Preflight validation errors have no durable receiver decision or signed proof.
+
+Unresolved admission returns HTTP 503, `Livepeer-Error: revision_pending`, and
+`Retry-After: 1`; its WebSocket error has `code: revision_pending`. Definitive
+refusal returns HTTP 409 / WebSocket `refill_refused`. Both errors contain
+`revision`. Clients retry identical bytes and request ID or query the outcome;
+they MUST NOT infer non-admission from the error code alone. Successful replies
+carry the admitted decision. A completed retry returns the original decision.
+Session status exposes the most recent decision, not a history.
+
+`stage` identifies `admission`, `predecessor_lookup`, `reservation`,
+`reconciliation`, or `lifecycle`. Receiver validation also supplies bounded
+`google.rpc.ErrorInfo` reasons for malformed/signature/scope/time/price/limit
+errors, funding refusal and frozen source admission. The broker understands an
+explicit allowlist; unknown receiver reasons remain pending with
+`ADMISSION_OUTCOME_UNKNOWN`, and transport failures use `RECEIVER_UNAVAILABLE`.
+Neither gRPC code alone nor internal error text authorizes cancellation. A known
+refusal's original cause is saved before cancellation and survives cancellation
+response loss and restart. An admission already accepted by the receiver wins
+even if its response was lost; the final outcome is then `admitted`.
+Its reason may retain the earlier failure for diagnosis; `outcome` is the
+authority decision, and reason is never an accounting instruction.
+
+`GET /v1/session/{id}/revisions/{request_id}` is an independent evidence read.
+`id` is the broker session ID or unique retained gateway session ID; broker IDs
+take precedence. Like settlement lookup, possession of the unguessable identifier
+allows reading evidence without a gateway credential. Consumers verify the
+delegated broker signature and their own issued scope.
+
+| Result | HTTP | Body / header |
+|---|---|---|
+| Pending | 202 | `outcome: pending`, `revision`, `Retry-After: 1`; no signed evidence |
+| Admitted or refused with proof | 200 | `revision`, `revision_evidence`; identical base64 envelope in `Livepeer-Revision-Evidence` |
+| Historical outcome without retained proof | 409 | `revision_evidence_unavailable`; no invented proof |
+| Signing/store temporarily unavailable | 503 | `revision_evidence_unavailable` or `revision_pending` |
+| Unknown or evicted outcome | 404 | No assertion of non-admission |
+
+The payload is [`SessionRevisionRecord`](../proto/livepeer/payments/v1/session_revision.proto),
+using the settlement JCS/EIP-191 envelope and delegated settlement key. Its
+`evidence_domain` is `livepeer-session-revision/v1`; `protocol` is
+`paid-session/v1`. It binds settlement domain, broker URI, broker and gateway
+session IDs, request ID, payer/payee, predecessor/successor IDs, revision,
+SHA-256 of the **exact signed authorization wire bytes**, accepted quote, caps,
+outcome, basis and observation time. Consumers MUST compare these with their own
+grant and verify the signature; the unsigned `revision` diagnostics are not proof.
+Claimed fields from an invalid authorization do not attest its validity.
+
+Only `ADMITTED` or `NOT_ADMITTED` is signed. `NOT_ADMITTED` requires
+`receiver_fenced` or `expired_unused` evidence. It applies only to that successor,
+not the whole session. Persisted final envelopes replay verbatim, including after
+restart or signing-key rotation, while retained. Generic non-admission lookup for
+a known revision returns `409 revision_evidence_required`, including after
+outcome eviction. Minimal revision request tombstones outlive outcome retention.
+Upgraded brokers refuse generic paid-session assertions predating their revision
+coverage horizon (`coverage_gap`), since already-evicted old refills cannot be
+reconstructed safely.
+
+#### Meaning of canceled_unused
+
+`SPEND_AUTHORIZATION_CANCELED_UNUSED` is a durable receiver fence, committed in
+the same ledger transaction boundary used by admission. It survives restart and
+has no reversal or expiry operation. Future admission of the same payer, wholesale account, and
+authorization ID is rejected, even with different bytes; conflicting bytes also
+fail the fingerprint check. An existing admitted authorization is returned
+unchanged instead of being canceled. The fence records no usage and does not
+refund or settle any predecessor usage.
+
+The trusted receiver RPC checks the receiver's durable `settlement_domain_id`,
+uses the configured payee, and keys the fence by payer, required `wholesale_account_id`, and authorization ID with
+SHA-256 of the signed authorization. The broker's signed revision evidence binds
+those identities (including `wholesale_account_id`), domain, and hash for LOC; a bare status enum over the receiver
+socket is not a signed authorization-specific envelope. This guarantee assumes
+the same durable ledger is retained; destructive rollback to a pre-fence backup
+does not preserve it.
+
+The [revision evidence fixture](../conformance/fixtures/session-revision-evidence.json)
+contains public test-key signed refusal and terminal cap-overshoot envelopes,
+expected repeated-close bytes, and unsigned pending semantics. It is synthetic
+contract data, not a spendable authorization or production evidence.
+
 ### 3.4 End
 
 `POST /v1/session/{session_id}/end` requires the session credential. It is
-idempotent. The broker terminates the runner, settles the active authorization
-at actual cumulative usage, releases unused reservation and capacity, writes a
-terminal state, and emits signed settlement evidence.
+idempotent. The broker terminates the runner and durably records confirmation
+before releasing compute capacity. It settles the active authorization at actual
+cumulative usage, releases unused financial reservation, writes a terminal state,
+and emits signed settlement evidence. Financial reconciliation can remain pending
+after compute capacity is released.
 
 ### 3.5 Settlement lookup
 
@@ -143,6 +276,29 @@ gateway identifiers, authorization id, cumulative actual/billed units, billed,
 reserved, released, and account-funding values, account version, terminal
 state/reason, and output-health details when present.
 
+`settlement_seq` MUST be positive and monotonic within the broker session, and
+MUST NOT reset on an authorization revision. It is independent of the receiver
+authorization's usage/settlement sequence. Brokers atomically freeze the terminal
+payload and next session sequence with the terminal state before publishing it;
+repeated lookup or close returns the same sequence, timestamp, payload and signed
+envelope, including after restart. A pre-fix terminal record missing a frozen
+payload is upgraded once, using the next broker sequence, never a receiver
+sequence. LOC treats an exact duplicate accepted terminal envelope as an
+idempotent close; conflicting evidence at the same sequence remains a replay
+violation. Sequence zero remains invalid.
+
+`claimed_units` records runner-observed work. `debited_units`, `actual_units` and
+`billed_units` record the receiver-confirmed billable quantity. A coarse usage
+report can cross an authorization cap: claimed 124, all three billed quantities
+120, and `termination_reason: authorization_exhausted` is an intended bounded
+outcome. The broker reports `claim_debit_gap: true` and
+`claim_debit_gap_reason: authorization_cap`. Excess claimed work is seller risk;
+it does not increase payer liability. LOC retains signature, identity, replay,
+price, cap and cumulative-accounting checks and bills only the verified 120
+(120 × 10^12 wei at 10^12 wei/unit). Other gaps are labeled
+`unreconciled_claim` and require investigation; a diagnostic label alone never
+proves correct accounting.
+
 ## 4. Runner descriptor and grants
 
 The runner creates the workload only after admission. Its descriptor schema is
@@ -151,6 +307,32 @@ and a bounded payload size. The broker exposes only the schema-defined public
 projection. Grant secrets are delivered once on the successful open response,
 may be replayed only while the original open remains replayable, and are erased
 on winddown. Restarts MUST NOT mint replacement grants.
+
+### 4.1 Create reconciliation
+
+A session runner MAY advertise `paths.reconcile` in its attach document. This
+optional authenticated broker control endpoint accepts POST
+`{"session_id":"<broker-session-id>"}`. Only HTTP 200 with a matching `session_id`
+and one of these outcomes establishes a result:
+
+- `{"session_id":"…","outcome":"created","runner_session_id":"…"}` identifies
+  the original creation, active or terminal. The broker terminates this identity
+  and durably records confirmation before freeing compute.
+- `{"session_id":"…","outcome":"fenced"}` confirms no session was created and
+  that future creates for this broker ID are durably refused, including requests
+  already delayed in transport. `runner_session_id` MUST be absent or empty.
+
+Reconciliation MUST serialize with create through completion of runtime startup.
+The absence fence MUST persist before the response, survive process restart, and
+be checked atomically by create. A runner advertising this contract MUST make
+identical creates idempotent, reject changed content under the same broker ID,
+and prevent replay from restarting terminal work. A definitive capacity refusal
+must likewise prevent that create from later starting work. Transport errors,
+bare 404s, mismatched identities and unknown outcomes are not absence evidence.
+Runners MUST retain identities/fences for as long as delayed retries are possible;
+the reference live runner retains them without expiry. Reconciliation returns no
+grants, callback tokens or private descriptor material. The endpoint uses the
+same broker authentication and attached-runner routing as create and terminate.
 
 ## 5. Events and metering
 
@@ -228,14 +410,48 @@ gateway-initiated frame receives an ack or stable error frame.
 Nonterminal records persist the active authorization id and caps, payer, quote
 reference, usage/billing/event watermarks, session and runner bindings,
 credentials in sealed/hashed form, output health, and settlement obligations.
-Open reservations persist enough state to undo runner creation and release an
-authorization after a crash.
+Before initial admission, the broker MUST durably seal the exact signed authority
+and its request/session/quote bindings. An ambiguous RPC or failed success write
+MUST retain that intent. Recovery atomically fences unused admission or adopts
+receiver-confirmed admission; it MUST NOT infer non-admission from a lookup miss,
+repeat funding, or reset cumulative billing. An accepted failed open follows
+normal winddown and signed terminal publication. Canceled opens retain a replay
+guard and allow only scope-matching non-admission evidence. Historical intents
+missing recovery authority remain unresolved, rather than asserting zero use.
+
+`GET /v1/exchange/{request_id}` also covers session opens: `IN_FLIGHT` (202) during
+open recovery, `ACCOUNTING_PENDING` (202) during winddown, `ADMISSION_REJECTED`
+(200) for fenced unused authority before signed non-admission is requested,
+`NOT_ADMITTED` (200) with that evidence, and `SETTLED` (200) with a signed terminal
+settlement. Session responses include `session_id` when one has been committed.
+No pending state is refund or zero-use evidence.
+
+Open reservations persist capacity ownership and runner-create intent before
+external effects. Starting and live sessions count toward the local limit. Replay,
+refill and control reconnects MUST NOT acquire a second slot. Before serving after
+restart the broker reconstructs occupancy, including sessions created before
+capacity tracking existed. Reducing the limit does not erase existing occupancy.
+
+Known abandoned runner sessions are terminated before capacity is released.
+Unknown create outcomes, transport failure or runner disconnection MUST NOT be
+interpreted as proof of absence. Without the §4.1 create-reconciliation contract,
+a lost create response retains the opening reservation and capacity until the
+runner outcome can be established. Recovery MUST NOT undo an opening request
+that is still executing. Slot release is idempotent and follows durable evidence
+of runner termination or absence; settlement obligations remain independent.
+The [capacity fixture](../conformance/fixtures/capacity-ownership.json) records
+concurrent-open refusal and occupancy expectations.
 
 On restart the broker verifies that the runner session and active authorization
 still exist. If both survive, processing resumes from durable watermarks. If
-the authorization is absent or unverifiable, the broker marks the payment
-obligation unavailable, terminates the runner, releases capacity, and reaches
-`recovery_failed`; it MUST NOT keep serving unbillable work.
+the authorization is absent or unverifiable, the broker terminates the runner
+and records `recovery_failed`; it MUST NOT keep serving unbillable work. Missing
+receiver state is not evidence of settlement: the session remains
+`winding_down`, retains its financial obligations (and capacity while runner
+shutdown is unconfirmed), and withholds a
+signed terminal result until the receiver ledger has been reconciled. A lost
+settlement response is recovered by replaying its receiver-confirmed cumulative
+units and sequence, not by fabricating closure or resetting the bill.
 
 This release is a hard cut. Before deployment, operators MUST stop admission,
 drain every payment-only nonterminal session and paid open reservation, and

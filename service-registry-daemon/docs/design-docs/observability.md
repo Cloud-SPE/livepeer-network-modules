@@ -1,7 +1,7 @@
 ---
 title: Observability — Prometheus metrics catalog
 status: verified
-last-reviewed: 2026-09-14
+last-reviewed: 2026-09-24
 ---
 
 # Observability — Prometheus metrics catalog
@@ -53,7 +53,7 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 |---|---|---|---|
 | `livepeer_registry_resolutions_total` | Counter | `mode`, `freshness` | Resolve volume + how often we're returning fresh data. |
 | `livepeer_registry_resolve_duration_seconds` | Histogram (default buckets) | `mode`, `freshness` | End-to-end resolve latency per `(mode, freshness)`. |
-| `livepeer_registry_legacy_fallbacks_total` | Counter | `reason` | "How many orchestrators are still legacy?" trend. |
+| `livepeer_registry_legacy_fallbacks_total` | Counter | `reason` | Diagnostic legacy fallbacks; not evidence of incompatible manifests. |
 | `livepeer_registry_overlay_dropped_nodes_total` | Counter | `reason` | Visibility into nodes the operator overlay rejected. |
 | `livepeer_registry_live_health_decisions_total` | Counter | `reason` | Layer 2 live-health route decisions made before a route reaches a gateway (from the worker's `/registry/health`). |
 
@@ -63,6 +63,21 @@ The daemon also enforces a hard cardinality cap (`--metrics-max-series-per-metri
 - `freshness`: `fresh` `stale_recoverable` `stale_failing`
 - `legacy_fallbacks_total reason`: `manifest_unavailable` `manifest_too_large` `parse_error` `signature_mismatch` `other`
 - `overlay_dropped_nodes_total reason`: `signature_policy` `disabled` `tier_filter`
+
+## Discovery retries
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `livepeer_registry_discovery_retries_total` | Counter | class, reason | Failed discovery attempts classified for retry |
+| `livepeer_registry_discovery_retry_delay_seconds` | Histogram | class | Sampled delay after jitter, through the daily bound |
+| `livepeer_registry_resolution_deferred_total` | Counter | — | Ordinary lookups returning deferred without provider I/O |
+| `livepeer_registry_discovery_next_retry_timestamp_seconds` | Gauge | class | Earliest failed-address retry in the current scope; zero if none |
+
+Classes are `incompatible`, `compatible`, `unknown`, `rejected`. Reasons are the
+lowercase values of DiscoveryFailureReason in the canonical registry protobuf.
+Metrics never use addresses/URLs as labels. Per-address compatibility, availability,
+consecutive failures, last verification and exact next retry time are exposed by
+ListKnown.discovery_status and RegistryResolutionDetail.
 
 ## Manifest pipeline
 

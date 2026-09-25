@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/observability"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
@@ -30,8 +31,14 @@ func (s *Server) initSessionEngine() error {
 		_ = store.Close()
 		return err
 	}
+	if err := s.restoreSessionCapacity(store); err != nil {
+		_ = store.Close()
+		return fmt.Errorf("restore session capacity: %w", err)
+	}
 	s.sessionWS = newSessionWSHub()
 	engine, err := sessionengine.New(sessionengine.Config{
+		AcquireCapacity: s.acquireSessionCapacity,
+		ReleaseCapacity: s.releaseSessionCapacity,
 		BindWork: func(workID, requestID string, spec *sessionengine.OfferingSpec) error {
 			if s.workAccounting == nil {
 				return nil
@@ -55,6 +62,7 @@ func (s *Server) initSessionEngine() error {
 		},
 		Callback:   sessionengine.CallbackConfig{BaseURL: s.cfg.CallbackBaseURL()},
 		OnWinddown: s.onSessionWinddown,
+		OnRevision: observability.RecordSessionRevision,
 	})
 	if err != nil {
 		_ = store.Close()

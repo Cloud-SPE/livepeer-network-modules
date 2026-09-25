@@ -18,6 +18,9 @@ import (
 // observability.md. New emissions add a method here and wire it in
 // every implementation.
 type Recorder interface {
+	ObserveDiscoveryRetry(class, reason string, delay time.Duration)
+	IncResolutionDeferred()
+	SetNextRetry(class string, at time.Time)
 	// ----- gRPC -----
 
 	// IncGRPCRequest counts one completed gRPC request. registryCode

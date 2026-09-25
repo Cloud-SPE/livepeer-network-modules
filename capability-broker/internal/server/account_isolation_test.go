@@ -18,7 +18,7 @@ func TestAccountHTTPSeparatesSameWalletReservations(t *testing.T) {
 	m := payment.NewMock()
 	payer, payee := bytes.Repeat([]byte{1}, 20), bytes.Repeat([]byte{2}, 20)
 	wire, err := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{
-		WholesaleAccountId: "loc-prod", Payer: payer, Payee: payee, AuthorizationId: "loc-request",
+		MaxDebitWei: &pb.BigUInt{Value: big.NewInt(100).Bytes()}, WholesaleAccountId: "loc-prod", Payer: payer, Payee: payee, AuthorizationId: "loc-request",
 	}})
 	if err != nil {
 		t.Fatal(err)

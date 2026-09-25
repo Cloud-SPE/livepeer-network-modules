@@ -169,7 +169,7 @@ func TestManifestOverlay_CandidatesRetryFailedStartup(t *testing.T) {
 		t.Fatalf("lost configured discovery after failure: %v %v", addrs, err)
 	}
 	publishOverlayFixture(t, f, "10")
-	if _, err := f.svc.ResolveByAddress(context.Background(), Request{Address: addrs[0]}); err != nil {
+	if _, err := f.svc.ResolveByAddress(context.Background(), Request{Address: addrs[0], ForceRefresh: true}); err != nil {
 		t.Fatal(err)
 	}
 	addrs, err = f.svc.CandidateAddresses()

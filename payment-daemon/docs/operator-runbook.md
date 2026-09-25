@@ -7,6 +7,31 @@ audience: orchestrator operators, gateway operators, on-call
 
 # Operator runbook
 
+## Admission diagnostics and cancellation evidence
+
+Receiver admission replies carry `google.rpc.ErrorInfo` in domain
+`payments.livepeer.org` for recognized refusals, with a bounded reason and safe
+request, authorization, predecessor, gateway-session and revision correlation.
+The `authorization admission decision` log uses the same fields and gRPC code;
+it does not log signed authorization, ticket, payment or private error content.
+Unknown/internal failures are unresolved outcomes, not evidence of non-admission.
+
+`CancelAuthorizationAdmission` checks the durable settlement domain and atomically
+returns an existing matching admission or persists a fence for payer plus
+authorization ID and SHA-256 of the exact signed authorization bytes.
+`SPEND_AUTHORIZATION_CANCELED_UNUSED` survives restart, has no reversal/expiry
+operation and prevents future admission of that identity. It carries zero usage;
+it does not settle or release predecessor usage. Existing admitted authority
+wins a race with cancellation. Retain the fence ledger with all other receiver
+state; restoring a pre-fence backup cannot preserve this guarantee.
+
+The socket response is not independently signed. LOC obtains attributable proof
+from the broker's signed `SessionRevisionRecord`, binding payer, payee,
+authorization, fingerprint, settlement domain and session. The broker's terminal
+`settlement_seq` is a separate sequence from the receiver usage sequence; do not
+copy the latter into an already-signed envelope. See the
+[session contract](../../livepeer-network-protocol/protocols/paid-session.md#meaning-of-canceled_unused).
+
 This runbook is for two audiences:
 
 - **Orchestrator operators** running the daemon in `--mode receiver` to
@@ -613,6 +638,13 @@ bounded runway. Account replenishment may restore availability, but only a
 valid predecessor-bound authorization revision can extend a session's signed
 cumulative cap.
 
+A successor inherits previously billed units and wei. Its reservation cannot
+exceed `successor max_debit_wei - cumulative billed wei`. For 180 authorized,
+74 billed and 120 requested at 10^12 wei/unit, the allowable reservation is
+106 × 10^12 wei. The receiver keeps enforcing this bound; excess requests return
+`FailedPrecondition` with `google.rpc.ErrorInfo` reason
+`RESERVATION_EXCEEDS_REMAINING_DEBIT` in domain `payments.livepeer.org`.
+
 When funded authorized runway cannot be reserved, the broker does not extend
 involuntary payer credit. It refuses admission or winds the session down with
 `insufficient_balance`.
@@ -630,6 +662,23 @@ account and authorization store to survive. An active broker record without a
 matching durable authorization terminates fail closed; a pre-cutover
 nonterminal record without authorization state refuses startup until the
 operator drains or resolves it.
+
+The trusted broker recovery RPC `CancelAuthorizationAdmission` atomically
+fences an absent admission or returns the existing authorization unchanged.
+It requires `wholesale_account_id` and binds the payer, account, and authorization
+ID to SHA-256 of the exact signed bytes. Cancellation and status lookup cannot
+affect another account using the same payer wallet and authorization ID.
+An accepted cumulative successor is never converted into a zero-use outcome.
+Fenced identities remain queryable as `SPEND_AUTHORIZATION_CANCELED_UNUSED`,
+so accounting and regional drain checks can distinguish them from missing
+receiver state. Reusing a fenced identity cannot admit work later.
+
+Deploy the receiver before a broker using this RPC. Broker startup/sweeps can
+then repair old oversized revision intents or safely resolve them during
+winddown, preserving the original identities and cumulative billing. See the
+[broker recovery procedure](../../capability-broker/docs/operator-runbook.md#authorization-revisions-and-stuck-winddown).
+Missing or unreachable ledger state still requires reconciliation; it must
+not be reported as successful financial closure.
 
 ### 6.5.3. Funding and revenue recognition
 

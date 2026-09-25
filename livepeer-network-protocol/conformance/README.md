@@ -8,6 +8,19 @@ normative clause from `../protocols/paid-job.md` (§7),
 implementation-independent: it never imports the reference broker and
 speaks only the wire contract.
 
+The [session revision evidence fixture](fixtures/session-revision-evidence.json)
+provides synthetic, public test-key signed refusal and terminal cap-overshoot
+envelopes for LOC integration. It includes expected byte-identical repeated-close
+evidence and distinguishes unsigned pending outcomes. The broker's
+`TestRevisionContractFixture` guards these bytes. The executable terminal-evidence
+scenario checks a positive broker session sequence and unchanged signed evidence
+across close, lookup and restart; the receiver's usage sequence is independent.
+
+The [capacity ownership fixture](fixtures/capacity-ownership.json) describes
+concurrent-open refusal, no-queue semantics and resource ownership through
+restart and settlement. The broker's capacity regression tests consume it and
+exercise unary, multipart and streaming exchanges, including WebSocket streams.
+
 ## Auto mode (default)
 
 Runs against the in-repo reference broker:
@@ -58,7 +71,7 @@ mistake. `--serve-runner` does attach-and-stay-up in a container of its
 own; use it only where nothing asserts on runner-side state.
 
 `--settlement-signer <0x…>` is the eth address of the broker's delegated
-settlement key. Without it the two settlement-signature scenarios skip:
+settlement key. Without it the settlement-signature scenarios skip:
 the suite pins the signer it expects rather than trusting whatever the
 broker announces at `GET /registry/settlement-keys`, and skipping is
 better than passing without checking the one thing a clearinghouse gates

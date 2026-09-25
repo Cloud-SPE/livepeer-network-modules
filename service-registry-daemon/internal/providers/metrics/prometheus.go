@@ -31,8 +31,12 @@ type PrometheusConfig struct {
 // the package-global default registry, so noisy consumer libs don't
 // pollute our exposition output.
 type Prometheus struct {
-	reg *prometheus.Registry
-	cfg PrometheusConfig
+	discoveryRetries   *capVec
+	retryDelay         *prometheus.HistogramVec
+	resolutionDeferred prometheus.Counter
+	nextRetry          *prometheus.GaugeVec
+	reg                *prometheus.Registry
+	cfg                PrometheusConfig
 
 	// Counters
 	grpcRequests        *capVec
@@ -82,6 +86,11 @@ func NewPrometheus(cfg PrometheusConfig) *Prometheus {
 	p := &Prometheus{reg: reg, cfg: cfg}
 	const ns = "livepeer_registry"
 
+	p.discoveryRetries = newCap(reg, p.onCapHit, "discovery_retries_total", prometheus.NewCounterVec(prometheus.CounterOpts{Namespace: ns, Name: "discovery_retries_total", Help: "Failed discovery attempts by retry policy and typed failure reason."}, []string{"class", "reason"}))
+	p.retryDelay = prometheus.NewHistogramVec(prometheus.HistogramOpts{Namespace: ns, Name: "discovery_retry_delay_seconds", Help: "Scheduled jittered discovery retry delays.", Buckets: []float64{5, 15, 60, 300, 900, 1800, 3600, 7200, 21600, 86400}}, []string{"class"})
+	p.resolutionDeferred = prometheus.NewCounter(prometheus.CounterOpts{Namespace: ns, Name: "resolution_deferred_total", Help: "Ordinary address lookups deferred without provider I/O."})
+	p.nextRetry = prometheus.NewGaugeVec(prometheus.GaugeOpts{Namespace: ns, Name: "discovery_next_retry_timestamp_seconds", Help: "Earliest scheduled failed-address retry by class; zero when no retries remain."}, []string{"class"})
+	reg.MustRegister(p.retryDelay, p.resolutionDeferred, p.nextRetry)
 	// ----- Counters -----
 	p.grpcRequests = newCap(reg, p.onCapHit, "grpc_requests_total", prometheus.NewCounterVec(
 		prometheus.CounterOpts{Namespace: ns, Name: "grpc_requests_total",
@@ -446,4 +455,17 @@ func (p *Prometheus) ApplyCap(max int) {
 	} {
 		v.withCap(max)
 	}
+}
+
+func (p *Prometheus) ObserveDiscoveryRetry(class, reason string, d time.Duration) {
+	p.discoveryRetries.inc(class, reason)
+	p.retryDelay.WithLabelValues(class).Observe(d.Seconds())
+}
+func (p *Prometheus) IncResolutionDeferred() { p.resolutionDeferred.Inc() }
+func (p *Prometheus) SetNextRetry(class string, at time.Time) {
+	v := float64(0)
+	if !at.IsZero() {
+		v = float64(at.Unix())
+	}
+	p.nextRetry.WithLabelValues(class).Set(v)
 }

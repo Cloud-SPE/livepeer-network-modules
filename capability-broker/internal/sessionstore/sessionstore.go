@@ -102,9 +102,10 @@ type GrantAudit struct {
 // Record is the on-disk session record — the paid-session/v1 §9.1
 // persistence list, field for field.
 type Record struct {
-	WholesaleAccountID   string          `json:"wholesale_account_id,omitempty"`
-	RevisionIntent       *RevisionIntent `json:"-"`
-	RevisionIntentSealed []byte          `json:"revision_intent_sealed,omitempty"`
+	WholesaleAccountID   string            `json:"wholesale_account_id,omitempty"`
+	LastRevision         *RevisionDecision `json:"last_revision,omitempty"`
+	RevisionIntent       *RevisionIntent   `json:"-"`
+	RevisionIntentSealed []byte            `json:"revision_intent_sealed,omitempty"`
 	// Identifiers.
 	SessionID        string `json:"session_id"`
 	GatewaySessionID string `json:"gateway_session_id"`
@@ -119,6 +120,10 @@ type Record struct {
 	QuoteVersion          uint64 `json:"quote_version,omitempty"`
 	ConstraintFingerprint []byte `json:"constraint_fingerprint,omitempty"`
 	RouteFingerprint      []byte `json:"route_fingerprint,omitempty"`
+
+	// Accepted pricing retained by open recovery independently of live offer config.
+	AcceptedPriceWei      string `json:"accepted_price_wei,omitempty"`
+	AcceptedPricePerUnits uint64 `json:"accepted_price_per_units,omitempty"`
 
 	// Payment.
 	Sender        []byte `json:"sender,omitempty"`
@@ -172,7 +177,9 @@ type Record struct {
 	RotationGeneration uint32 `json:"rotation_generation,omitempty"`
 	// SettlementSeq orders settlement records for this logical session across
 	// authorization revisions.
-	SettlementSeq uint64 `json:"settlement_seq,omitempty"`
+	SettlementSeq              uint64 `json:"settlement_seq,omitempty"`
+	TerminalSettlement         []byte `json:"terminal_settlement,omitempty"`
+	TerminalSettlementEnvelope string `json:"terminal_settlement_envelope,omitempty"`
 	// FundedWei is optional account funding credited alongside this
 	// authorization chain. It is not reservation or workload usage.
 	FundedWei string `json:"funded_wei,omitempty"`
@@ -294,6 +301,10 @@ func Open(path string, key []byte) (*Store, error) {
 		return nil, fmt.Errorf("sessionstore: init bucket: %w", err)
 	}
 	st := &Store{db: db, aead: aead}
+	if err := st.migrateRevisionCoverage(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sessionstore: revision coverage: %w", err)
+	}
 	// Stamp coverage at OPEN, not lazily at the first query that needs
 	// it. Stamped lazily, a broker that had been running for days would
 	// mark its coverage as beginning the moment somebody first asked —
@@ -689,15 +700,35 @@ const (
 	ReservationRunnerCreated = "runner_created"
 )
 
-// OpenReservation is an open in flight: the request id is claimed and the
+// OpenAdmissionIntent contains the exact authority needed to reconcile a lost
+// admission response. It is sealed at rest, including its recovery record.
+type OpenAdmissionIntent struct {
+	AuthorizationBytes []byte `json:"authorization_bytes"`
+	Record             Record `json:"record"`
+}
+
+// OpenReservation is an open in flight: the request ID is claimed and the
 // side effects performed so far are recorded.
 type OpenReservation struct {
 	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
-	RequestID          string `json:"request_id"`
-	Fingerprint        []byte `json:"fingerprint"`
-	Stage              string `json:"stage"`
-	WorkID             string `json:"work_id,omitempty"`
-	Sender             []byte `json:"sender,omitempty"`
+	// AdmissionTracked proves that this writer persists intent before any receiver RPC.
+	AdmissionTracked      bool                 `json:"admission_tracked,omitempty"`
+	AdmissionIntent       *OpenAdmissionIntent `json:"-"`
+	AdmissionIntentSealed []byte               `json:"admission_intent_sealed,omitempty"`
+	AdmissionCanceled     bool                 `json:"admission_canceled,omitempty"`
+	BrokerSessionID       string               `json:"broker_session_id,omitempty"`
+	// CapacityTracked distinguishes opens that durably recorded create intent
+	// from old paid-stage records, whose create outcome may be unknown.
+	CapacityTracked bool `json:"capacity_tracked,omitempty"`
+	CreateStarted   bool `json:"create_started,omitempty"`
+	// RunnerTerminated is persisted before releasing capacity, independently
+	// of payment settlement and removal of this reservation.
+	RunnerTerminated bool   `json:"runner_terminated,omitempty"`
+	RequestID        string `json:"request_id"`
+	Fingerprint      []byte `json:"fingerprint"`
+	Stage            string `json:"stage"`
+	WorkID           string `json:"work_id,omitempty"`
+	Sender           []byte `json:"sender,omitempty"`
 	// AccountAuthorization is retained as a durable cutover marker. Startup
 	// refuses paid reservations written without it; no legacy recovery path
 	// remains.
@@ -727,7 +758,7 @@ func (s *Store) ReserveOpen(requestID string, fingerprint []byte) error {
 			return ErrOpenInFlight
 		}
 		raw, err := json.Marshal(OpenReservation{RequestID: requestID, Fingerprint: fingerprint,
-			Stage: ReservationReserved, CreatedAt: time.Now().UTC()})
+			AdmissionTracked: true, Stage: ReservationReserved, CreatedAt: time.Now().UTC()})
 		if err != nil {
 			return err
 		}
@@ -743,14 +774,14 @@ func (s *Store) UpdateReservation(requestID string, fn func(*OpenReservation) er
 		if raw == nil {
 			return ErrNotFound
 		}
-		var r OpenReservation
-		if err := json.Unmarshal(raw, &r); err != nil {
+		r, err := s.unsealReservation(raw)
+		if err != nil {
 			return err
 		}
-		if err := fn(&r); err != nil {
+		if err := fn(r); err != nil {
 			return err
 		}
-		out, err := json.Marshal(r)
+		out, err := s.sealReservation(r)
 		if err != nil {
 			return err
 		}
@@ -770,11 +801,11 @@ func (s *Store) ReleaseReservation(requestID string) error {
 func (s *Store) ForEachReservation(fn func(OpenReservation) error) error {
 	return s.db.View(func(tx *bolt.Tx) error {
 		return tx.Bucket([]byte(openReservationsBucket)).ForEach(func(_, raw []byte) error {
-			var r OpenReservation
-			if err := json.Unmarshal(raw, &r); err != nil {
+			r, err := s.unsealReservation(raw)
+			if err != nil {
 				return err
 			}
-			return fn(r)
+			return fn(*r)
 		})
 	})
 }
@@ -787,7 +818,12 @@ func (s *Store) Reservation(requestID string) (OpenReservation, error) {
 		if raw == nil {
 			return ErrNotFound
 		}
-		return json.Unmarshal(raw, &r)
+		decoded, err := s.unsealReservation(raw)
+		if err != nil {
+			return err
+		}
+		r = *decoded
+		return nil
 	})
 	return r, err
 }

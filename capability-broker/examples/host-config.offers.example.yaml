@@ -61,7 +61,7 @@ offers:
       per_units: 1
     capacity:
       max_in_flight: 4                     # per eligible runner
-      queue_limit: 8
+      queue_limit: 0            # inactive: no waiting queue; excess work gets 503
     extra:                                 # operator metadata; runner identity is merged in at freeze
       provider: vllm
       openai:

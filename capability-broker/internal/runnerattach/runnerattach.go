@@ -192,7 +192,7 @@ var (
 		"paths", "readiness", "identity", "schema_versions", "metering", "heartbeat", "session_params_schema",
 		"requirements", "devices", "draining")
 	wuFields   = set("name", "extractor")
-	pathFields = set("invoke", "options", "create", "status", "terminate")
+	pathFields = set("invoke", "options", "create", "status", "terminate", "reconcile")
 	rdFields   = set("type", "path", "config")
 	hbFields   = set("interval_seconds")
 	reqFields  = set("gpu_vram_min_bytes", "gpu_models")
@@ -463,7 +463,7 @@ func validateCapability(c *Capability, doc *Document, known Known, field string)
 		if _, ok := c.Paths["invoke"]; !ok {
 			add("schema_violation", "/paths/invoke", "", "required for paid-job")
 		}
-		for _, k := range []string{"create", "status", "terminate"} {
+		for _, k := range []string{"create", "status", "terminate", "reconcile"} {
 			if _, ok := c.Paths[k]; ok {
 				add("schema_violation", "/paths/"+k, c.Paths[k], "not valid on a paid-job capability")
 			}

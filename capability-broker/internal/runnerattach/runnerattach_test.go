@@ -209,7 +209,7 @@ func TestSessionRules(t *testing.T) {
 			"capability_id": "s", "protocol": "paid-session/v1", "descriptor_schemas": []any{"sfu-room/v1"},
 			"metering":        "runner-reported",
 			"work_unit":       map[string]any{"name": "participant_seconds"},
-			"paths":           map[string]any{"create": "/s", "status": "/s/{id}", "terminate": "/s/{id}"},
+			"paths":           map[string]any{"create": "/s", "status": "/s/{id}", "terminate": "/s/{id}", "reconcile": "/reconcile"},
 			"readiness":       map[string]any{"type": "http-status", "path": "/ready"},
 			"identity":        map[string]any{"provider": "x"},
 			"schema_versions": map[string]any{"paid-session/v1": "1.0.11", "sfu-room/v1": "1.0.0"},
@@ -385,5 +385,13 @@ func TestPublicURLIsAnHTTPSOrigin(t *testing.T) {
 		if violated == ok {
 			t.Errorf("%q: violated=%v, want valid=%v (%+v)", raw, violated, ok, res.Reasons)
 		}
+	}
+}
+
+func TestJobRejectsSessionReconciliationPath(t *testing.T) {
+	raw := minimal(func(m map[string]any) { cap0(m)["paths"].(map[string]any)["reconcile"] = "/reconcile" })
+	_, res := Evaluate(raw, testKnown())
+	if res.Capabilities[0].Status != "rejected" {
+		t.Fatal("job advertised session recovery")
 	}
 }

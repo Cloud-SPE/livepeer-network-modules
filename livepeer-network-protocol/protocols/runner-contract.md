@@ -94,12 +94,17 @@ Minimal session runner:
   "work_unit": { "name": "output_seconds" },
   "paths": { "create": "/v1/video/live/sessions",
              "status": "/v1/video/live/sessions/{id}",
-             "terminate": "/v1/video/live/sessions/{id}" },
+             "terminate": "/v1/video/live/sessions/{id}",
+             "reconcile": "/v1/video/live/session-creates/reconcile" },
   "readiness": { "type": "http-status", "path": "/healthz" },
   "identity": { "provider": "livepeer-live-runner" },
   "schema_versions": { "paid-session/v1": "1.0.0", "rtmp-hls/v1": "1.0.0" }
 }
 ```
+
+The optional session `paths.reconcile` endpoint implements the durable create
+resolution contract in [paid-session §4.1](paid-session.md#41-create-reconciliation).
+It is a broker control endpoint and carries no runtime grants or secrets.
 
 A container that serves more than one capability — the audio runner's
 transcriptions and translations, a vendor-backed runner with several
@@ -154,7 +159,7 @@ field — and changing one meant shipping a new agent to every member. The
 profiles are deleted. There is no fallback: a runner serves its contract
 or it does not attach.
 
-The mechanism this most resembles, `paid-session` §7.1.1's `describe`,
+The former paid-session `describe` mechanism
 was a poll the broker ran against the runner. This is a read the agent
 makes once, at the one moment the answer is needed. The difference is
 the whole of plan 0043 item 11.

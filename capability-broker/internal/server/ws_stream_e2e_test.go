@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
@@ -39,7 +40,7 @@ func testPaidWSStream(t *testing.T, interrupted bool) {
 	if interrupted {
 		fixture.Chunks[1] = strings.ReplaceAll(fixture.Chunks[1], "data: [DONE]\n\n", "")
 	}
-	ts, s := newJobOfferBrokerBare(t, nil, "")
+	ts, s := newJobOfferBrokerBare(t, nil, "", func(c *config.Config) { c.Offers[0].Capacity.MaxInFlight = 1 })
 	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"stream-host"}`, nil)
 	token := enr["credential"].(map[string]any)["token"].(string)
 	conn := dialAttach(t, ts)
@@ -128,6 +129,14 @@ func testPaidWSStream(t *testing.T, interrupted bool) {
 	if string(first) != fixture.Chunks[0] {
 		t.Fatalf("first=%q", first)
 	}
+	if got := s.currentBackendInFlight("stream-host|chat"); got != 1 {
+		t.Fatalf("stream occupancy=%d", got)
+	}
+	blocked := jobReq(t, ts, "stream-at-capacity", "text/event-stream")
+	blocked.Body.Close()
+	if blocked.StatusCode != 503 || blocked.Header.Get(livepeerheader.Backoff) == "" {
+		t.Fatalf("at capacity: %d %v", blocked.StatusCode, blocked.Header)
+	}
 	unblock()
 	rest, err := io.ReadAll(response.Body)
 	if (err != nil) != interrupted {
@@ -138,6 +147,9 @@ func testPaidWSStream(t *testing.T, interrupted bool) {
 	}
 	if got := response.Trailer.Get(livepeerheader.WorkUnits); !interrupted && got != fixture.Units {
 		t.Fatalf("usage=%s", got)
+	}
+	if got := s.currentBackendInFlight("stream-host|chat"); got != 0 {
+		t.Fatalf("completed stream occupancy=%d", got)
 	}
 	// Persisted outcome supports replay without re-running the model.
 	// Aborted streams cannot deliver trailers; accounting is recovered by lookup.

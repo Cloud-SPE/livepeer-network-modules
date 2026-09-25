@@ -64,11 +64,36 @@ func AdmissionRefused(err error) bool {
 	if errors.Is(err, ErrAdmissionStopped) {
 		return true
 	}
-	switch status.Code(err) {
-	case codes.FailedPrecondition, codes.InvalidArgument, codes.PermissionDenied:
-		// AUTHORIZATION_NOT_ACTIVE can become valid without changing identity.
-		return AdmissionFailureReason(err) != "AUTHORIZATION_NOT_ACTIVE"
+	_, refused := knownAdmissionReason(AdmissionFailureReason(err))
+	return refused && (status.Code(err) == codes.FailedPrecondition || status.Code(err) == codes.InvalidArgument || status.Code(err) == codes.PermissionDenied)
+}
+
+// Unknown reasons are never promoted to cancellation by their gRPC code alone.
+// The same allowlist bounds public diagnostics and metric labels.
+func knownAdmissionReason(reason string) (known, refused bool) {
+	switch reason {
+	case "AUTHORIZATION_NOT_ACTIVE":
+		return true, false
+	case "RESERVATION_EXCEEDS_REMAINING_DEBIT", "REVISION_PREDECESSOR_INVALID", "REVISION_LIMITS_BELOW_USAGE", "AUTHORIZATION_EXPIRED_UNUSED", "AUTHORIZATION_ADMISSION_CANCELED", "AUTHORIZATION_NOT_ADMITTED", "AUTHORIZATION_STATE_INVALID", "INSUFFICIENT_WHOLESALE_CREDIT",
+		"AUTHORIZATION_MALFORMED", "AUTHORIZATION_SIGNATURE_INVALID", "SETTLEMENT_DOMAIN_MISMATCH", "PAYEE_MISMATCH", "CHAIN_OR_DENOMINATION_MISMATCH", "AUTHORIZATION_IDENTITY_INVALID", "AUTHORIZATION_REQUEST_BINDING_INVALID", "CALLER_KEY_INVALID", "REVISION_FIELDS_INVALID", "PROTOCOL_UNSUPPORTED", "PRICE_SCOPE_MISMATCH", "PRICE_INVALID", "AUTHORIZATION_TIME_INVALID", "AUTHORIZATION_LIMITS_INVALID", "DEBIT_CAP_BELOW_PRICE", "AUTHORIZATION_ID_REUSED", "FUNDING_MALFORMED", "FUNDING_PAYER_MISMATCH", "FUNDING_TICKETS_REJECTED", "FUNDING_VALIDATION_FAILED", "FUNDING_INVALID_RECIPIENT_RAND", "FUNDING_NONCE_CAP_REACHED", "FUNDING_INVALID_SIGNATURE", "RECEIVER_SOURCE_FROZEN":
+		return true, true
 	default:
-		return false
+		return false, false
+	}
+}
+
+func SafeAdmissionReason(err error) string {
+	if errors.Is(err, ErrAdmissionStopped) {
+		return "ADMISSION_STOPPED"
+	}
+	reason := AdmissionFailureReason(err)
+	if known, _ := knownAdmissionReason(reason); known {
+		return reason
+	}
+	switch status.Code(err) {
+	case codes.Unavailable, codes.DeadlineExceeded, codes.Canceled:
+		return "RECEIVER_UNAVAILABLE"
+	default:
+		return "ADMISSION_OUTCOME_UNKNOWN"
 	}
 }

@@ -355,13 +355,15 @@ message SettlementRecord {
   BigUInt amount_wei = 19;
   uint64 per_units = 20;
 
-  // Monotonic per session_id and unchanged by authorization revision.
+  // Positive, monotonic per session_id; authorization revisions do not reset it.
+  // Independent of the receiver authorization's debit/settlement sequence.
   // (session_id, settlement_seq) is the replay binding: a record is
   // meaningful for exactly one session at exactly one point in its life.
+  // A terminal record is durably frozen before publication. Repeated close or
+  // lookup returns the identical sequence, payload and signed envelope.
   uint64 settlement_seq = 21;
 
-  // When this record was produced. A record is a statement about the
-  // session as of this instant, not a cached blob.
+  // When this record was produced. Terminal retries preserve this timestamp.
   string issued_at = 22;
 
   // Session state when the record was produced: "open", "winding_down"

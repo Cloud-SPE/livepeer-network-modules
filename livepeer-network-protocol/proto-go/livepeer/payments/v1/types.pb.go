@@ -1675,12 +1675,14 @@ type SettlementRecord struct {
 	// can recompute billed_value_wei without trusting it.
 	AmountWei *BigUInt `protobuf:"bytes,19,opt,name=amount_wei,json=amountWei,proto3" json:"amount_wei,omitempty"`
 	PerUnits  uint64   `protobuf:"varint,20,opt,name=per_units,json=perUnits,proto3" json:"per_units,omitempty"`
-	// Monotonic per session_id and unchanged by authorization revision.
+	// Positive, monotonic per session_id; authorization revisions do not reset it.
+	// Independent of the receiver authorization's debit/settlement sequence.
 	// (session_id, settlement_seq) is the replay binding: a record is
 	// meaningful for exactly one session at exactly one point in its life.
+	// A terminal record is durably frozen before publication. Repeated close or
+	// lookup returns the identical sequence, payload and signed envelope.
 	SettlementSeq uint64 `protobuf:"varint,21,opt,name=settlement_seq,json=settlementSeq,proto3" json:"settlement_seq,omitempty"`
-	// When this record was produced. A record is a statement about the
-	// session as of this instant, not a cached blob.
+	// When this record was produced. Terminal retries preserve this timestamp.
 	IssuedAt string `protobuf:"bytes,22,opt,name=issued_at,json=issuedAt,proto3" json:"issued_at,omitempty"`
 	// Session state when the record was produced: "open", "winding_down"
 	// or "closed". Distinguishes an interim snapshot from a final

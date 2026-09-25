@@ -1,0 +1,42 @@
+syntax = "proto3";
+package livepeer.payments.v1;
+option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1;paymentsv1";
+
+import "livepeer/payments/v1/types.proto";
+
+// Immutable broker observation, signed with the delegated settlement key using
+// the settlement JCS envelope. It does not settle the logical session. Consumers
+// MUST compare every identity, domain, quote and authorization hash with their
+// own issued grant. Claimed authorization scope does not attest signature validity.
+message SessionRevisionRecord {
+  // Always "livepeer-session-revision/v1"; prevents cross-purpose replay.
+  string evidence_domain = 1;
+  string protocol = 2; // Always "paid-session/v1".
+  string settlement_domain_id = 3;
+  string broker_uri = 4;
+  string session_id = 5;
+  string gateway_session_id = 6;
+  string request_id = 7;
+  bytes payer = 8;
+  bytes payee = 9;
+  string authorization_id = 10;
+  string predecessor_authorization_id = 11;
+  uint64 revision = 12;
+  bytes authorization_fingerprint = 13; // SHA-256 of exact signed wire bytes.
+  QuoteRef accepted_quote_ref = 14;
+  enum Outcome {
+    OUTCOME_UNSPECIFIED = 0;
+    ADMITTED = 1;
+    NOT_ADMITTED = 2;
+  }
+  Outcome outcome = 15;
+  // NOT_ADMITTED requires "receiver_fenced" or "expired_unused".
+  // An error, timeout, gateway assertion or missing record is insufficient.
+  string non_admission_basis = 16;
+  string reason = 17; // Allowlisted diagnostic code; never controls accounting.
+  string stage = 18;
+  string receiver_code = 19;
+  string observed_at = 20; // RFC3339Nano; immutable across lookups and retries.
+  uint64 max_total_units = 21;
+  BigUInt max_debit_wei = 22;
+}

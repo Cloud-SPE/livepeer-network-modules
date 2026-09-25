@@ -1,0 +1,108 @@
+{
+  "canceled_unused": {
+    "durable": true,
+    "readmission_allowed": false,
+    "reversible": false
+  },
+  "contract": "paid-session/v1",
+  "description": "Synthetic public-key fixture; authorization hash is an opaque test binding, not a spendable grant. Exact terminal retries are idempotent, sequence zero and conflicting same-sequence evidence are rejected.",
+  "revision_not_admitted": {
+    "envelope": {
+      "payload": {
+        "accepted_quote_ref": {
+          "constraint_fingerprint": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+          "quote_id": "quote-fixture",
+          "quote_version": "1",
+          "route_fingerprint": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
+        },
+        "authorization_fingerprint": "d67l1C6MVJJRWZVE+SWvv5t695ANNfHG6lmusX2g+g8=",
+        "authorization_id": "successor-fixture",
+        "broker_uri": "https://broker.example",
+        "evidence_domain": "livepeer-session-revision/v1",
+        "gateway_session_id": "loc-fixture",
+        "max_debit_wei": {
+          "value": "o7WED0AA"
+        },
+        "max_total_units": "180",
+        "non_admission_basis": "receiver_fenced",
+        "observed_at": "2026-09-25T12:00:00Z",
+        "outcome": "NOT_ADMITTED",
+        "payee": "AgICAgICAgICAgICAgICAgICAgI=",
+        "payer": "AQEBAQEBAQEBAQEBAQEBAQEBAQE=",
+        "predecessor_authorization_id": "predecessor-fixture",
+        "protocol": "paid-session/v1",
+        "reason": "INSUFFICIENT_WHOLESALE_CREDIT",
+        "receiver_code": "FailedPrecondition",
+        "request_id": "refill-fixture",
+        "revision": "1",
+        "session_id": "sess-fixture",
+        "settlement_domain_id": "fixture-domain",
+        "stage": "admission"
+      },
+      "signature": {
+        "algorithm": "secp256k1",
+        "canonicalization": "jcs",
+        "value": "0x1a7108d5845513b84fd992e097a010f36ed12b3924390e9a43579b35b11bf658196466bd92327a22ef86d8b402d6003ac45bc32efd2371b9fbb8c79babd7ae311c"
+      }
+    },
+    "header": "eyJwYXlsb2FkIjp7ImFjY2VwdGVkX3F1b3RlX3JlZiI6eyJjb25zdHJhaW50X2ZpbmdlcnByaW50IjoiQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TT0iLCJxdW90ZV9pZCI6InF1b3RlLWZpeHR1cmUiLCJxdW90ZV92ZXJzaW9uIjoiMSIsInJvdXRlX2ZpbmdlcnByaW50IjoiQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUT0ifSwiYXV0aG9yaXphdGlvbl9maW5nZXJwcmludCI6ImQ2N2wxQzZNVkpKUldaVkUrU1d2djV0Njk1QU5OZkhHNmxtdXNYMmcrZzg9IiwiYXV0aG9yaXphdGlvbl9pZCI6InN1Y2Nlc3Nvci1maXh0dXJlIiwiYnJva2VyX3VyaSI6Imh0dHBzOi8vYnJva2VyLmV4YW1wbGUiLCJldmlkZW5jZV9kb21haW4iOiJsaXZlcGVlci1zZXNzaW9uLXJldmlzaW9uL3YxIiwiZ2F0ZXdheV9zZXNzaW9uX2lkIjoibG9jLWZpeHR1cmUiLCJtYXhfZGViaXRfd2VpIjp7InZhbHVlIjoibzdXRUQwQUEifSwibWF4X3RvdGFsX3VuaXRzIjoiMTgwIiwibm9uX2FkbWlzc2lvbl9iYXNpcyI6InJlY2VpdmVyX2ZlbmNlZCIsIm9ic2VydmVkX2F0IjoiMjAyNi0wOS0yNVQxMjowMDowMFoiLCJvdXRjb21lIjoiTk9UX0FETUlUVEVEIiwicGF5ZWUiOiJBZ0lDQWdJQ0FnSUNBZ0lDQWdJQ0FnSUNBZ0k9IiwicGF5ZXIiOiJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUU9IiwicHJlZGVjZXNzb3JfYXV0aG9yaXphdGlvbl9pZCI6InByZWRlY2Vzc29yLWZpeHR1cmUiLCJwcm90b2NvbCI6InBhaWQtc2Vzc2lvbi92MSIsInJlYXNvbiI6IklOU1VGRklDSUVOVF9XSE9MRVNBTEVfQ1JFRElUIiwicmVjZWl2ZXJfY29kZSI6IkZhaWxlZFByZWNvbmRpdGlvbiIsInJlcXVlc3RfaWQiOiJyZWZpbGwtZml4dHVyZSIsInJldmlzaW9uIjoiMSIsInNlc3Npb25faWQiOiJzZXNzLWZpeHR1cmUiLCJzZXR0bGVtZW50X2RvbWFpbl9pZCI6ImZpeHR1cmUtZG9tYWluIiwic3RhZ2UiOiJhZG1pc3Npb24ifSwic2lnbmF0dXJlIjp7ImFsZ29yaXRobSI6InNlY3AyNTZrMSIsImNhbm9uaWNhbGl6YXRpb24iOiJqY3MiLCJ2YWx1ZSI6IjB4MWE3MTA4ZDU4NDU1MTNiODRmZDk5MmUwOTdhMDEwZjM2ZWQxMmIzOTI0MzkwZTlhNDM1NzliMzViMTFiZjY1ODE5NjQ2NmJkOTIzMjdhMjJlZjg2ZDhiNDAyZDYwMDNhYzQ1YmMzMmVmZDIzNzFiOWZiYjhjNzliYWJkN2FlMzExYyJ9fQ==",
+    "http_status": 200
+  },
+  "revision_pending": {
+    "http_status": 202,
+    "outcome": "pending",
+    "signed_evidence": false
+  },
+  "signer_address": "0x7E5F4552091A69125d5DfCb7b8C2659029395Bdf",
+  "signer_public_key": "0x0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8",
+  "terminal_cap_overshoot": {
+    "envelope": {
+      "payload": {
+        "accepted_quote_ref": {
+          "constraint_fingerprint": "AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=",
+          "quote_id": "quote-fixture",
+          "quote_version": "1",
+          "route_fingerprint": "BAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQ="
+        },
+        "actual_units": "120",
+        "amount_wei": {
+          "value": "6NSlEAA="
+        },
+        "authorization_id": "predecessor-fixture",
+        "authorized_value_wei": {
+          "value": "bSOtX4AA"
+        },
+        "billed_units": "120",
+        "billed_value_wei": {
+          "value": "bSOtX4AA"
+        },
+        "breakdown": {
+          "claim_debit_gap": "true",
+          "claim_debit_gap_reason": "authorization_cap",
+          "termination_reason": "authorization_exhausted"
+        },
+        "claimed_units": "124",
+        "debited_units": "120",
+        "gateway_session_id": "loc-fixture",
+        "issued_at": "2026-09-25T12:00:20Z",
+        "per_units": "1",
+        "session_id": "sess-fixture",
+        "settlement_domain_id": "fixture-domain",
+        "settlement_seq": "1",
+        "state": "closed",
+        "work_id": "predecessor-fixture",
+        "work_unit_name": "output_seconds"
+      },
+      "signature": {
+        "algorithm": "secp256k1",
+        "canonicalization": "jcs",
+        "value": "0xd772d3a6cf7b8605aec70c34176c926c399779d6c513fb44820b179243fc0c103e2b2f9301871b7fd40eeb624f2865ea134beb7f3cef446b319811e5bf07a96d1b"
+      }
+    },
+    "expected_bill_wei": "120000000000000",
+    "header": "eyJwYXlsb2FkIjp7ImFjY2VwdGVkX3F1b3RlX3JlZiI6eyJjb25zdHJhaW50X2ZpbmdlcnByaW50IjoiQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TT0iLCJxdW90ZV9pZCI6InF1b3RlLWZpeHR1cmUiLCJxdW90ZV92ZXJzaW9uIjoiMSIsInJvdXRlX2ZpbmdlcnByaW50IjoiQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUT0ifSwiYWN0dWFsX3VuaXRzIjoiMTIwIiwiYW1vdW50X3dlaSI6eyJ2YWx1ZSI6IjZOU2xFQUE9In0sImF1dGhvcml6YXRpb25faWQiOiJwcmVkZWNlc3Nvci1maXh0dXJlIiwiYXV0aG9yaXplZF92YWx1ZV93ZWkiOnsidmFsdWUiOiJiU090WDRBQSJ9LCJiaWxsZWRfdW5pdHMiOiIxMjAiLCJiaWxsZWRfdmFsdWVfd2VpIjp7InZhbHVlIjoiYlNPdFg0QUEifSwiYnJlYWtkb3duIjp7ImNsYWltX2RlYml0X2dhcCI6InRydWUiLCJjbGFpbV9kZWJpdF9nYXBfcmVhc29uIjoiYXV0aG9yaXphdGlvbl9jYXAiLCJ0ZXJtaW5hdGlvbl9yZWFzb24iOiJhdXRob3JpemF0aW9uX2V4aGF1c3RlZCJ9LCJjbGFpbWVkX3VuaXRzIjoiMTI0IiwiZGViaXRlZF91bml0cyI6IjEyMCIsImdhdGV3YXlfc2Vzc2lvbl9pZCI6ImxvYy1maXh0dXJlIiwiaXNzdWVkX2F0IjoiMjAyNi0wOS0yNVQxMjowMDoyMFoiLCJwZXJfdW5pdHMiOiIxIiwic2Vzc2lvbl9pZCI6InNlc3MtZml4dHVyZSIsInNldHRsZW1lbnRfZG9tYWluX2lkIjoiZml4dHVyZS1kb21haW4iLCJzZXR0bGVtZW50X3NlcSI6IjEiLCJzdGF0ZSI6ImNsb3NlZCIsIndvcmtfaWQiOiJwcmVkZWNlc3Nvci1maXh0dXJlIiwid29ya191bml0X25hbWUiOiJvdXRwdXRfc2Vjb25kcyJ9LCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoic2VjcDI1NmsxIiwiY2Fub25pY2FsaXphdGlvbiI6ImpjcyIsInZhbHVlIjoiMHhkNzcyZDNhNmNmN2I4NjA1YWVjNzBjMzQxNzZjOTI2YzM5OTc3OWQ2YzUxM2ZiNDQ4MjBiMTc5MjQzZmMwYzEwM2UyYjJmOTMwMTg3MWI3ZmQ0MGVlYjYyNGYyODY1ZWExMzRiZWI3ZjNjZWY0NDZiMzE5ODExZTViZjA3YTk2ZDFiIn19",
+    "http_status": 200,
+    "receiver_sequence": 15,
+    "repeat_lookup_and_close_header": "eyJwYXlsb2FkIjp7ImFjY2VwdGVkX3F1b3RlX3JlZiI6eyJjb25zdHJhaW50X2ZpbmdlcnByaW50IjoiQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TURBd01EQXdNREF3TT0iLCJxdW90ZV9pZCI6InF1b3RlLWZpeHR1cmUiLCJxdW90ZV92ZXJzaW9uIjoiMSIsInJvdXRlX2ZpbmdlcnByaW50IjoiQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUUVCQVFFQkFRRUJBUT0ifSwiYWN0dWFsX3VuaXRzIjoiMTIwIiwiYW1vdW50X3dlaSI6eyJ2YWx1ZSI6IjZOU2xFQUE9In0sImF1dGhvcml6YXRpb25faWQiOiJwcmVkZWNlc3Nvci1maXh0dXJlIiwiYXV0aG9yaXplZF92YWx1ZV93ZWkiOnsidmFsdWUiOiJiU090WDRBQSJ9LCJiaWxsZWRfdW5pdHMiOiIxMjAiLCJiaWxsZWRfdmFsdWVfd2VpIjp7InZhbHVlIjoiYlNPdFg0QUEifSwiYnJlYWtkb3duIjp7ImNsYWltX2RlYml0X2dhcCI6InRydWUiLCJjbGFpbV9kZWJpdF9nYXBfcmVhc29uIjoiYXV0aG9yaXphdGlvbl9jYXAiLCJ0ZXJtaW5hdGlvbl9yZWFzb24iOiJhdXRob3JpemF0aW9uX2V4aGF1c3RlZCJ9LCJjbGFpbWVkX3VuaXRzIjoiMTI0IiwiZGViaXRlZF91bml0cyI6IjEyMCIsImdhdGV3YXlfc2Vzc2lvbl9pZCI6ImxvYy1maXh0dXJlIiwiaXNzdWVkX2F0IjoiMjAyNi0wOS0yNVQxMjowMDoyMFoiLCJwZXJfdW5pdHMiOiIxIiwic2Vzc2lvbl9pZCI6InNlc3MtZml4dHVyZSIsInNldHRsZW1lbnRfZG9tYWluX2lkIjoiZml4dHVyZS1kb21haW4iLCJzZXR0bGVtZW50X3NlcSI6IjEiLCJzdGF0ZSI6ImNsb3NlZCIsIndvcmtfaWQiOiJwcmVkZWNlc3Nvci1maXh0dXJlIiwid29ya191bml0X25hbWUiOiJvdXRwdXRfc2Vjb25kcyJ9LCJzaWduYXR1cmUiOnsiYWxnb3JpdGhtIjoic2VjcDI1NmsxIiwiY2Fub25pY2FsaXphdGlvbiI6ImpjcyIsInZhbHVlIjoiMHhkNzcyZDNhNmNmN2I4NjA1YWVjNzBjMzQxNzZjOTI2YzM5OTc3OWQ2YzUxM2ZiNDQ4MjBiMTc5MjQzZmMwYzEwM2UyYjJmOTMwMTg3MWI3ZmQ0MGVlYjYyNGYyODY1ZWExMzRiZWI3ZjNjZWY0NDZiMzE5ODExZTViZjA3YTk2ZDFiIn19"
+  }
+}

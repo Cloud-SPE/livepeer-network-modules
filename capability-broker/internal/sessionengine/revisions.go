@@ -10,6 +10,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -24,7 +25,7 @@ func (e *Engine) resumeRevisionLocked(ctx context.Context, id string, force ...b
 		return nil, fmt.Errorf("session revision intent missing")
 	}
 	if (len(force) == 0 || !force[0]) && e.cfg.Now().Before(rec.RevisionIntent.NextRetryAt) {
-		return nil, &RetryableError{Err: fmt.Errorf("revision recovery deferred until %s", rec.RevisionIntent.NextRetryAt.Format(time.RFC3339Nano))}
+		return nil, e.pendingRevisionError(id)
 	}
 	result, err := e.resolveRevisionLocked(ctx, rec)
 	if err == nil {
@@ -39,6 +40,18 @@ func (e *Engine) resumeRevisionLocked(ctx context.Context, id string, force ...b
 			return nil
 		}
 		intent := r.RevisionIntent
+		if !intent.CancelRequested {
+			reason, stage, code := "RECONCILIATION_PENDING", "reconciliation", ""
+			var failure *revisionFailure
+			if errors.As(err, &failure) {
+				reason, stage, code = failure.reason, failure.stage, failure.code
+			}
+			intent.Decision = e.revisionDecision(r, reason, stage, code)
+		}
+		if intent.Decision == nil {
+			intent.Decision = e.revisionDecision(r, "PREVIOUS_REASON_UNAVAILABLE", "reconciliation", "")
+		}
+		intent.Decision.Outcome = "pending"
 		if intent.Failures < 7 {
 			intent.Failures++
 		}
@@ -47,11 +60,16 @@ func (e *Engine) resumeRevisionLocked(ctx context.Context, id string, force ...b
 			delay = time.Minute
 		}
 		intent.NextRetryAt = e.cfg.Now().Add(delay)
+		intent.Decision.NextRetryAt = intent.NextRetryAt
+		r.LastRevision = intent.Decision
 		return nil
 	}); saveErr != nil {
 		return nil, &RetryableError{Err: saveErr}
 	}
-	return nil, &RetryableError{Err: fmt.Errorf("revision admission recovery: %w", err)}
+	if current, readErr := e.cfg.Store.Get(id); readErr == nil {
+		e.observeRevision(current.LastRevision)
+	}
+	return nil, e.pendingRevisionError(id)
 }
 
 func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Record) (*TopUpResult, error) {
@@ -74,12 +92,15 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 	}
 	// Once closing, no new admission/funding is needed. The fence returns any
 	// accepted successor, so a lost response can never make us settle its parent.
-	if rec.Closing() {
+	if intent.CancelRequested {
 		return e.cancelRevisionLocked(ctx, rec, p)
+	}
+	if rec.Closing() {
+		return e.requestRevisionCancellation(ctx, rec, p, "SESSION_CLOSING", "lifecycle", "")
 	}
 	predecessor, err := account.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
 	if err != nil {
-		return nil, err
+		return nil, receiverRevisionFailure("predecessor_lookup", err)
 	}
 	if predecessor == nil {
 		return nil, fmt.Errorf("receiver predecessor status missing")
@@ -89,9 +110,13 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 		if err := reconcileReceiverUsage(rec, predecessor); err != nil {
 			return nil, err
 		}
+		if intent.Decision == nil {
+			intent.Decision = e.revisionDecision(rec, "ADMISSION_PENDING", "admission", "")
+		}
+		intent.Decision.BilledWei, intent.Decision.ActualUnits = predecessor.Billed.String(), predecessor.ActualUnits
 		bounded, err := remainingRevisionReservation(p, reservation, predecessor)
 		if err != nil {
-			return e.cancelRevisionLocked(ctx, rec, p)
+			return e.requestRevisionCancellation(ctx, rec, p, reservationFailureReason(err), "reservation", "")
 		}
 		reservation = bounded
 		// Includes old sealed intents: repair the derived reservation before any RPC,
@@ -101,6 +126,9 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 				return err
 			}
 			r.RevisionIntent.ReservationWei = reservation.String()
+			r.RevisionIntent.Decision = intent.Decision
+			r.RevisionIntent.Decision.ReservationWei = reservation.String()
+			r.LastRevision = r.RevisionIntent.Decision
 			return nil
 		}); err != nil {
 			return nil, err
@@ -109,14 +137,14 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 		// Replay below proves whether this exact successor won; never read the
 		// superseded parent's zero reservation as a fresh admission allowance.
 	default:
-		return e.cancelRevisionLocked(ctx, rec, p)
+		return e.requestRevisionCancellation(ctx, rec, p, "PREDECESSOR_NOT_ACTIVE", "predecessor_lookup", "")
 	}
 	admitted, err := account.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: intent.AuthorizationBytes, PaymentBytes: intent.PaymentBytes, Reservation: reservation})
 	if err != nil {
 		if payment.AdmissionRefused(err) {
-			return e.cancelRevisionLocked(ctx, rec, p)
+			return e.requestRevisionCancellation(ctx, rec, p, payment.SafeAdmissionReason(err), "admission", status.Code(err).String())
 		}
-		return nil, err
+		return nil, receiverRevisionFailure("admission", err)
 	}
 	if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil {
 		return nil, fmt.Errorf("receiver did not confirm revision admission")
@@ -130,18 +158,18 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 
 func remainingRevisionReservation(p *pb.SpendAuthorizationPayload, requested *big.Int, usage *payment.SpendAuthorizationStatus) (*big.Int, error) {
 	if usage.Billed == nil || usage.Billed.Sign() < 0 || usage.ActualUnits >= p.GetMaxTotalUnits() {
-		return nil, fmt.Errorf("revision has no remaining units")
+		return nil, &revisionFailure{reason: "REVISION_UNITS_EXHAUSTED", stage: "reservation"}
 	}
 	remaining := new(big.Int).Sub(new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()), usage.Billed)
 	if remaining.Sign() < 0 {
-		return nil, fmt.Errorf("revision billing exceeds debit cap")
+		return nil, &revisionFailure{reason: "REVISION_DEBIT_BELOW_USAGE", stage: "reservation"}
 	}
 	// For priced remaining work, also bound a loose debit cap by its cost.
 	// Cumulative ceilings matter for fractional unit prices.
 	price := p.GetAcceptedPrice()
 	future := new(big.Int).Sub(payment.BillFor(new(big.Int).SetBytes(price.GetPricePerUnitWei().GetValue()), price.GetUnitsPerPrice(), p.GetMaxTotalUnits()), usage.Billed)
 	if future.Sign() < 0 {
-		return nil, fmt.Errorf("receiver billing exceeds successor price curve")
+		return nil, &revisionFailure{reason: "REVISION_PRICE_BELOW_USAGE", stage: "reservation"}
 	}
 	if future.Sign() > 0 && future.Cmp(remaining) < 0 {
 		remaining.Set(future)
@@ -169,11 +197,19 @@ func (e *Engine) cancelRevisionLocked(ctx context.Context, rec *sessionstore.Rec
 		return nil, fmt.Errorf("receiver cancellation proof missing")
 	}
 	if result.Canceled || (result.Authorization != nil && result.Authorization.State == int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_EXPIRED_UNUSED)) {
+		basis := "receiver_fenced"
+		if !result.Canceled {
+			basis = "expired_unused"
+		}
+		if err := e.prepareRevisionEvidence(rec, false, basis); err != nil {
+			return nil, err
+		}
 		const detail = "authorization revision was not admitted; existing authority retained"
 		if err := e.cfg.Store.RefuseRevision(rec.SessionID, rec.RevisionIntent, "refill_refused", detail); err != nil {
 			return nil, err
 		}
-		return nil, protoErr("refill_refused", detail)
+		e.observeRevision(rec.RevisionIntent.Decision)
+		return nil, &ProtocolError{Code: "refill_refused", Detail: detail, Revision: rec.RevisionIntent.Decision}
 	}
 	return e.commitRevisionLocked(rec, p, result.Authorization, result.Account, nil)
 }
@@ -181,6 +217,9 @@ func (e *Engine) cancelRevisionLocked(ctx context.Context, rec *sessionstore.Rec
 func (e *Engine) commitRevisionLocked(rec *sessionstore.Record, p *pb.SpendAuthorizationPayload, usage *payment.SpendAuthorizationStatus, account *payment.WholesaleAccount, credited *big.Int) (*TopUpResult, error) {
 	if account == nil || usage == nil || (usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) && usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
 		return nil, fmt.Errorf("receiver revision authority unresolved")
+	}
+	if err := e.prepareRevisionEvidence(rec, true, ""); err != nil {
+		return nil, err
 	}
 	intent := rec.RevisionIntent
 	err := e.cfg.Store.CommitRevision(rec.SessionID, intent.RequestID, intent.Fingerprint, intent.LeaseExpiresAt, balanceString(account.Available), func(r *sessionstore.Record) error {
@@ -202,7 +241,8 @@ func (e *Engine) commitRevisionLocked(rec *sessionstore.Record, p *pb.SpendAutho
 	if err != nil {
 		return nil, err
 	}
-	return &TopUpResult{Lease: intent.LeaseExpiresAt, Balance: account.Available}, nil
+	e.observeRevision(intent.Decision)
+	return &TopUpResult{Lease: intent.LeaseExpiresAt, Balance: account.Available, Revision: intent.Decision}, nil
 }
 
 func (e *Engine) recoverRevisionIntents(ctx context.Context) {
@@ -230,4 +270,18 @@ func (e *Engine) recoverRevisionIntents(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (e *Engine) requestRevisionCancellation(ctx context.Context, rec *sessionstore.Record, p *pb.SpendAuthorizationPayload, reason, stage, code string) (*TopUpResult, error) {
+	if err := e.saveRevisionDecision(rec, e.revisionDecision(rec, reason, stage, code), true); err != nil {
+		return nil, err
+	}
+	return e.cancelRevisionLocked(ctx, rec, p)
+}
+func reservationFailureReason(err error) string {
+	var failure *revisionFailure
+	if errors.As(err, &failure) {
+		return failure.reason
+	}
+	return "RESERVATION_INVALID"
 }

@@ -30,7 +30,7 @@ import (
 
 const revisionTestKey = "0101010101010101010101010101010101010101010101010101010101010101"
 
-func realRevisionWire(t *testing.T, h *harness, id, predecessor string, units uint64, expired bool) []byte {
+func realRevisionWire(t *testing.T, h *harness, id, predecessor string, units uint64, expired bool, revision ...uint64) []byte {
 	t.Helper()
 	key, _ := crypto.HexToECDSA(revisionTestKey)
 	now := time.Now()
@@ -48,6 +48,9 @@ func realRevisionWire(t *testing.T, h *harness, id, predecessor string, units ui
 		AcceptedPrice: &pb.AcceptedPrice{Capability: h.spec.Capability, Offering: h.spec.Offering, PricePerUnitWei: &pb.BigUInt{Value: price.Bytes()}, UnitsPerPrice: per, WorkUnitName: h.spec.WorkUnit}, MaxTotalUnits: units, MaxDebitWei: &pb.BigUInt{Value: payment.BillFor(price, per, units).Bytes()}, RequestDigest: make([]byte, 32), NotBefore: now.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: end.Format(time.RFC3339Nano)}
 	if predecessor != "" {
 		p.PredecessorAuthorizationId, p.Revision = predecessor, 1
+		if len(revision) > 0 {
+			p.Revision = revision[0]
+		}
 	}
 	raw, err := proto.MarshalOptions{Deterministic: true}.Marshal(p)
 	if err != nil {

@@ -82,7 +82,7 @@ func newSessionTestServerWithRunner(t *testing.T, runnerHandler http.Handler) *h
 	return srv
 }
 
-func newSessionTestServerConfigured(t *testing.T, runnerHandler http.Handler, configure func(*config.Config)) (*httptest.Server, *Server) {
+func newSessionTestServerConfigured(t *testing.T, runnerHandler http.Handler, configure func(*config.Config), options ...Options) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
@@ -137,7 +137,11 @@ func newSessionTestServerConfigured(t *testing.T, runnerHandler http.Handler, co
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config: %v", err)
 	}
-	s, err := New(cfg, Options{})
+	var opts Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	s, err := New(cfg, opts)
 	if err != nil {
 		t.Fatalf("server: %v", err)
 	}

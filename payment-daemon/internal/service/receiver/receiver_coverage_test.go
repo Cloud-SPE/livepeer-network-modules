@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -120,6 +121,19 @@ func TestAdmitAuthorizationValidationMatrix(t *testing.T) {
 			_, err := svc.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{AuthorizationBytes: encodeAuthorization(t, ks, payload)})
 			if err == nil {
 				t.Fatal("invalid authorization accepted")
+			}
+			want := map[string]string{"payee": "PAYEE_MISMATCH", "chain": "CHAIN_OR_DENOMINATION_MISMATCH", "denomination": "CHAIN_OR_DENOMINATION_MISMATCH", "identity": "AUTHORIZATION_IDENTITY_INVALID", "broker": "AUTHORIZATION_REQUEST_BINDING_INVALID", "digest": "AUTHORIZATION_REQUEST_BINDING_INVALID", "caller-key": "CALLER_KEY_INVALID", "job-session": "REVISION_FIELDS_INVALID", "session-id": "REVISION_FIELDS_INVALID", "protocol": "PROTOCOL_UNSUPPORTED", "route": "PRICE_SCOPE_MISMATCH", "denominator": "PRICE_INVALID", "unit": "PRICE_INVALID", "not-before": "AUTHORIZATION_TIME_INVALID", "expiry": "AUTHORIZATION_TIME_INVALID", "future": "AUTHORIZATION_NOT_ACTIVE", "maximum": "AUTHORIZATION_LIMITS_INVALID", "units": "AUTHORIZATION_LIMITS_INVALID", "underfunded": "DEBIT_CAP_BELOW_PRICE"}[tc.name]
+			var reason string
+			for _, d := range status.Convert(err).Details() {
+				if info, ok := d.(*errdetails.ErrorInfo); ok && info.Domain == "payments.livepeer.org" {
+					reason = info.Reason
+					if info.Metadata["request_id"] != payload.RequestId {
+						t.Fatal("missing correlation")
+					}
+				}
+			}
+			if reason != want {
+				t.Fatalf("reason=%s want=%s", reason, want)
 			}
 		})
 	}

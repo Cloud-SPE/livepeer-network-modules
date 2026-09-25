@@ -27,7 +27,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/server/middleware"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionengine"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
-	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/settlement"
 	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/protobuf/proto"
 )
@@ -50,6 +49,7 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /v1/session/{id}/end", s.handleSessionEnd)
 	s.mux.HandleFunc("POST /v1/session/{id}/events", s.handleSessionEvents)
 	s.mux.HandleFunc("GET /v1/session/{id}/ws", s.handleSessionWS)
+	s.mux.HandleFunc("GET /v1/session/{id}/revisions/{request_id}", s.handleSessionRevision)
 }
 
 // sessionCapability finds the paid-session tuple an offer serves,
@@ -279,12 +279,8 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set(livepeerheader.Backoff, strconv.Itoa(backoff))
 			w.Header().Set(livepeerheader.WorkUnits, "0")
 			w.Header().Set(livepeerheader.Error, livepeerheader.ErrCapacityExhausted)
-			if rec, getErr := s.sessionStore.Get(capacity.SessionID); getErr == nil {
-				if set := s.sessionEngine.SettlementFor(rec, specFromCapability(c)); set != nil {
-					if encoded, encodeErr := settlement.Encode(set, s.settlementSigner); encodeErr == nil {
-						w.Header().Set(livepeerheader.Settlement, encoded)
-					}
-				}
+			if set, encoded, encodeErr := s.signedSessionSettlement(r.Context(), capacity.SessionID); encodeErr == nil && set != nil {
+				w.Header().Set(livepeerheader.Settlement, encoded)
 			}
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"error": map[string]any{
@@ -430,6 +426,7 @@ func (s *Server) handleSessionStatus(w http.ResponseWriter, r *http.Request) {
 		"gateway_session_id": rec.GatewaySessionID,
 		"work_id":            rec.WorkID,
 		"authorization_id":   rec.AccountAuthorizationID,
+		"revision":           rec.LastRevision,
 		"state":              rec.State,
 		"runtime": map[string]any{
 			"schema": rec.DescriptorSchema,
@@ -543,6 +540,7 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"session_id": rec.SessionID,
 		"work_id":    workID,
+		"revision":   res.Revision,
 		"lease":      map[string]any{"expires_at": res.Lease.Format(time.RFC3339)},
 	}
 	if spec := s.specForRecord(rec); spec != nil && fresh != nil {
@@ -557,9 +555,8 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 // It exists because the record's normal path — a response header — runs
 // through a customer-controlled SDK that can drop it, and because after a
 // rotation a reader may hold a work_id that is no longer current.
-// Authorisation is the session credential, same as every other session
-// read; the record is regenerated per query rather than cached, so its
-// issued_at is a statement about now.
+// Public evidence is retrieved with the unguessable identifier and verified
+// against the delegated signing key. Terminal evidence is frozen and replayed.
 func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 
@@ -619,21 +616,15 @@ func (s *Server) handleSettlement(w http.ResponseWriter, r *http.Request) {
 	// operator wanting caller authentication puts mTLS in front; the
 	// contract does not change.
 	spec := s.specForRecord(rec)
-	if spec == nil {
+	if spec == nil && len(rec.TerminalSettlement) == 0 {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"no offering spec for this session")
 		return
 	}
-	set := s.sessionEngine.SettlementFor(rec, spec)
-	if set == nil {
+	set, encoded, err := s.signedSessionSettlement(r.Context(), rec.SessionID)
+	if set == nil || err != nil {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
 			"settlement unavailable")
-		return
-	}
-	encoded, err := settlement.Encode(set, s.settlementSigner)
-	if err != nil {
-		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError,
-			"encode settlement: "+err.Error())
 		return
 	}
 	w.Header().Set(livepeerheader.Settlement, encoded)
@@ -679,10 +670,8 @@ func (s *Server) handleSessionEnd(w http.ResponseWriter, r *http.Request) {
 	// retrievable afterwards (GET /v1/settlement/{id}) — a settlement
 	// delivered once through a channel that can drop it is not a
 	// settlement a clearinghouse can rely on.
-	if set, err := s.sessionEngine.RecordSettlement(r.Context(), rec.SessionID); err == nil && set != nil {
-		if encoded, err := settlement.Encode(set, s.settlementSigner); err == nil {
-			w.Header().Set(livepeerheader.Settlement, encoded)
-		}
+	if set, encoded, err := s.signedSessionSettlement(r.Context(), rec.SessionID); err == nil && set != nil {
+		w.Header().Set(livepeerheader.Settlement, encoded)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"session_id":   final.SessionID,
@@ -931,6 +920,16 @@ func (s *Server) sessionControlURLs(sessionID string) map[string]string {
 }
 
 func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
+	if decision := revisionFromError(err); decision != nil {
+		code, httpCode, message := "refill_refused", http.StatusConflict, "authorization revision was not admitted; existing authority retained"
+		if decision.Outcome == "pending" {
+			code, httpCode, message = "revision_pending", http.StatusServiceUnavailable, "authorization revision is unresolved; retry the same request"
+			w.Header().Set("Retry-After", "1")
+		}
+		w.Header().Set(livepeerheader.Error, code)
+		writeJSON(w, httpCode, map[string]any{"error": code, "message": message, "revision": decision})
+		return
+	}
 	var pe *sessionengine.ProtocolError
 	if errors.As(err, &pe) {
 		status := http.StatusBadRequest

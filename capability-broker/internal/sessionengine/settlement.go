@@ -2,12 +2,15 @@ package sessionengine
 
 import (
 	"context"
+	"fmt"
+	"math"
 	"math/big"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/protobuf/proto"
 )
 
 // Settlement for paid-session/v1.
@@ -19,17 +22,25 @@ import (
 //
 // The authoritative billing quantity is cumulative debited_units — what
 // the ledger moved — not claimed_units, which is only what a runner
-// asserted. The two cannot diverge in this engine (the debit is issued
-// before the commit and both totals advance in one store update), so a
-// record where they differ is a defect to assert on rather than an
-// accounting subtlety to interpret.
+// asserted. Coarse runner reports can cross the signed allowance: excess
+// claimed work is unbilled seller risk, never additional payer liability.
 
 // SettlementFor builds the settlement record for a session as of now.
 // State distinguishes an interim snapshot from a final settlement, so a
 // reader can tell "this session is still running" from "this is what it
 // cost".
 func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb.SettlementRecord {
-	if rec == nil || spec == nil {
+	if rec == nil {
+		return nil
+	}
+	if len(rec.TerminalSettlement) > 0 {
+		var frozen pb.SettlementRecord
+		if proto.Unmarshal(rec.TerminalSettlement, &frozen) != nil {
+			return nil
+		}
+		return &frozen
+	}
+	if spec == nil {
 		return nil
 	}
 	amount := spec.PricePerWorkUnitWei
@@ -99,10 +110,14 @@ func (e *Engine) SettlementFor(rec *sessionstore.Record, spec *OfferingSpec) *pb
 		breakdown["last_failure_code"] = rec.LastFailureCode
 	}
 	if rec.ClaimedTotal != rec.DebitedTotal {
-		// Recorded rather than smoothed over: the two advance in one
-		// commit, so a gap is a bug in this broker and a reader should
-		// treat it the way it treats a bad signature.
+		// Preserve the observation; authorization exhaustion can intentionally
+		// leave delivered work above the paid cap.
 		breakdown["claim_debit_gap"] = "true"
+		if rec.ClaimedTotal > rec.DebitedTotal && rec.DebitedTotal == rec.AuthorizationMaxUnits && rec.CloseReason == ReasonAuthorizationExhausted {
+			breakdown["claim_debit_gap_reason"] = "authorization_cap"
+		} else {
+			breakdown["claim_debit_gap_reason"] = "unreconciled_claim"
+		}
 	}
 	if len(breakdown) > 0 {
 		out.Breakdown = breakdown
@@ -120,28 +135,60 @@ func (e *Engine) RecordSettlement(ctx context.Context, sessionID string) (*pb.Se
 }
 
 func (e *Engine) recordSettlementLocked(_ context.Context, sessionID string) (*pb.SettlementRecord, error) {
-	var seq uint64
-	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
-		r.SettlementSeq++
-		seq = r.SettlementSeq
-		return nil
-	}); err != nil {
-		return nil, err
-	}
 	rec, err := e.cfg.Store.Get(sessionID)
 	if err != nil {
 		return nil, err
 	}
+	if rec.Terminal() && len(rec.TerminalSettlement) > 0 {
+		return e.SettlementFor(rec, nil), nil
+	}
 	spec := e.cfg.Specs(sessionID)
 	if spec == nil {
-		return nil, nil
+		return nil, fmt.Errorf("settlement offering unavailable")
 	}
-	out := e.SettlementFor(rec, spec)
-	if out == nil {
-		return nil, nil
+	var out *pb.SettlementRecord
+	err = e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
+		if r.Terminal() {
+			if err := e.freezeTerminalSettlement(r, spec); err != nil {
+				return err
+			}
+			out = e.SettlementFor(r, nil)
+		} else {
+			if r.SettlementSeq == math.MaxUint64 {
+				return fmt.Errorf("settlement sequence exhausted")
+			}
+			r.SettlementSeq++
+			out = e.SettlementFor(r, spec)
+		}
+		return nil
+	})
+	return out, err
+}
+
+// Called inside the terminal state transaction. The broker session sequence is
+// independent from receiver advance/settlement sequences. Old terminal records
+// are repaired through the same operation before their next publication.
+func (e *Engine) freezeTerminalSettlement(r *sessionstore.Record, spec *OfferingSpec) error {
+	if len(r.TerminalSettlement) > 0 {
+		return nil
 	}
-	out.SettlementSeq = seq
-	return out, nil
+	if spec == nil {
+		return fmt.Errorf("settlement offering unavailable")
+	}
+	if r.SettlementSeq == math.MaxUint64 {
+		return fmt.Errorf("settlement sequence exhausted")
+	}
+	r.SettlementSeq++
+	record := e.SettlementFor(r, spec)
+	if record == nil {
+		return fmt.Errorf("settlement unavailable")
+	}
+	raw, err := proto.Marshal(record)
+	if err != nil {
+		return err
+	}
+	r.TerminalSettlement = raw
+	return nil
 }
 
 // wireState maps this broker's internal session state onto the three

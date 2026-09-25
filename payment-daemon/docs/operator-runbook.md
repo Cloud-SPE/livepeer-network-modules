@@ -7,6 +7,31 @@ audience: orchestrator operators, gateway operators, on-call
 
 # Operator runbook
 
+## Admission diagnostics and cancellation evidence
+
+Receiver admission replies carry `google.rpc.ErrorInfo` in domain
+`payments.livepeer.org` for recognized refusals, with a bounded reason and safe
+request, authorization, predecessor, gateway-session and revision correlation.
+The `authorization admission decision` log uses the same fields and gRPC code;
+it does not log signed authorization, ticket, payment or private error content.
+Unknown/internal failures are unresolved outcomes, not evidence of non-admission.
+
+`CancelAuthorizationAdmission` checks the durable settlement domain and atomically
+returns an existing matching admission or persists a fence for payer plus
+authorization ID and SHA-256 of the exact signed authorization bytes.
+`SPEND_AUTHORIZATION_CANCELED_UNUSED` survives restart, has no reversal/expiry
+operation and prevents future admission of that identity. It carries zero usage;
+it does not settle or release predecessor usage. Existing admitted authority
+wins a race with cancellation. Retain the fence ledger with all other receiver
+state; restoring a pre-fence backup cannot preserve this guarantee.
+
+The socket response is not independently signed. LOC obtains attributable proof
+from the broker's signed `SessionRevisionRecord`, binding payer, payee,
+authorization, fingerprint, settlement domain and session. The broker's terminal
+`settlement_seq` is a separate sequence from the receiver usage sequence; do not
+copy the latter into an already-signed envelope. See the
+[session contract](../../livepeer-network-protocol/protocols/paid-session.md#meaning-of-canceled_unused).
+
 This runbook is for two audiences:
 
 - **Orchestrator operators** running the daemon in `--mode receiver` to

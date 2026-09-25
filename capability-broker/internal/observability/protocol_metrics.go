@@ -8,6 +8,9 @@ import (
 // v1 protocol-engine metrics. Labels are bounded vocabularies only —
 // close reasons, transports, and coarse outcomes; never ids.
 var (
+	sessionRevisionsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "livepeer_protocol_session_revision_decisions_total", Help: "Durable revision decisions by outcome, stage and safe reason; excludes replay reads.",
+	}, []string{"outcome", "stage", "reason"})
 	sessionOpensTotal = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "livepeer_protocol_session_opens_total",
 		Help: "paid-session opens by outcome (opened|replayed|rejected|failed).",
@@ -72,4 +75,9 @@ func RecordSessionDebit(units uint64) { sessionDebitUnitsTotal.Add(float64(units
 // RecordJobExchange counts one paid-job exchange.
 func RecordJobExchange(transport, outcome string) {
 	jobExchangesTotal.WithLabelValues(transport, outcome).Inc()
+}
+
+// Inputs originate in the engine's reason/stage allowlist, never receiver text.
+func RecordSessionRevision(outcome, stage, reason string) {
+	sessionRevisionsTotal.WithLabelValues(outcome, stage, reason).Inc()
 }

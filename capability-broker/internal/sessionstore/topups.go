@@ -26,11 +26,14 @@ type TopUpRecord struct {
 	// LeaseExpiresAt and BalanceWei are the response the caller got.
 	// Replayed verbatim: converging on the recorded outcome means the
 	// original answer, not a fresh reading of state that has moved on.
-	LeaseExpiresAt time.Time `json:"lease_expires_at"`
-	BalanceWei     string    `json:"balance_wei"`
-	CreatedAt      time.Time `json:"created_at"`
-	ErrorCode      string    `json:"error_code,omitempty"`
-	ErrorDetail    string    `json:"error_detail,omitempty"`
+	LeaseExpiresAt   time.Time         `json:"lease_expires_at"`
+	BalanceWei       string            `json:"balance_wei"`
+	CreatedAt        time.Time         `json:"created_at"`
+	ErrorCode        string            `json:"error_code,omitempty"`
+	ErrorDetail      string            `json:"error_detail,omitempty"`
+	Decision         *RevisionDecision `json:"decision,omitempty"`
+	RevisionEvidence []byte            `json:"revision_evidence,omitempty"`
+	RevisionEnvelope string            `json:"revision_envelope,omitempty"`
 }
 
 func topupKey(sessionID, requestID string) []byte {

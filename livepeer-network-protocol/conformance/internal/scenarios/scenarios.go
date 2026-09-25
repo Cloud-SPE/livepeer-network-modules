@@ -16,7 +16,8 @@ import (
 
 // All returns the full suite.
 func All() []harness.Scenario {
-	return append(append(append(jobScenarios(), sessionScenarios()...), descriptorScenarios()...), attachScenarios()...)
+	all := append(append(append(jobScenarios(), sessionScenarios()...), descriptorScenarios()...), attachScenarios()...)
+	return append(all, terminalEvidenceScenario())
 }
 
 // ---------------------------------------------------------------------------

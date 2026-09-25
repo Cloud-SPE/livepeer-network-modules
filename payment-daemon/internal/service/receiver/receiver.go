@@ -57,66 +57,66 @@ type Service struct {
 // AdmitAuthorization verifies a payer signature, optionally processes a
 // funding batch, and atomically transfers that ticket credit into the stable
 // payer-payee account while reserving this authorization's maximum.
-func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthorizationRequest) (*pb.AdmitAuthorizationResponse, error) {
+func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthorizationRequest) (*pb.AdmitAuthorizationResponse, error) {
 	s.sourceGate.RLock()
 	defer s.sourceGate.RUnlock()
 	if err := s.requireUnfrozenSource(); err != nil {
 		return nil, err
 	}
 	if len(req.GetAuthorizationBytes()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "authorization_bytes is required")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_MALFORMED", "authorization_bytes is required")
 	}
 	var auth pb.SpendAuthorization
 	if err := proto.Unmarshal(req.GetAuthorizationBytes(), &auth); err != nil {
-		return nil, status.Errorf(codes.InvalidArgument, "decode authorization: %v", err)
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_MALFORMED", "authorization decoding failed")
 	}
 	if err := spendauth.Verify(&auth); err != nil {
-		return nil, status.Errorf(codes.PermissionDenied, "verify authorization: %v", err)
+		return nil, admissionStatus(codes.PermissionDenied, "AUTHORIZATION_SIGNATURE_INVALID", "authorization signature verification failed")
 	}
 	payload := auth.GetPayload()
 	if s.settlementDomainErr != nil || payload.GetSettlementDomainId() != s.settlementDomainID || s.settlementDomainID == "" {
-		return nil, status.Error(codes.PermissionDenied, "authorization settlement domain does not match receiver ledger")
+		return nil, admissionStatus(codes.PermissionDenied, "SETTLEMENT_DOMAIN_MISMATCH", "authorization settlement domain does not match receiver ledger")
 	}
 	if !bytes.Equal(payload.GetPayee(), s.recipient) {
-		return nil, status.Error(codes.PermissionDenied, "authorization payee does not match receiver")
+		return nil, admissionStatus(codes.PermissionDenied, "PAYEE_MISMATCH", "authorization payee does not match receiver")
 	}
 	if payload.GetChainId() == 0 || (s.chainID != 0 && payload.GetChainId() != s.chainID) || payload.GetDenomination() != "wei" {
-		return nil, status.Error(codes.PermissionDenied, "authorization chain or denomination does not match receiver")
+		return nil, admissionStatus(codes.PermissionDenied, "CHAIN_OR_DENOMINATION_MISMATCH", "authorization chain or denomination does not match receiver")
 	}
 	if payload.GetAuthorizationId() == "" || payload.GetRequestId() == "" || payload.GetAcceptedPrice() == nil {
-		return nil, status.Error(codes.InvalidArgument, "authorization identity and accepted_price are required")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_IDENTITY_INVALID", "authorization identity and accepted_price are required")
 	}
 	if payload.GetBrokerUri() == "" || len(payload.GetRequestDigest()) != sha256.Size {
-		return nil, status.Error(codes.InvalidArgument, "authorization broker_uri and SHA-256 request_digest are required")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_REQUEST_BINDING_INVALID", "authorization broker_uri and SHA-256 request_digest are required")
 	}
 	if keyLen := len(payload.GetCallerPublicKey()); keyLen != 0 && keyLen != 33 && keyLen != 65 {
-		return nil, status.Error(codes.InvalidArgument, "authorization caller_public_key has invalid length")
+		return nil, admissionStatus(codes.InvalidArgument, "CALLER_KEY_INVALID", "authorization caller_public_key has invalid length")
 	}
 	switch payload.GetProtocol() {
 	case "paid-job/v1":
 		if payload.GetSessionId() != "" || payload.GetRevision() != 0 || payload.GetPredecessorAuthorizationId() != "" {
-			return nil, status.Error(codes.InvalidArgument, "paid-job/v1 cannot carry session revision fields")
+			return nil, admissionStatus(codes.InvalidArgument, "REVISION_FIELDS_INVALID", "paid-job/v1 cannot carry session revision fields")
 		}
 	case "paid-session/v1":
 		if payload.GetSessionId() == "" || (payload.GetRevision() == 0) != (payload.GetPredecessorAuthorizationId() == "") {
-			return nil, status.Error(codes.InvalidArgument, "paid-session/v1 session and revision fields are inconsistent")
+			return nil, admissionStatus(codes.InvalidArgument, "REVISION_FIELDS_INVALID", "paid-session/v1 session and revision fields are inconsistent")
 		}
 	default:
-		return nil, status.Error(codes.InvalidArgument, "authorization protocol is unsupported")
+		return nil, admissionStatus(codes.InvalidArgument, "PROTOCOL_UNSUPPORTED", "authorization protocol is unsupported")
 	}
 	if payload.GetCapability() != payload.GetAcceptedPrice().GetCapability() || payload.GetOffering() != payload.GetAcceptedPrice().GetOffering() {
-		return nil, status.Error(codes.InvalidArgument, "authorization route differs from accepted_price")
+		return nil, admissionStatus(codes.InvalidArgument, "PRICE_SCOPE_MISMATCH", "authorization route differs from accepted_price")
 	}
 	if payload.GetAcceptedPrice().GetUnitsPerPrice() == 0 || payload.GetAcceptedPrice().GetWorkUnitName() == "" {
-		return nil, status.Error(codes.InvalidArgument, "authorization price denominator and work unit are required")
+		return nil, admissionStatus(codes.InvalidArgument, "PRICE_INVALID", "authorization price denominator and work unit are required")
 	}
 	notBefore, err := time.Parse(time.RFC3339Nano, payload.GetNotBefore())
 	if err != nil {
-		return nil, status.Error(codes.InvalidArgument, "authorization not_before must be RFC3339")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_TIME_INVALID", "authorization not_before must be RFC3339")
 	}
 	expiresAt, err := time.Parse(time.RFC3339Nano, payload.GetExpiresAt())
 	if err != nil || !expiresAt.After(notBefore) {
-		return nil, status.Error(codes.InvalidArgument, "authorization expires_at must be after not_before")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_TIME_INVALID", "authorization expires_at must be after not_before")
 	}
 	now := time.Now().UTC()
 	if now.Before(notBefore) {
@@ -125,10 +125,10 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	maxDebit := new(big.Int).SetBytes(payload.GetMaxDebitWei().GetValue())
 	price := new(big.Int).SetBytes(payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
 	if maxDebit.Sign() <= 0 || price.Sign() < 0 || payload.GetMaxTotalUnits() == 0 {
-		return nil, status.Error(codes.InvalidArgument, "authorization maximum and price are invalid")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_LIMITS_INVALID", "authorization maximum and price are invalid")
 	}
 	if required := store.BillFor(price, payload.GetAcceptedPrice().GetUnitsPerPrice(), payload.GetMaxTotalUnits()); required.Cmp(maxDebit) > 0 {
-		return nil, status.Error(codes.InvalidArgument, "max_debit_wei cannot cover max_total_units at accepted price")
+		return nil, admissionStatus(codes.InvalidArgument, "DEBIT_CAP_BELOW_PRICE", "max_debit_wei cannot cover max_total_units at accepted price")
 	}
 	fingerprint := sha256.Sum256(req.GetAuthorizationBytes())
 	// Admission retries must converge before re-processing an optional ticket.
@@ -138,7 +138,7 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	// durable idempotency record and therefore wins this race.
 	if existing, lookupErr := s.store.GetWholesaleAuthorization(payload.GetPayer(), payload.GetAuthorizationId()); lookupErr == nil {
 		if !bytes.Equal(existing.Fingerprint, fingerprint[:]) {
-			return nil, status.Error(codes.InvalidArgument, "authorization_id reused with different content")
+			return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_ID_REUSED", "authorization_id reused with different content")
 		}
 		if existing.State == store.AuthorizationCanceledUnused {
 			return nil, admissionFailure("AUTHORIZATION_ADMISSION_CANCELED", "authorization admission was canceled")
@@ -163,14 +163,17 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	if len(req.GetPaymentBytes()) > 0 && expiresAt.After(now) {
 		var payment pb.Payment
 		if err := proto.Unmarshal(req.GetPaymentBytes(), &payment); err != nil || payment.GetTicketParams() == nil {
-			return nil, status.Error(codes.InvalidArgument, "funding payment is malformed")
+			return nil, admissionStatus(codes.InvalidArgument, "FUNDING_MALFORMED", "funding payment is malformed")
 		}
 		if !bytes.Equal(payment.GetSender(), payload.GetPayer()) {
-			return nil, status.Error(codes.PermissionDenied, "funding payment sender does not match authorization payer")
+			return nil, admissionStatus(codes.PermissionDenied, "FUNDING_PAYER_MISMATCH", "funding payment sender does not match authorization payer")
 		}
 		fundingWorkID = hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
 		processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
 		if err != nil {
+			if status.Code(err) == codes.InvalidArgument || status.Code(err) == codes.PermissionDenied || status.Code(err) == codes.FailedPrecondition {
+				return nil, admissionStatus(status.Code(err), "FUNDING_VALIDATION_FAILED", "funding validation failed")
+			}
 			return nil, err
 		}
 		// NONCE_REPLAY is the expected recovery signal if the daemon
@@ -180,7 +183,7 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		// batch is a real refusal.
 		allRejected := processed.GetTicketsRejected() == int32(len(payment.GetTicketSenderParams()))
 		if len(payment.GetTicketSenderParams()) == 0 || (allRejected && processed.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY) {
-			return nil, status.Error(codes.FailedPrecondition, "funding payment credited no tickets")
+			return nil, admissionFailure(fundingRejectionReason(processed.GetDominantRejection()), "funding payment credited no tickets")
 		}
 	}
 	reservation := new(big.Int).SetBytes(req.GetReservationValueWei().GetValue())
@@ -196,7 +199,7 @@ func (s *Service) AdmitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		return nil, admissionFailure("INSUFFICIENT_WHOLESALE_CREDIT", "insufficient wholesale account balance for requested reservation")
 	}
 	if errors.Is(err, store.ErrAuthorizationFingerprint) {
-		return nil, status.Error(codes.InvalidArgument, "authorization_id reused with different content")
+		return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_ID_REUSED", "authorization_id reused with different content")
 	}
 	switch {
 	case errors.Is(err, store.ErrReservationExceedsRemaining):

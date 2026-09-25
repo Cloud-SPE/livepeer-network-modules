@@ -29,8 +29,9 @@ import (
 // ProtocolError is a claim/request the protocol rejects; it advances no
 // state (paid-session/v1 §7.2). Code is a stable machine-readable tag.
 type ProtocolError struct {
-	Code   string
-	Detail string
+	Code     string
+	Detail   string
+	Revision *sessionstore.RevisionDecision
 }
 
 func (e *ProtocolError) Error() string { return e.Code + ": " + e.Detail }
@@ -41,7 +42,10 @@ func protoErr(code, format string, args ...any) error {
 
 // RetryableError is a transient failure; the runner retries the same
 // event and converges (exactly-once, §7.3).
-type RetryableError struct{ Err error }
+type RetryableError struct {
+	Err      error
+	Revision *sessionstore.RevisionDecision
+}
 
 func (e *RetryableError) Error() string { return "retryable: " + e.Err.Error() }
 func (e *RetryableError) Unwrap() error { return e.Err }
@@ -165,6 +169,7 @@ type Config struct {
 	// already written — so an observer can attribute the session
 	// (BackendRef, Capability, Offering) without a second store read.
 	OnWinddown func(rec sessionstore.Record, reason string)
+	OnRevision func(outcome, stage, reason string)
 	// OnEvent observes session happenings for push surfaces (the
 	// control-WS binding). kind is a frame type; data its body. nil is
 	// a no-op. Observability only — never control flow, and the HTTP
@@ -920,8 +925,9 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 
 // TopUpResult carries the new funding state and lease.
 type TopUpResult struct {
-	Lease   time.Time
-	Balance *big.Int
+	Lease    time.Time
+	Balance  *big.Int
+	Revision *sessionstore.RevisionDecision
 }
 
 // ReviseAuthorization atomically replaces an account-backed session's signed
@@ -949,17 +955,17 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		return nil, err
 	} else if prior != nil {
 		if prior.ErrorCode != "" {
-			return nil, protoErr(prior.ErrorCode, "%s", prior.ErrorDetail)
+			return nil, &ProtocolError{Code: prior.ErrorCode, Detail: prior.ErrorDetail, Revision: prior.Decision}
 		}
 		bal, _ := new(big.Int).SetString(prior.BalanceWei, 10)
-		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal}, nil
+		return &TopUpResult{Lease: prior.LeaseExpiresAt, Balance: bal, Revision: prior.Decision}, nil
 	}
 	if rec.RevisionIntent != nil {
 		if rec.RevisionIntent.RequestID == requestID && !bytesEqual(rec.RevisionIntent.Fingerprint, fp) {
 			return nil, protoErr("request_id_reuse", "request id reused with different revision")
 		}
 		if rec.RevisionIntent.RequestID != requestID {
-			return nil, &RetryableError{Err: errors.New("previous authorization revision remains unresolved")}
+			return nil, &RetryableError{Err: errors.New("previous authorization revision remains unresolved"), Revision: rec.RevisionIntent.Decision}
 		}
 		return e.resumeRevisionLocked(ctx, sessionID, true)
 	}
@@ -1017,13 +1023,12 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		lease = max
 	}
 	intent := &sessionstore.RevisionIntent{RequestID: requestID, AuthorizationBytes: append([]byte(nil), authorizationBytes...), PaymentBytes: append([]byte(nil), paymentBytes...), Fingerprint: append([]byte(nil), fp...), ReservationWei: reservation.String(), LeaseExpiresAt: lease}
-	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
-		if r.RevisionIntent != nil {
-			return errors.New("revision already pending")
+	rec.RevisionIntent = intent
+	intent.Decision = e.revisionDecision(rec, "ADMISSION_PENDING", "admission", "")
+	if err := e.cfg.Store.BeginRevision(sessionID, intent); err != nil {
+		if errors.Is(err, sessionstore.ErrRequestIDReuse) || errors.Is(err, sessionstore.ErrNonAdmissionIssued) {
+			return nil, protoErr("request_id_reuse", "request id already has a durable outcome")
 		}
-		r.RevisionIntent = intent
-		return nil
-	}); err != nil {
 		return nil, &RetryableError{Err: err}
 	}
 	return e.resumeRevisionLocked(ctx, sessionID, true)
@@ -1189,6 +1194,7 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 	// write leaves the record pending, with its obligations recorded
 	// as met, and the next sweep finishes the job.
 	var ended sessionstore.Record
+	settlementSpec := e.cfg.Specs(sessionID)
 	if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error {
 		r.State = state
 		r.CloseReason = reason
@@ -1203,6 +1209,9 @@ func (e *Engine) winddownLocked(ctx context.Context, sessionID, reason string) {
 		r.RunnerTerminated = true
 		r.EndedAt = now
 		r.CapacityRef = ""
+		if err := e.freezeTerminalSettlement(r, settlementSpec); err != nil {
+			return err
+		}
 		ended = *r
 		return nil
 	}); err != nil {

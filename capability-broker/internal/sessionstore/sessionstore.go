@@ -102,8 +102,9 @@ type GrantAudit struct {
 // Record is the on-disk session record — the paid-session/v1 §9.1
 // persistence list, field for field.
 type Record struct {
-	RevisionIntent       *RevisionIntent `json:"-"`
-	RevisionIntentSealed []byte          `json:"revision_intent_sealed,omitempty"`
+	LastRevision         *RevisionDecision `json:"last_revision,omitempty"`
+	RevisionIntent       *RevisionIntent   `json:"-"`
+	RevisionIntentSealed []byte            `json:"revision_intent_sealed,omitempty"`
 	// Identifiers.
 	SessionID        string `json:"session_id"`
 	GatewaySessionID string `json:"gateway_session_id"`
@@ -171,7 +172,9 @@ type Record struct {
 	RotationGeneration uint32 `json:"rotation_generation,omitempty"`
 	// SettlementSeq orders settlement records for this logical session across
 	// authorization revisions.
-	SettlementSeq uint64 `json:"settlement_seq,omitempty"`
+	SettlementSeq              uint64 `json:"settlement_seq,omitempty"`
+	TerminalSettlement         []byte `json:"terminal_settlement,omitempty"`
+	TerminalSettlementEnvelope string `json:"terminal_settlement_envelope,omitempty"`
 	// FundedWei is optional account funding credited alongside this
 	// authorization chain. It is not reservation or workload usage.
 	FundedWei string `json:"funded_wei,omitempty"`
@@ -293,6 +296,10 @@ func Open(path string, key []byte) (*Store, error) {
 		return nil, fmt.Errorf("sessionstore: init bucket: %w", err)
 	}
 	st := &Store{db: db, aead: aead}
+	if err := st.migrateRevisionCoverage(); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("sessionstore: revision coverage: %w", err)
+	}
 	// Stamp coverage at OPEN, not lazily at the first query that needs
 	// it. Stamped lazily, a broker that had been running for days would
 	// mark its coverage as beginning the moment somebody first asked —

@@ -202,6 +202,35 @@ cooldown. Runner termination continues while payment closure is pending.
 Persistent receiver conflicts or outages remain visible as `winding_down` and
 must not be treated as a final zero-use settlement.
 
+Revision decisions now preserve the original safe receiver refusal before
+cancellation. The `session revision decision` log includes session, gateway,
+request, predecessor/successor, revision, outcome, stage, reason, receiver code,
+requested/effective reservation, receiver cumulative billing and signed caps.
+It never includes authorization/payment bytes. The metric
+`livepeer_protocol_session_revision_decisions_total{outcome,stage,reason}` counts
+observations (including retries), with bounded labels and no identity labels.
+`revision_pending` means retry the identical request or read
+`GET /v1/session/{id}/revisions/{request_id}`; a final `refill_refused` response
+retains the predecessor. Signed revision evidence gives LOC an independently
+queryable successor outcome; the generic non-admission endpoint cannot replace it.
+Previously erased rejection reasons cannot be reconstructed by upgrading.
+
+Terminal settlement now freezes its payload and positive broker session sequence
+durably. Repeated settlement lookup or close replays the original signed envelope.
+Historical terminal records without a snapshot are repaired once before their
+next publication. Do not substitute the receiver's sequence into the signed
+envelope. A previously rejected sequence-zero terminal can be fetched again after
+upgrade; LOC must verify the replacement normally. Existing frozen evidence can
+be served even if its offering is subsequently removed.
+
+`authorization_exhausted` with 124 claimed / 120 debited is a valid cap overshoot
+when receiver accounting and signed limits confirm it. Only 120 is billed;
+`claim_debit_gap_reason: authorization_cap` distinguishes this from an unexplained
+gap. A refused successor's `canceled_unused` state survives receiver restart and
+prevents future admission; its signed evidence applies to the successor alone.
+See the [wire contract](../../livepeer-network-protocol/protocols/paid-session.md#revision-decisions-and-evidence)
+for identity checks, retention boundaries and replay rules.
+
 After recovery, verify the active receiver authorization is settled, its
 reservation is released, and the signed settlement fetched by broker or gateway
 session ID matches cumulative units and billed wei and retains the original

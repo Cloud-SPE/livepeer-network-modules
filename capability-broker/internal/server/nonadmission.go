@@ -150,6 +150,24 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Refill IDs require receiver-backed revision evidence, including after
+	// outcome eviction. Never infer non-admission from missing initial-open state.
+	if id, err := s.sessionStore.RevisionRequestSession(requestID); err != nil {
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, "revision_pending", "revision coverage unavailable")
+		return
+	} else if id != "" {
+		livepeerheader.WriteError(w, http.StatusConflict, "revision_evidence_required", "query the session revision outcome")
+		return
+	}
+
+	if q.Protocol == "paid-session/v1" {
+		started, err := s.sessionStore.RevisionCoverageStartedAt()
+		if err != nil || issuedAt.Before(started) {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrCoverageGap, "session revision coverage does not reach this issuance")
+			return
+		}
+	}
+
 	// A record already issued is returned verbatim. Re-signing would
 	// produce a second signed statement about one fact, under a later
 	// observed_at, and a consumer holding both cannot tell that they

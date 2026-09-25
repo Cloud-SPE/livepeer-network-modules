@@ -108,7 +108,7 @@ func (s *Store) RecordNonAdmission(requestID, envelope string, observedAt time.T
 		if jobs != nil && jobs.Get([]byte(requestID)) != nil {
 			return ErrExists
 		}
-		for _, bucket := range []string{openReservationsBucket, openRequestsBucket, admittedBucket} {
+		for _, bucket := range []string{openReservationsBucket, openRequestsBucket, admittedBucket, revisionRequestsBucket} {
 			if b := tx.Bucket([]byte(bucket)); b != nil && b.Get([]byte(requestID)) != nil {
 				return ErrExists
 			}

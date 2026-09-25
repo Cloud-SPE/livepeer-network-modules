@@ -1,0 +1,24 @@
+{
+  "description": "Broker-local runner capacity applies to starting and active sessions and to complete job exchanges; there is no waiting queue.",
+  "max_in_flight": 2,
+  "queue_limit": 8,
+  "concurrent_opens": 12,
+  "accepted": 2,
+  "open_status": 201,
+  "replay_status": 201,
+  "rejected_status": 503,
+  "rejected_error": "capacity_exhausted",
+  "backoff_seconds": "5",
+  "occupancy": {
+    "starting": 2,
+    "active": 2,
+    "after_replay_or_refill": 2,
+    "after_restart": 2,
+    "termination_unconfirmed": 2,
+    "one_stopped_settlement_pending": 1,
+    "all_stopped": 0
+  },
+  "job_transports": ["unary", "multipart", "stream"],
+  "unknown_create_outcome": "retain_opening_reservation_and_slot",
+  "stopped_settlement_pending": "free_slot_withhold_terminal_settlement"
+}

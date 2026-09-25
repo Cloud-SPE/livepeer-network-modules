@@ -57,7 +57,7 @@ func newJobOfferBroker(t *testing.T, backendCalls *atomic.Int64, pc payment.Clie
 // newJobOfferBrokerBare is the same broker with NO runner attached, for
 // tests that need to control the runner — its status, its enrolment —
 // rather than take the fixture's.
-func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile string) (*httptest.Server, *Server) {
+func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile string, configure ...func(*config.Config)) (*httptest.Server, *Server) {
 	t.Helper()
 	t.Setenv("BROKER_ADMIN_TOKEN", "secret-token")
 
@@ -115,6 +115,9 @@ func newJobOfferBrokerBare(t *testing.T, pc payment.Client, settlementKeyFile st
 			},
 		}},
 	}
+	for _, configure := range configure {
+		configure(cfg)
+	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatalf("config: %v", err)
 	}
@@ -158,7 +161,7 @@ func attachJobRunner(t *testing.T, s *Server, ts *httptest.Server, backendCalls 
 }
 
 func attachJobRunnerResponder(t *testing.T, s *Server, ts *httptest.Server,
-	respond func(string, string, map[string][]string, []byte) (int, http.Header, []byte)) {
+	respond func(string, string, map[string][]string, []byte) (int, http.Header, []byte), transports ...string) {
 	t.Helper()
 	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"h1"}`, nil)
 	token := enr["credential"].(map[string]any)["token"].(string)
@@ -168,6 +171,9 @@ func attachJobRunnerResponder(t *testing.T, s *Server, ts *httptest.Server,
 		cap0 := m["capabilities"].([]any)[0].(map[string]any)
 		cap0["identity"] = map[string]any{"openai.model": "test-model"}
 		cap0["transports"] = []any{"unary", "stream"}
+		if len(transports) > 0 {
+			cap0["transports"] = transports
+		}
 	}))
 	if res["document"] != "accepted" {
 		t.Fatalf("attach: %v", res)

@@ -698,11 +698,19 @@ const (
 // OpenReservation is an open in flight: the request id is claimed and the
 // side effects performed so far are recorded.
 type OpenReservation struct {
-	RequestID   string `json:"request_id"`
-	Fingerprint []byte `json:"fingerprint"`
-	Stage       string `json:"stage"`
-	WorkID      string `json:"work_id,omitempty"`
-	Sender      []byte `json:"sender,omitempty"`
+	BrokerSessionID string `json:"broker_session_id,omitempty"`
+	// CapacityTracked distinguishes opens that durably recorded create intent
+	// from old paid-stage records, whose create outcome may be unknown.
+	CapacityTracked bool `json:"capacity_tracked,omitempty"`
+	CreateStarted   bool `json:"create_started,omitempty"`
+	// RunnerTerminated is persisted before releasing capacity, independently
+	// of payment settlement and removal of this reservation.
+	RunnerTerminated bool   `json:"runner_terminated,omitempty"`
+	RequestID        string `json:"request_id"`
+	Fingerprint      []byte `json:"fingerprint"`
+	Stage            string `json:"stage"`
+	WorkID           string `json:"work_id,omitempty"`
+	Sender           []byte `json:"sender,omitempty"`
 	// AccountAuthorization is retained as a durable cutover marker. Startup
 	// refuses paid reservations written without it; no legacy recovery path
 	// remains.

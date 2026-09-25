@@ -16,6 +16,11 @@ evidence and distinguishes unsigned pending outcomes. The broker's
 scenario checks a positive broker session sequence and unchanged signed evidence
 across close, lookup and restart; the receiver's usage sequence is independent.
 
+The [capacity ownership fixture](fixtures/capacity-ownership.json) describes
+concurrent-open refusal, no-queue semantics and resource ownership through
+restart and settlement. The broker's capacity regression tests consume it and
+exercise unary, multipart and streaming exchanges, including WebSocket streams.
+
 ## Auto mode (default)
 
 Runs against the in-repo reference broker:

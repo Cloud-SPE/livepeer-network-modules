@@ -1,6 +1,8 @@
 package server
 
 import (
+	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
@@ -67,13 +69,39 @@ func (s *Server) reserveBackend(cap *config.Capability) (func(), bool) {
 		return func() {}, false
 	}
 	s.backendInFlight[backendID]++
+	var once sync.Once
 	return func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		if s.backendInFlight[backendID] <= 1 {
-			delete(s.backendInFlight, backendID)
-			return
-		}
-		s.backendInFlight[backendID]--
+		once.Do(func() {
+			s.mu.Lock()
+			defer s.mu.Unlock()
+			if s.backendInFlight[backendID] <= 1 {
+				delete(s.backendInFlight, backendID)
+				return
+			}
+			s.backendInFlight[backendID]--
+		})
 	}, true
+}
+
+// Selection is advisory; acquisition is the atomic limit check. If another
+// request wins that slot, try the remaining runners rather than rejecting early.
+func (s *Server) reserveJobBackend(group *capabilityGroup) (*config.Capability, func(), error) {
+	remaining := *group
+	remaining.Backends = append([]*config.Capability(nil), group.Backends...)
+	for len(remaining.Backends) > 0 {
+		cap, err := s.selectBackend(&remaining)
+		if err != nil {
+			return nil, nil, err
+		}
+		if release, ok := s.reserveBackend(cap); ok {
+			return cap, release, nil
+		}
+		for i, candidate := range remaining.Backends {
+			if backendIDForCapability(candidate) == backendIDForCapability(cap) {
+				remaining.Backends = append(remaining.Backends[:i], remaining.Backends[i+1:]...)
+				break
+			}
+		}
+	}
+	return nil, nil, fmt.Errorf("no eligible runner has capacity")
 }

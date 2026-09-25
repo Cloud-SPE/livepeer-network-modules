@@ -31,8 +31,14 @@ func (s *Server) initSessionEngine() error {
 		_ = store.Close()
 		return err
 	}
+	if err := s.restoreSessionCapacity(store); err != nil {
+		_ = store.Close()
+		return fmt.Errorf("restore session capacity: %w", err)
+	}
 	s.sessionWS = newSessionWSHub()
 	engine, err := sessionengine.New(sessionengine.Config{
+		AcquireCapacity: s.acquireSessionCapacity,
+		ReleaseCapacity: s.releaseSessionCapacity,
 		BindWork: func(workID, requestID string, spec *sessionengine.OfferingSpec) error {
 			if s.workAccounting == nil {
 				return nil

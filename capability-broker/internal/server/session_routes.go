@@ -141,7 +141,7 @@ func (u *unroutableRunner) QuerySession(context.Context, string) (*sessionengine
 	return nil, fmt.Errorf("no backend for %s", u.ref)
 }
 func (u *unroutableRunner) TerminateSession(context.Context, string, string) error {
-	return nil // nothing to terminate; treat as idempotent success
+	return fmt.Errorf("runner %s unavailable; termination unconfirmed", u.ref)
 }
 
 // ---------------------------------------------------------------------------
@@ -257,6 +257,7 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	}
 	acceptedQuoteRef = proto.Clone(authorization.GetPayload().GetAcceptedPrice().GetQuoteRef()).(*paymentsv1.QuoteRef)
 
+	spec := specFromCapability(c)
 	res, err := s.sessionEngine.Open(r.Context(), sessionengine.OpenRequest{
 		RequestID:             r.Header.Get(livepeerheader.RequestID),
 		GatewaySessionID:      body.GatewaySessionID,
@@ -265,7 +266,7 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		AuthorizationBytes:    authorizationBytes,
 		InitialReservationWei: reservationWei,
 		AcceptedQuoteRef:      acceptedQuoteRef,
-		Spec:                  specFromCapability(c),
+		Spec:                  spec,
 	})
 	if err != nil {
 		observability.RecordSessionOpen("failed")
@@ -275,7 +276,7 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 			if backoff <= 0 || backoff > maxCapacityBackoffSeconds {
 				backoff = defaultCapacityBackoffSeconds
 			}
-			s.markBackendCapacityRefused(backendIDForCapability(c), backoff)
+			s.markBackendCapacityRefused(capacityBackend(spec.BackendRef), backoff)
 			w.Header().Set(livepeerheader.Backoff, strconv.Itoa(backoff))
 			w.Header().Set(livepeerheader.WorkUnits, "0")
 			w.Header().Set(livepeerheader.Error, livepeerheader.ErrCapacityExhausted)
@@ -935,6 +936,9 @@ func (s *Server) writeSessionError(w http.ResponseWriter, err error) {
 		status := http.StatusBadRequest
 		code := pe.Code
 		switch pe.Code {
+		case "capacity_exhausted":
+			status = http.StatusServiceUnavailable
+			w.Header().Set(livepeerheader.Backoff, "5")
 		case "authorization_required":
 			status, code = http.StatusUnauthorized, livepeerheader.ErrAuthorizationRequired
 		case "payment_invalid":

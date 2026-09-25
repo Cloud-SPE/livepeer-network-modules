@@ -72,9 +72,10 @@ type Offer struct {
 // (plan 0043 §8).
 type OfferCapacity struct {
 	// MaxInFlight bounds concurrent dispatches per eligible runner. 0
-	// means the broker default.
+	// means unlimited at the broker. Sessions include starting/live work.
 	MaxInFlight int `yaml:"max_in_flight,omitempty" json:"max_in_flight,omitempty"`
-	QueueLimit  int `yaml:"queue_limit,omitempty" json:"queue_limit,omitempty"`
+	// QueueLimit is reserved metadata; dispatch currently has no waiting queue.
+	QueueLimit int `yaml:"queue_limit,omitempty" json:"queue_limit,omitempty"`
 }
 
 // SessionPolicy is the operator side of the paid-session axes

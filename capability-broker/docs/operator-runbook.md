@@ -160,7 +160,7 @@ Terminal `close_reason` values you will see in status responses and logs:
 `gateway_close`, `runner_ended`, `runner_failed`, `lease_expired`,
 `heartbeat_lost`, `insufficient_balance`, `recovery_failed`,
 `open_failed`, `output_failed`. Every winddown is the same idempotent path
-(terminate runner → settle authorization → release capacity → record reason); a repeated
+(terminate runner → persist stopped state and release capacity → settle authorization → record reason); a repeated
 trigger is a no-op.
 
 Restart behavior: before serving, the broker verifies that every nonterminal
@@ -169,6 +169,42 @@ daemon and runner. Both still hold it → resume with the same authorization,
 credentials, grants, and usage watermark. Missing authorization state or a
 lost runner → terminate fail closed as `recovery_failed`. An undrained legacy
 record without authorization state refuses broker startup.
+
+### Concurrency and pending cleanup
+
+`offers[].capacity.max_in_flight` limits each runner's host/local-capability pair.
+Starting and active sessions each occupy one slot; replay, status, control sockets
+and refill use the same slot. Unary, multipart and streamed jobs occupy one slot
+until the response completes or the exchange aborts. A zero limit is unlimited.
+`queue_limit` is inactive and does not admit extra waiting requests. At capacity,
+the broker tries another eligible runner, otherwise returns `503
+capacity_exhausted` with `Livepeer-Backoff`.
+
+Before serving after restart, the broker restores opening and live session
+ownership from the sealed store. Existing records without an ownership reference
+are migrated. Live work without a pinned runner binding fails startup rather than
+being left out of occupancy. Lowering a limit does not discard existing occupancy: new work
+waits for enough slots to become free by receiving capacity refusals.
+
+Runner disconnects and failed termination retain ownership. A confirmed stop is
+persisted before freeing capacity, even when a receiver outage leaves the session
+`winding_down`. Settlement and signed terminal publication still require all
+financial obligations to be resolved. Repeated cleanup does not release another
+session's slot.
+
+An abandoned open with a known runner session ID is retried on recovery/sweep.
+A lost create response with no runner ID is logged as `runner create outcome
+unknown`, with the request ID, broker session ID and backend binding. The current
+runner contract cannot safely query by broker session ID or replay create, so
+this case retains its slot and opening reservation. Pre-upgrade paid opening
+reservations without create evidence are treated the same way. Diagnose the
+runner using those identifiers and establish its actual outcome; do not delete
+the reservation or reset counters to make capacity appear free. Automatic
+reconciliation of this case needs a runner contract for idempotent creation and
+lookup by broker session ID.
+
+The limit applies within one broker. Runners remain responsible for physical
+capacity across brokers, and for canceling job execution when its transport ends.
 
 ### Authorization revisions and stuck winddown
 

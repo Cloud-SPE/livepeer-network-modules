@@ -70,9 +70,10 @@ possession for this exact authorization.
 
 Successful admission:
 
-1. verifies the envelope and optional caller proof;
+1. verifies the envelope and optional caller proof, deduplicates the request,
+   and durably acquires one runner-capacity slot;
 2. atomically funds any shortfall and reserves bounded runway;
-3. acquires capacity and creates the runner session;
+3. creates the runner session using the reserved capacity;
 4. durably records authorization, quote binding, usage watermark, credential,
    runner binding, and recovery obligations;
 5. returns `session_id`, `gateway_session_id`, `work_id`, session credential,
@@ -83,8 +84,10 @@ the authorization from step 2 has already been admitted. The broker MUST
 settle it at zero cumulative units, release its reservation, persist signed
 terminal settlement evidence, and return public `503 capacity_exhausted` with
 `Livepeer-Backoff`. A retry replays that terminal outcome and cannot create a
-session. A broker that rejects capacity before step 2 instead records signed
-`NOT_ADMITTED` evidence; one request can never acquire both records.
+session. A broker that rejects capacity before step 2 instead supports signed
+`NOT_ADMITTED` evidence through the scoped non-admission query; one request can
+never acquire both records. Capacity refusal is `503 capacity_exhausted` with
+`Livepeer-Backoff`; a concurrency limit does not imply a request queue.
 
 `work_id` equals the active `authorization_id`; it is correlation state, not a
 balance account. The stable economic owner is the payer-payee account.
@@ -255,9 +258,11 @@ contract data, not a spendable authorization or production evidence.
 ### 3.4 End
 
 `POST /v1/session/{session_id}/end` requires the session credential. It is
-idempotent. The broker terminates the runner, settles the active authorization
-at actual cumulative usage, releases unused reservation and capacity, writes a
-terminal state, and emits signed settlement evidence.
+idempotent. The broker terminates the runner and durably records confirmation
+before releasing compute capacity. It settles the active authorization at actual
+cumulative usage, releases unused financial reservation, writes a terminal state,
+and emits signed settlement evidence. Financial reconciliation can remain pending
+after compute capacity is released.
 
 ### 3.5 Settlement lookup
 
@@ -379,15 +384,29 @@ gateway-initiated frame receives an ack or stable error frame.
 Nonterminal records persist the active authorization id and caps, payer, quote
 reference, usage/billing/event watermarks, session and runner bindings,
 credentials in sealed/hashed form, output health, and settlement obligations.
-Open reservations persist enough state to undo runner creation and release an
-authorization after a crash.
+Open reservations persist capacity ownership and runner-create intent before
+external effects. Starting and live sessions count toward the local limit. Replay,
+refill and control reconnects MUST NOT acquire a second slot. Before serving after
+restart the broker reconstructs occupancy, including sessions created before
+capacity tracking existed. Reducing the limit does not erase existing occupancy.
+
+Known abandoned runner sessions are terminated before capacity is released.
+Unknown create outcomes, transport failure or runner disconnection MUST NOT be
+interpreted as proof of absence. Without an idempotent-create/lookup contract,
+a lost create response retains the opening reservation and capacity until the
+runner outcome can be established. Recovery MUST NOT undo an opening request
+that is still executing. Slot release is idempotent and follows durable evidence
+of runner termination or absence; settlement obligations remain independent.
+The [capacity fixture](../conformance/fixtures/capacity-ownership.json) records
+concurrent-open refusal and occupancy expectations.
 
 On restart the broker verifies that the runner session and active authorization
 still exist. If both survive, processing resumes from durable watermarks. If
 the authorization is absent or unverifiable, the broker terminates the runner
 and records `recovery_failed`; it MUST NOT keep serving unbillable work. Missing
 receiver state is not evidence of settlement: the session remains
-`winding_down`, retains its financial obligations and capacity, and withholds a
+`winding_down`, retains its financial obligations (and capacity while runner
+shutdown is unconfirmed), and withholds a
 signed terminal result until the receiver ledger has been reconciled. A lost
 settlement response is recovered by replaying its receiver-confirmed cumulative
 units and sequence, not by fabricating closure or resetting the bill.

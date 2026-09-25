@@ -228,7 +228,7 @@ offers:
       per_units: 1
     capacity:
       max_in_flight: 4          # concurrent dispatches per eligible runner
-      queue_limit: 8
+      queue_limit: 0            # inactive: no waiting queue; excess work gets 503
     # `readiness` runs the probe recipe the RUNNER declared, so this step
     # stays correct even if the runner changes what "ready" means for it.
     certification:
@@ -302,7 +302,7 @@ offers:
   #   price:
   #     amount_wei: "210000000"      # 210 Mwei/token
   #     per_units: 1
-  #   capacity: { max_in_flight: 4, queue_limit: 8 }
+  #   capacity: { max_in_flight: 4 }
   #   extra:
   #     openai:
   #       model: "llama-3-70b"

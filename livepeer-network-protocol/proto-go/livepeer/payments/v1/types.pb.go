@@ -854,8 +854,10 @@ type HealthResponse struct {
 	Status string `protobuf:"bytes,1,opt,name=status,proto3" json:"status,omitempty"`
 	// Public identity of the receiver ledger; absent on payer Health.
 	SettlementDomainId string `protobuf:"bytes,2,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Sender database identity. Empty on receivers; stable across sender restarts.
+	TicketStreamId string `protobuf:"bytes,3,opt,name=ticket_stream_id,json=ticketStreamId,proto3" json:"ticket_stream_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *HealthResponse) Reset() {
@@ -898,6 +900,13 @@ func (x *HealthResponse) GetStatus() string {
 func (x *HealthResponse) GetSettlementDomainId() string {
 	if x != nil {
 		return x.SettlementDomainId
+	}
+	return ""
+}
+
+func (x *HealthResponse) GetTicketStreamId() string {
+	if x != nil {
+		return x.TicketStreamId
 	}
 	return ""
 }
@@ -2409,10 +2418,11 @@ const file_livepeer_payments_v1_types_proto_rawDesc = "" +
 	"capability\x12\x1b\n" +
 	"\twork_unit\x18\x02 \x01(\tR\bworkUnit\x12A\n" +
 	"\tofferings\x18\x03 \x03(\v2#.livepeer.payments.v1.OfferingPriceR\tofferings\"\x0f\n" +
-	"\rHealthRequest\"Z\n" +
+	"\rHealthRequest\"\x84\x01\n" +
 	"\x0eHealthResponse\x12\x16\n" +
 	"\x06status\x18\x01 \x01(\tR\x06status\x120\n" +
-	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\"\x1f\n" +
+	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\x12(\n" +
+	"\x10ticket_stream_id\x18\x03 \x01(\tR\x0eticketStreamId\"\x1f\n" +
 	"\aBigUInt\x12\x14\n" +
 	"\x05value\x18\x01 \x01(\fR\x05value\"\xae\x01\n" +
 	"\bQuoteRef\x12\x19\n" +

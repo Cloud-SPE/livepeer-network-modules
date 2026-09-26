@@ -289,6 +289,15 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 		return nil, grpcstatus.Error(codes.FailedPrecondition,
 			"mint idempotency store is not configured; refusing to mint")
 	}
+	if expected := req.GetExpectedTicketStreamId(); expected != "" {
+		stream, err := s.store.TicketStreamID()
+		if err != nil {
+			return nil, grpcstatus.Error(codes.Internal, "cannot read sender ticket stream")
+		}
+		if expected != stream {
+			return nil, grpcstatus.Error(codes.FailedPrecondition, "mint belongs to another sender database")
+		}
+	}
 	fingerprint := mintFingerprint(req)
 
 	// Serialize this id, then reserve it durably before anything is
@@ -821,7 +830,14 @@ func (s *Service) GetDepositInfo(ctx context.Context, _ *pb.GetDepositInfoReques
 
 // Health implements pb.PayerDaemonServer.
 func (s *Service) Health(_ context.Context, _ *pb.HealthRequest) (*pb.HealthResponse, error) {
-	return &pb.HealthResponse{Status: "ok"}, nil
+	if s.store == nil {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "sender store is not configured")
+	}
+	stream, err := s.store.TicketStreamID()
+	if err != nil {
+		return nil, grpcstatus.Error(codes.Internal, "cannot read sender ticket stream")
+	}
+	return &pb.HealthResponse{Status: "ok", TicketStreamId: stream}, nil
 }
 
 // ─── helpers ──────────────────────────────────────────────────────────

@@ -972,3 +972,13 @@ After a deliberate reset, invalidate sender cached parameters using
 `ReportPaymentResult` with `INVALID_RECIPIENT_RAND` or restart the sender. Replay
 uncertain funding bytes to obtain their original receipt before considering a new
 mint; a timeout does not prove that tickets were uncredited.
+
+
+Recovery-capable gateways read `PayerDaemon.Health.ticket_stream_id` and persist
+it as `CreatePayment.expected_ticket_stream_id` with the immutable mint request.
+A lost mint response must be recovered from that original sender database; a
+same-wallet daemon with a different database rejects the guard before reserving
+the mint. Do not switch databases or generate a fresh mint ID to bypass an
+uncertain outcome. Once payment bytes are saved, any gateway replica can replay
+those exact bytes to the original receiver funding endpoint. Older senders that
+do not expose the Health identity cannot provide this recovery guarantee.

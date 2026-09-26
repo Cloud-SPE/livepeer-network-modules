@@ -68,6 +68,13 @@ Signed spend authorization, settlement, and non-admission payloads bind this fie
 A shared private key remains one trust boundary; labels do not restrict a key holder
 or isolate the common on-chain deposit from other applications' spending.
 
+Recovery-capable clients persist the sender's `Health.ticket_stream_id` in
+`CreatePayment.expected_ticket_stream_id` with their mint request. The sender
+rejects a nonempty mismatch before reserving the mint ID or signing. Mint replay
+is database-local: another sender sharing the wallet must not recover an uncertain
+mint. Omission remains wire-compatible for older callers, without this guarantee.
+Saved payment bytes can be replayed to funding independently of the minting sender.
+
 Each independent sender database generates one persistent random `ticket_stream_id`.
 Do not clone an active sender database into another concurrently running daemon.
 Ticket generation identity is `(sender, recipient, capability, offering,

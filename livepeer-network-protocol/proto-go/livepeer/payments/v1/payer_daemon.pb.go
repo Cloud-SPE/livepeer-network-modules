@@ -83,8 +83,11 @@ type CreatePaymentRequest struct {
 	// max(0, target_available-observed_available), bounded by funding above.
 	// Omitting this field is rejected; request-ceiling ticket minting is gone.
 	AccountFunding *AccountFundingIntent `protobuf:"bytes,6,opt,name=account_funding,json=accountFunding,proto3" json:"account_funding,omitempty"`
-	unknownFields  protoimpl.UnknownFields
-	sizeCache      protoimpl.SizeCache
+	// Optional guard from sender Health. A mismatch fails before mint reservation.
+	// Recovery-capable clients MUST persist and resend this with the mint intent.
+	ExpectedTicketStreamId string `protobuf:"bytes,7,opt,name=expected_ticket_stream_id,json=expectedTicketStreamId,proto3" json:"expected_ticket_stream_id,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *CreatePaymentRequest) Reset() {
@@ -157,6 +160,13 @@ func (x *CreatePaymentRequest) GetAccountFunding() *AccountFundingIntent {
 		return x.AccountFunding
 	}
 	return nil
+}
+
+func (x *CreatePaymentRequest) GetExpectedTicketStreamId() string {
+	if x != nil {
+		return x.ExpectedTicketStreamId
+	}
+	return ""
 }
 
 type CreatePaymentResponse struct {
@@ -1003,14 +1013,15 @@ var File_livepeer_payments_v1_payer_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payer_daemon_proto_rawDesc = "" +
 	"\n" +
-	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xf1\x02\n" +
+	"'livepeer/payments/v1/payer_daemon.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xac\x03\n" +
 	"\x14CreatePaymentRequest\x12\x1c\n" +
 	"\trecipient\x18\x01 \x01(\fR\trecipient\x123\n" +
 	"\x16ticket_params_base_url\x18\x02 \x01(\tR\x13ticketParamsBaseUrl\x12J\n" +
 	"\x0eaccepted_price\x18\x03 \x01(\v2#.livepeer.payments.v1.AcceptedPriceR\racceptedPrice\x12=\n" +
 	"\afunding\x18\x04 \x01(\v2#.livepeer.payments.v1.FundingIntentR\afunding\x12&\n" +
 	"\x0fmint_request_id\x18\x05 \x01(\tR\rmintRequestId\x12S\n" +
-	"\x0faccount_funding\x18\x06 \x01(\v2*.livepeer.payments.v1.AccountFundingIntentR\x0eaccountFunding\"\xb7\x05\n" +
+	"\x0faccount_funding\x18\x06 \x01(\v2*.livepeer.payments.v1.AccountFundingIntentR\x0eaccountFunding\x129\n" +
+	"\x19expected_ticket_stream_id\x18\a \x01(\tR\x16expectedTicketStreamId\"\xb7\x05\n" +
 	"\x15CreatePaymentResponse\x12#\n" +
 	"\rpayment_bytes\x18\x01 \x01(\fR\fpaymentBytes\x12'\n" +
 	"\x0ftickets_created\x18\x02 \x01(\rR\x0eticketsCreated\x12D\n" +

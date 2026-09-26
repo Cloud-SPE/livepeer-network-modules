@@ -136,6 +136,10 @@ message CreatePaymentRequest {
   // max(0, target_available-observed_available), bounded by funding above.
   // Omitting this field is rejected; request-ceiling ticket minting is gone.
   AccountFundingIntent account_funding = 6;
+
+  // Optional guard from sender Health. A mismatch fails before mint reservation.
+  // Recovery-capable clients MUST persist and resend this with the mint intent.
+  string expected_ticket_stream_id = 7;
 }
 
 message CreatePaymentResponse {

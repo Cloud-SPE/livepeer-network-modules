@@ -180,6 +180,8 @@ message HealthResponse {
   string status = 1;
   // Public identity of the receiver ledger; absent on payer Health.
   string settlement_domain_id = 2;
+  // Sender database identity. Empty on receivers; stable across sender restarts.
+  string ticket_stream_id = 3;
 }
 
 // BigUInt is the canonical daemon-app representation for non-negative integers

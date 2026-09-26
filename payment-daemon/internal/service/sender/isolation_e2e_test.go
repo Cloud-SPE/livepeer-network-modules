@@ -1,6 +1,7 @@
 package sender_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -132,5 +135,44 @@ func TestSharedWalletIndependentStreamsAndExactFundingReceipts(t *testing.T) {
 	}
 	if _, err = payee.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{Payer: pa.Sender, SettlementDomainId: fundReq(ma, "loc-prod").SettlementDomainId}); err == nil {
 		t.Fatal("missing isolation identity selected legacy account")
+	}
+}
+
+func TestMintRecoveryRequiresOriginalSenderDatabase(t *testing.T) {
+	ctx := context.Background()
+	payee, _, closePayee := receiverStand(t, bytes20(0xd3))
+	defer closePayee()
+	a, urlA, _, closeA := devModeSenderStandOn(t, func() pb.PayeeDaemonClient { return payee }, nil)
+	defer closeA()
+	b, _, _, closeB := devModeSenderStandOn(t, func() pb.PayeeDaemonClient { return payee }, nil)
+	defer closeB()
+	ha, err := a.Health(ctx, &pb.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb, err := b.Health(ctx, &pb.HealthRequest{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ha.TicketStreamId == "" || hb.TicketStreamId == "" || ha.TicketStreamId == hb.TicketStreamId {
+		t.Fatal("sender identities must be distinct and nonempty")
+	}
+	req := devModeCreateRequest(bytes20(0xd3), "guarded-mint", urlA)
+	req.ExpectedTicketStreamId = ha.TicketStreamId
+	first, err := a.CreatePayment(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := b.CreatePayment(ctx, req); status.Code(err) != codes.FailedPrecondition {
+		t.Fatalf("wrong sender: %v", err)
+	}
+	replay, err := a.CreatePayment(ctx, req)
+	if err != nil || !bytes.Equal(first.GetPaymentBytes(), replay.GetPaymentBytes()) || first.GetWorkId() != replay.GetWorkId() || !proto.Equal(first.GetExpectedValue(), replay.GetExpectedValue()) || !proto.Equal(first.GetAccountShortfallWei(), replay.GetAccountShortfallWei()) {
+		t.Fatalf("original sender replay: %v", err)
+	}
+	// Wrong-owner rejection must not leave a reserved mint/tombstone on B.
+	req.ExpectedTicketStreamId = hb.TicketStreamId
+	if _, err := b.CreatePayment(ctx, req); err != nil {
+		t.Fatalf("rejection reserved mint: %v", err)
 	}
 }

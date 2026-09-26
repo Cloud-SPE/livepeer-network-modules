@@ -107,7 +107,7 @@ func (e *Engine) prepareRevisionEvidence(rec *sessionstore.Record, admitted bool
 	}
 	d.ObservedAt = e.cfg.Now().UTC()
 	fingerprint := sha256.Sum256(i.AuthorizationBytes)
-	evidence, err := proto.Marshal(&pb.SessionRevisionRecord{
+	evidence, err := proto.Marshal(&pb.SessionRevisionRecord{WholesaleAccountId: rec.WholesaleAccountID,
 		EvidenceDomain: "livepeer-session-revision/v1", Protocol: "paid-session/v1", SettlementDomainId: rec.SettlementDomainID,
 		BrokerUri: p.GetBrokerUri(), SessionId: rec.SessionID, GatewaySessionId: rec.GatewaySessionID, RequestId: i.RequestID,
 		Payer: p.GetPayer(), Payee: p.GetPayee(), AuthorizationId: p.GetAuthorizationId(), PredecessorAuthorizationId: p.GetPredecessorAuthorizationId(),

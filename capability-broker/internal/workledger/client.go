@@ -68,7 +68,7 @@ func (c *Client) AdmitAuthorization(ctx context.Context, req payment.AdmitAuthor
 		if !known {
 			return nil, fmt.Errorf("%w: regional source no longer admits new work", payment.ErrAdmissionStopped)
 		}
-		accepted, err := c.AccountClient.GetSpendAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId())
+		accepted, err := c.AccountClient.GetSpendAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), auth.GetPayload().GetWholesaleAccountId())
 		if err != nil {
 			return nil, err
 		}
@@ -95,7 +95,7 @@ func (c *Client) AdmitAuthorization(ctx context.Context, req payment.AdmitAuthor
 		return nil, err
 	}
 	if previous := auth.GetPayload().GetPredecessorAuthorizationId(); previous != "" && result != nil && result.State == int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
-		predecessor, err := c.AccountClient.GetSpendAuthorization(ctx, auth.GetPayload().GetPayer(), previous)
+		predecessor, err := c.AccountClient.GetSpendAuthorization(ctx, auth.GetPayload().GetPayer(), previous, auth.GetPayload().GetWholesaleAccountId())
 		if err != nil {
 			return nil, err
 		}
@@ -113,7 +113,7 @@ func (c *Client) AdvanceAuthorization(ctx context.Context, req payment.AdvanceAu
 	if req.TargetReserved != nil {
 		target = req.TargetReserved.String()
 	}
-	op, err := c.Store.Prepare(Operation{AuthorizationID: req.AuthorizationID, Kind: "advance", Sequence: req.AdvanceSeq, Payer: req.Payer, Units: req.CumulativeUnits, TargetReserved: target, PaymentBytes: req.PaymentBytes})
+	op, err := c.Store.Prepare(Operation{WholesaleAccountID: req.WholesaleAccountID, AuthorizationID: req.AuthorizationID, Kind: "advance", Sequence: req.AdvanceSeq, Payer: req.Payer, Units: req.CumulativeUnits, TargetReserved: target, PaymentBytes: req.PaymentBytes})
 	if err != nil {
 		return nil, err
 	}
@@ -130,7 +130,7 @@ func (c *Client) AdvanceAuthorization(ctx context.Context, req payment.AdvanceAu
 	return result, nil
 }
 func (c *Client) SettleAuthorization(ctx context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
-	op, err := c.Store.Prepare(Operation{AuthorizationID: req.AuthorizationID, Kind: "settle", Sequence: req.SettlementSeq, Payer: req.Payer, Units: req.ActualUnits})
+	op, err := c.Store.Prepare(Operation{WholesaleAccountID: req.WholesaleAccountID, AuthorizationID: req.AuthorizationID, Kind: "settle", Sequence: req.SettlementSeq, Payer: req.Payer, Units: req.ActualUnits})
 	if err != nil {
 		return nil, err
 	}
@@ -166,7 +166,7 @@ func (c *Client) Flush(ctx context.Context) error {
 					return fmt.Errorf("invalid persisted reservation")
 				}
 			}
-			result, e := c.AccountClient.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{Payer: op.Payer, AuthorizationID: op.AuthorizationID, CumulativeUnits: op.Units, TargetReserved: target, AdvanceSeq: op.Sequence, PaymentBytes: op.PaymentBytes})
+			result, e := c.AccountClient.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{WholesaleAccountID: op.WholesaleAccountID, Payer: op.Payer, AuthorizationID: op.AuthorizationID, CumulativeUnits: op.Units, TargetReserved: target, AdvanceSeq: op.Sequence, PaymentBytes: op.PaymentBytes})
 			if e != nil {
 				return e
 			}
@@ -175,7 +175,7 @@ func (c *Client) Flush(ctx context.Context) error {
 			}
 			total = result.CumulativeBilled
 		} else {
-			result, e := c.AccountClient.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: op.Payer, AuthorizationID: op.AuthorizationID, ActualUnits: op.Units, SettlementSeq: op.Sequence})
+			result, e := c.AccountClient.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: op.WholesaleAccountID, Payer: op.Payer, AuthorizationID: op.AuthorizationID, ActualUnits: op.Units, SettlementSeq: op.Sequence})
 			if e != nil {
 				return e
 			}

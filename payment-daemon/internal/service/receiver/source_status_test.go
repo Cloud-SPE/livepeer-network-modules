@@ -42,7 +42,7 @@ func TestSourceRetirementWaitsForFinalRedemptionAndConfirmedRound(t *testing.T) 
 	}
 	// A freshly constructed service over the restored ledger retains intake fencing.
 	restarted := New(st, Config{SettlementDomainID: svc.settlementDomainID, Recipient: payee, ChainID: 42161}, nil)
-	if _, err = restarted.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); err == nil {
+	if _, err = restarted.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream"}); err == nil {
 		t.Fatal("restart resumed frozen intake")
 	}
 }

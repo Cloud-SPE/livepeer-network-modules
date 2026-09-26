@@ -3,15 +3,18 @@ package server
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
@@ -32,6 +35,7 @@ import (
 // compares every field to its own record before acting, which is what
 // makes echoed context sufficient.
 type nonAdmissionQuery struct {
+	WholesaleAccountID    string  `json:"wholesale_account_id"`
 	Protocol              string  `json:"protocol"`
 	WorkID                string  `json:"work_id"`
 	SenderHex             string  `json:"sender"`
@@ -52,6 +56,9 @@ type nonAdmissionQuery struct {
 // signable too, producing a record that binds to nothing and can be
 // replayed against any envelope carrying the same request id.
 func (q *nonAdmissionQuery) validate() (time.Time, error) {
+	if !identity.ValidWholesaleAccountID(q.WholesaleAccountID) {
+		return time.Time{}, errors.New("valid wholesale_account_id is required")
+	}
 	switch q.Protocol {
 	case "paid-job/v1", "paid-session/v1":
 	default:
@@ -168,11 +175,36 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// An uncertain initial admission is not absence. A canceled initial intent
+	// carries the exact authority, so bind the evidence query to it even on replay.
+	var canceledOpen *sessionstore.OpenReservation
+	if opening, err := s.sessionStore.Reservation(requestID); err == nil {
+		if !opening.AdmissionCanceled || opening.AdmissionIntent == nil {
+			livepeerheader.WriteError(w, http.StatusServiceUnavailable, "admission_pending", "initial admission is still being reconciled")
+			return
+		}
+		if err := validateAuthorizationScope(opening.AdmissionIntent.AuthorizationBytes, requestID, q); err != nil {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, err.Error())
+			return
+		}
+		canceledOpen = &opening
+	} else if !errors.Is(err, sessionstore.ErrNotFound) {
+		livepeerheader.WriteError(w, http.StatusServiceUnavailable, "admission_pending", "initial admission state unavailable")
+		return
+	}
 	// A record already issued is returned verbatim. Re-signing would
 	// produce a second signed statement about one fact, under a later
 	// observed_at, and a consumer holding both cannot tell that they
 	// agree rather than conflict.
 	if prior, found, ferr := s.sessionStore.NonAdmissionFor(requestID); ferr == nil && found {
+		raw, decodeErr := base64.StdEncoding.DecodeString(prior)
+		var envelope settlement.Envelope
+		var record pb.NonAdmissionRecord
+		if decodeErr != nil || json.Unmarshal(raw, &envelope) != nil || protojson.Unmarshal(envelope.Payload, &record) != nil || record.GetWholesaleAccountId() != q.WholesaleAccountID {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "stored non-admission account does not match query")
+			return
+		}
+
 		w.Header().Set(livepeerheader.NonAdmission, prior)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"request_id":    requestID,
@@ -249,9 +281,16 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if canceledOpen != nil {
+		var auth pb.SpendAuthorization
+		if err := proto.Unmarshal(canceledOpen.AdmissionIntent.AuthorizationBytes, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
+			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "canceled authorization domain mismatch")
+			return
+		}
+	}
 	if rejected != nil {
 		var auth pb.SpendAuthorization
-		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetSettlementDomainId() != domainID {
+		if err := proto.Unmarshal(rejected.RejectedAuthorization, &auth); err != nil || auth.GetPayload().GetWholesaleAccountId() != q.WholesaleAccountID || auth.GetPayload().GetSettlementDomainId() != domainID {
 			livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrAdmitted, "rejected authorization domain mismatch")
 			return
 		}
@@ -262,18 +301,18 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 		defer cancel()
-		if err := recovery.CloseUnexecutedAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), "durable paid-job payment refusal; runner not entered"); err != nil {
+		if err := recovery.CloseUnexecutedAuthorization(ctx, auth.GetPayload().GetPayer(), auth.GetPayload().GetAuthorizationId(), "durable paid-job payment refusal; runner not entered", auth.GetPayload().GetWholesaleAccountId()); err != nil {
 			http.Error(w, "failed to fence rejected authorization", http.StatusServiceUnavailable)
 			return
 		}
 	}
 	rec := &pb.NonAdmissionRecord{
-		SettlementDomainId: domainID,
-		Protocol:           q.Protocol,
-		RequestId:          requestID,
-		WorkId:             q.WorkID,
-		Sender:             sender,
-		Recipient:          recipient,
+		WholesaleAccountId: q.WholesaleAccountID, SettlementDomainId: domainID,
+		Protocol:  q.Protocol,
+		RequestId: requestID,
+		WorkId:    q.WorkID,
+		Sender:    sender,
+		Recipient: recipient,
 		AcceptedQuoteRef: &pb.QuoteRef{
 			QuoteId:               q.QuoteID,
 			QuoteVersion:          *q.QuoteVersion,
@@ -340,8 +379,24 @@ func (s *Server) handleNonAdmission(w http.ResponseWriter, r *http.Request) {
 // The caller cannot choose which authorization to fence. Every scope field must
 // match the exact wire authorization whose admission the receiver refused.
 func validateRejectedScope(rec *sessionstore.JobRecord, q nonAdmissionQuery, now time.Time) error {
+	if err := validateAuthorizationScope(rec.RejectedAuthorization, rec.RequestID, q); err != nil {
+		return err
+	}
 	var auth pb.SpendAuthorization
 	if err := proto.Unmarshal(rec.RejectedAuthorization, &auth); err != nil {
+		return fmt.Errorf("invalid stored authorization")
+	}
+	p := auth.GetPayload()
+	expires, err := time.Parse(time.RFC3339Nano, p.GetExpiresAt())
+	if err != nil || now.Before(expires) {
+		return fmt.Errorf("rejected authorization has not expired")
+	}
+	return nil
+}
+
+func validateAuthorizationScope(wire []byte, requestID string, q nonAdmissionQuery) error {
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(wire, &auth); err != nil {
 		return fmt.Errorf("invalid stored authorization")
 	}
 	p := auth.GetPayload()
@@ -350,12 +405,8 @@ func validateRejectedScope(rec *sessionstore.JobRecord, q nonAdmissionQuery, now
 	recipient, _ := strictHex(q.RecipientHex)
 	cfp, _ := strictHex(q.ConstraintFingerprint)
 	rfp, _ := strictHex(q.RouteFingerprint)
-	if q.QuoteVersion == nil || p.GetRequestId() != rec.RequestID || p.GetProtocol() != q.Protocol || p.GetAuthorizationId() != q.WorkID || !bytes.Equal(p.GetPayer(), sender) || !bytes.Equal(p.GetPayee(), recipient) || quote.GetQuoteId() != q.QuoteID || quote.GetQuoteVersion() != *q.QuoteVersion || !bytes.Equal(quote.GetConstraintFingerprint(), cfp) || !bytes.Equal(quote.GetRouteFingerprint(), rfp) {
+	if p.GetWholesaleAccountId() != q.WholesaleAccountID || q.QuoteVersion == nil || p.GetRequestId() != requestID || p.GetProtocol() != q.Protocol || p.GetAuthorizationId() != q.WorkID || !bytes.Equal(p.GetPayer(), sender) || !bytes.Equal(p.GetPayee(), recipient) || quote.GetQuoteId() != q.QuoteID || quote.GetQuoteVersion() != *q.QuoteVersion || !bytes.Equal(quote.GetConstraintFingerprint(), cfp) || !bytes.Equal(quote.GetRouteFingerprint(), rfp) {
 		return fmt.Errorf("rejected authorization scope mismatch")
-	}
-	expires, err := time.Parse(time.RFC3339Nano, p.GetExpiresAt())
-	if err != nil || now.Before(expires) {
-		return fmt.Errorf("rejected authorization has not expired")
 	}
 	return nil
 }

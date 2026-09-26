@@ -1,9 +1,11 @@
 package payment
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
+	"google.golang.org/protobuf/proto"
 	"math/big"
 	"time"
 
@@ -71,11 +73,13 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 		faceValue = req.FaceValue.Bytes()
 	}
 	resp, err := g.client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{
-		Sender:     req.Sender,
-		Recipient:  req.Recipient,
-		FaceValue:  faceValue,
-		Capability: req.Capability,
-		Offering:   req.Offering,
+		WholesaleAccountId: req.WholesaleAccountID,
+		TicketStreamId:     req.TicketStreamID,
+		Sender:             req.Sender,
+		Recipient:          req.Recipient,
+		FaceValue:          faceValue,
+		Capability:         req.Capability,
+		Offering:           req.Offering,
 	})
 	if err != nil {
 		return nil, err
@@ -84,7 +88,7 @@ func (g *GRPC) GetTicketParams(ctx context.Context, req GetTicketParamsRequest) 
 	if tp == nil {
 		return &TicketParams{SettlementDomainID: g.settlementDomainID}, nil
 	}
-	out := &TicketParams{SettlementDomainID: g.settlementDomainID,
+	out := &TicketParams{SettlementDomainID: g.settlementDomainID, WholesaleAccountID: resp.GetWholesaleAccountId(), TicketStreamID: resp.GetTicketStreamId(), IsolationVersion: resp.GetIsolationVersion(),
 		Recipient:         append([]byte(nil), tp.GetRecipient()...),
 		FaceValue:         new(big.Int).SetBytes(tp.GetFaceValue()),
 		WinProb:           new(big.Int).SetBytes(tp.GetWinProb()),
@@ -160,7 +164,7 @@ func accountFromProto(in *pb.WholesaleAccountView) *WholesaleAccount {
 		return nil
 	}
 	return &WholesaleAccount{
-		Payer: append([]byte(nil), in.GetPayer()...), Payee: append([]byte(nil), in.GetPayee()...),
+		WholesaleAccountID: in.GetWholesaleAccountId(), Payer: append([]byte(nil), in.GetPayer()...), Payee: append([]byte(nil), in.GetPayee()...),
 		Credited:  new(big.Int).SetBytes(in.GetCreditedValueWei().GetValue()),
 		Reserved:  new(big.Int).SetBytes(in.GetReservedValueWei().GetValue()),
 		Debited:   new(big.Int).SetBytes(in.GetDebitedValueWei().GetValue()),
@@ -169,15 +173,28 @@ func accountFromProto(in *pb.WholesaleAccountView) *WholesaleAccount {
 	}
 }
 
-func (g *GRPC) FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+func (g *GRPC) FundWholesaleAccount(ctx context.Context, paymentBytes []byte, wholesaleAccountID string) (*FundWholesaleAccountResult, error) {
+	if !identity.ValidWholesaleAccountID(wholesaleAccountID) {
+		return nil, fmt.Errorf("valid wholesale_account_id required")
+	}
 	if _, err := g.SettlementDomain(ctx); err != nil {
 		return nil, err
 	}
-	res, err := g.client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, PaymentBytes: paymentBytes})
+	res, err := g.client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, PaymentBytes: paymentBytes, WholesaleAccountId: wholesaleAccountID})
 	if err != nil {
 		return nil, err
 	}
-	return &FundWholesaleAccountResult{Account: accountFromProto(res.GetAccount()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
+	var funding pb.Payment
+	if err := proto.Unmarshal(paymentBytes, &funding); err != nil {
+		return nil, err
+	}
+	if err := g.validateAccount(res.GetAccount(), funding.GetSender(), wholesaleAccountID); err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(res.GetAccount().GetPayee(), funding.GetTicketParams().GetRecipient()) {
+		return nil, fmt.Errorf("receiver funding payee mismatch")
+	}
+	return &FundWholesaleAccountResult{FundingID: res.GetFundingId(), Account: accountFromProto(res.GetAccount()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
 }
 
 func (g *GRPC) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
@@ -192,10 +209,23 @@ func (g *GRPC) AdmitAuthorization(ctx context.Context, req AdmitAuthorizationReq
 	if err != nil {
 		return nil, err
 	}
+	var auth pb.SpendAuthorization
+	if err := proto.Unmarshal(req.AuthorizationBytes, &auth); err != nil {
+		return nil, err
+	}
+	if err := g.validateAccount(res.GetAccount(), auth.GetPayload().GetPayer(), auth.GetPayload().GetWholesaleAccountId()); err != nil {
+		return nil, err
+	}
+	if !bytes.Equal(res.GetAccount().GetPayee(), auth.GetPayload().GetPayee()) || res.GetAccount().GetChainId() != auth.GetPayload().GetChainId() || res.GetAccount().GetDenomination() != auth.GetPayload().GetDenomination() {
+		return nil, fmt.Errorf("receiver authorization account terms mismatch")
+	}
 	return &AdmitAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
 }
 
 func (g *GRPC) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error) {
+	if !identity.ValidWholesaleAccountID(req.WholesaleAccountID) {
+		return nil, fmt.Errorf("valid wholesale_account_id required")
+	}
 	if _, err := g.SettlementDomain(ctx); err != nil {
 		return nil, err
 	}
@@ -203,42 +233,63 @@ func (g *GRPC) AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizatio
 	if req.TargetReserved != nil {
 		target = req.TargetReserved.Bytes()
 	}
-	res, err := g.client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, CumulativeUnits: req.CumulativeUnits, TargetReservedValueWei: &pb.BigUInt{Value: target}, AdvanceSeq: req.AdvanceSeq, PaymentBytes: req.PaymentBytes})
+	res, err := g.client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{SettlementDomainId: g.settlementDomainID, WholesaleAccountId: req.WholesaleAccountID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, CumulativeUnits: req.CumulativeUnits, TargetReservedValueWei: &pb.BigUInt{Value: target}, AdvanceSeq: req.AdvanceSeq, PaymentBytes: req.PaymentBytes})
 	if err != nil {
+		return nil, err
+	}
+	if err := g.validateAccount(res.GetAccount(), req.Payer, req.WholesaleAccountID); err != nil {
 		return nil, err
 	}
 	return &AdvanceAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), BilledDelta: new(big.Int).SetBytes(res.GetBilledDeltaWei().GetValue()), CumulativeBilled: new(big.Int).SetBytes(res.GetCumulativeBilledValueWei().GetValue()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Credited: new(big.Int).SetBytes(res.GetCreditedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
 }
 
 func (g *GRPC) SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error) {
+	if !identity.ValidWholesaleAccountID(req.WholesaleAccountID) {
+		return nil, fmt.Errorf("valid wholesale_account_id required")
+	}
 	if _, err := g.SettlementDomain(ctx); err != nil {
 		return nil, err
 	}
-	res, err := g.client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, ActualUnits: req.ActualUnits, SettlementSeq: req.SettlementSeq})
+	res, err := g.client.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: g.settlementDomainID, WholesaleAccountId: req.WholesaleAccountID, Payer: req.Payer, AuthorizationId: req.AuthorizationID, ActualUnits: req.ActualUnits, SettlementSeq: req.SettlementSeq})
 	if err != nil {
+		return nil, err
+	}
+	if err := g.validateAccount(res.GetAccount(), req.Payer, req.WholesaleAccountID); err != nil {
 		return nil, err
 	}
 	return &SettleAuthorizationResult{State: int32(res.GetState()), Account: accountFromProto(res.GetAccount()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), Replayed: res.GetReplayed()}, nil
 }
 
-func (g *GRPC) GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error) {
+func (g *GRPC) GetWholesaleAccount(ctx context.Context, payer []byte, wholesaleAccountID string) (*WholesaleAccount, error) {
+	if !identity.ValidWholesaleAccountID(wholesaleAccountID) {
+		return nil, fmt.Errorf("valid wholesale_account_id required")
+	}
 	if _, err := g.SettlementDomain(ctx); err != nil {
 		return nil, err
 	}
-	res, err := g.client.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, Payer: payer})
+	res, err := g.client.GetWholesaleAccount(ctx, &pb.GetWholesaleAccountRequest{SettlementDomainId: g.settlementDomainID, Payer: payer, WholesaleAccountId: wholesaleAccountID})
 	if err != nil {
+		return nil, err
+	}
+	if err := g.validateAccount(res.GetAccount(), payer, wholesaleAccountID); err != nil {
 		return nil, err
 	}
 	return accountFromProto(res.GetAccount()), nil
 }
 
-func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+func (g *GRPC) GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string, wholesaleAccountID string) (*SpendAuthorizationStatus, error) {
+	if !identity.ValidWholesaleAccountID(wholesaleAccountID) {
+		return nil, fmt.Errorf("valid wholesale_account_id required")
+	}
 	if _, err := g.SettlementDomain(ctx); err != nil {
 		return nil, err
 	}
-	res, err := g.client.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: payer, AuthorizationId: authorizationID})
+	res, err := g.client.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: g.settlementDomainID, Payer: payer, AuthorizationId: authorizationID, WholesaleAccountId: wholesaleAccountID})
 	if err != nil {
 		return nil, err
+	}
+	if res.GetWholesaleAccountId() != wholesaleAccountID || res.GetSettlementDomainId() != g.settlementDomainID || len(res.GetPayee()) != 20 {
+		return nil, fmt.Errorf("receiver authorization account mismatch")
 	}
 	return authorizationStatusFromProto(res), nil
 }
@@ -247,7 +298,7 @@ func authorizationStatusFromProto(res *pb.GetSpendAuthorizationResponse) *SpendA
 	if res == nil {
 		return nil
 	}
-	return &SpendAuthorizationStatus{State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}
+	return &SpendAuthorizationStatus{WholesaleAccountID: res.GetWholesaleAccountId(), SettlementDomainID: res.GetSettlementDomainId(), Payee: append([]byte(nil), res.GetPayee()...), State: int32(res.GetState()), Reserved: new(big.Int).SetBytes(res.GetReservedValueWei().GetValue()), Billed: new(big.Int).SetBytes(res.GetBilledValueWei().GetValue()), Released: new(big.Int).SetBytes(res.GetReleasedValueWei().GetValue()), ActualUnits: res.GetActualUnits(), SettlementSeq: res.GetSettlementSeq(), ObservedAt: res.GetObservedAt()}
 }
 
 func (g *GRPC) DebitBalance(ctx context.Context, req DebitBalanceRequest) (*DebitResult, error) {
@@ -318,4 +369,13 @@ func (g *GRPC) SettlementDomain(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("payment ledger identity changed; restart broker and republish signed routes")
 	}
 	return g.settlementDomainID, nil
+}
+
+// validateAccount prevents a mismatched or older receiver from being treated as
+// proof that an isolated account was funded, admitted or settled.
+func (g *GRPC) validateAccount(a *pb.WholesaleAccountView, payer []byte, accountID string) error {
+	if !identity.ValidWholesaleAccountID(accountID) || a == nil || a.GetWholesaleAccountId() != accountID || a.GetSettlementDomainId() != g.settlementDomainID || (payer != nil && !bytes.Equal(a.GetPayer(), payer)) {
+		return fmt.Errorf("receiver wholesale account identity mismatch")
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package receiver_test
 
 import (
+	"crypto/sha256"
 	"encoding/hex"
 	"math/big"
 	"net"
@@ -35,42 +36,37 @@ func TestSessionReceiverFixture(t *testing.T) {
 	}
 	defer st.Close()
 	payee := bytes20(0xaa)
-	account, err := st.GetWholesaleAccount(payer, payee)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if account.CreditedWei == "0" {
-		if _, _, err := st.OpenSession(store.Session{WorkID: "fixture-float", Capability: "custom:any", Offering: "offer", PricePerWorkUnitWei: "1", PerUnits: 1, WorkUnit: "units"}); err != nil {
+
+	for i, accountID := range []string{"test-account", "other-account"} {
+		account, err := st.GetWholesaleAccount(payer, payee, accountID)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := st.SealSender("fixture-float", payer); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.CreditBalance(payer, "fixture-float", big.NewInt(1_000_000_000_000_000)); err != nil {
-			t.Fatal(err)
-		}
-		now := time.Now()
-		seed := store.WholesaleAuthorizationSeed{ID: "fixture-bootstrap", Fingerprint: []byte("fixture"), Payer: payer, Payee: payee, MaxDebitWei: "1", MaxTotalUnits: 1, PriceWei: "1", PerUnits: 1, ExpiresAt: now.Add(time.Hour)}
-		if _, err := st.AdmitWholesale(seed, "fixture-float", big.NewInt(1), now); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.SettleWholesale(payer, payee, seed.ID, 0, 1, now); err != nil {
-			t.Fatal(err)
+		if account.CreditedWei == "0" {
+			work := "fixture-float-" + accountID
+			_, _, err = st.GetOrCreateTicketSession(store.TicketSessionKey{Sender: payer, Recipient: payee, Capability: "c", Offering: "o", WholesaleAccountID: accountID, TicketStreamID: "fixture"}, store.Session{WorkID: work, RecipientRand: big.NewInt(int64(i + 1)).String()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256([]byte(accountID))
+			if _, _, err = st.ApplyWholesaleFunding(payer, payee, accountID, work, hex.EncodeToString(digest[:]), []store.FundingTicket{{Nonce: 1, Credit: big.NewInt(1_000_000_000_000_000)}}, time.Now()); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
+	defer signal.Stop(stop)
 	socket := filepath.Join(dir, "receiver.sock")
 	_ = os.Remove(socket)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		t.Fatal(err)
 	}
-	svc := receiver.New(st, receiver.Config{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: payee}, nil)
+	svc := receiver.New(st, receiver.Config{ChainID: 42161, SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Recipient: payee}, nil)
 	server := grpc.NewServer()
 	pb.RegisterPayeeDaemonServer(server, svc)
 	go func() { _ = server.Serve(listener) }()
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, syscall.SIGTERM, syscall.SIGINT)
-	defer signal.Stop(stop)
 	<-stop
 	server.GracefulStop()
 }

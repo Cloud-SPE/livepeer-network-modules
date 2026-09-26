@@ -43,7 +43,7 @@ func reconcileReceiverUsage(r *sessionstore.Record, usage *payment.SpendAuthoriz
 // Settle with the receiver's high watermark. A lost settlement response replays
 // the same sequence rather than incrementing again or lowering cumulative units.
 func (e *Engine) settleSessionAuthorizationLocked(ctx context.Context, rec *sessionstore.Record, ac payment.AccountClient) (*payment.SettleAuthorizationResult, error) {
-	usage, err := ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+	usage, err := ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID, rec.WholesaleAccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -63,7 +63,7 @@ func (e *Engine) settleSessionAuthorizationLocked(ctx context.Context, rec *sess
 		}
 		seq++
 	}
-	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: usage.ActualUnits, SettlementSeq: seq})
+	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: rec.WholesaleAccountID, Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, ActualUnits: usage.ActualUnits, SettlementSeq: seq})
 	if err != nil {
 		return nil, err
 	}

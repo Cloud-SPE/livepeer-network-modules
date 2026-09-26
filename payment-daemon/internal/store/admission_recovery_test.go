@@ -19,18 +19,18 @@ func TestCancelAdmissionAtomicWithAdmissionAndRestart(t *testing.T) {
 	}
 	payer, payee := bytes20(1), bytes20(2)
 	now := time.Now()
-	fundLegacySession(t, st, payer, "float", 1000)
-	bootstrap := wholesaleSeed("bootstrap", payer, payee, "1000", now.Add(time.Hour))
-	if _, err = st.AdmitWholesale(bootstrap, "float", big.NewInt(1), now); err != nil {
+	fundRecoveryAccount(t, st, payer, payee, "test-account", 1000)
+	bootstrap := recoverySeed("bootstrap", payer, payee, "1000", now.Add(time.Hour))
+	if _, err = st.AdmitWholesale(bootstrap, "", big.NewInt(1), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = st.SettleWholesale(payer, payee, "bootstrap", 0, 1, now); err != nil {
+	if _, err = st.SettleWholesale(payer, payee, "bootstrap", 0, 1, now, "test-account"); err != nil {
 		t.Fatal(err)
 	}
 	var canceled []WholesaleAuthorizationSeed
 	for i := 0; i < 20; i++ {
 		id := fmt.Sprintf("racing-%d", i)
-		seed := wholesaleSeed(id, payer, payee, "10", now.Add(time.Hour))
+		seed := recoverySeed(id, payer, payee, "10", now.Add(time.Hour))
 		fp := sha256.Sum256([]byte(id))
 		seed.Fingerprint = fp[:]
 		var wg sync.WaitGroup
@@ -41,7 +41,7 @@ func TestCancelAdmissionAtomicWithAdmissionAndRestart(t *testing.T) {
 		go func() { defer wg.Done(); _, admitErr = st.AdmitWholesale(seed, "", big.NewInt(10), now) }()
 		go func() {
 			defer wg.Done()
-			result, fenced, cancelErr = st.CancelAuthorizationAdmission(payer, payee, id, fp[:])
+			result, fenced, cancelErr = st.CancelAuthorizationAdmission(payer, payee, id, fp[:], "test-account")
 		}()
 		wg.Wait()
 		if cancelErr != nil {
@@ -56,16 +56,16 @@ func TestCancelAdmissionAtomicWithAdmissionAndRestart(t *testing.T) {
 			if admitErr != nil || result.Authorization == nil || result.Authorization.State != AuthorizationAdmitted {
 				t.Fatalf("accepted authority lost: %v %+v", admitErr, result)
 			}
-			if _, err := st.SettleWholesale(payer, payee, id, 0, 1, now); err != nil {
+			if _, err := st.SettleWholesale(payer, payee, id, 0, 1, now, "test-account"); err != nil {
 				t.Fatal(err)
 			}
 		}
 	}
 	// Always cover a fenced identity across restart, regardless of race ordering.
-	seed := wholesaleSeed("canceled", payer, payee, "10", now.Add(time.Hour))
+	seed := recoverySeed("canceled", payer, payee, "10", now.Add(time.Hour))
 	fp := sha256.Sum256([]byte(seed.ID))
 	seed.Fingerprint = fp[:]
-	if _, fenced, err := st.CancelAuthorizationAdmission(payer, payee, seed.ID, fp[:]); err != nil || !fenced {
+	if _, fenced, err := st.CancelAuthorizationAdmission(payer, payee, seed.ID, fp[:], "test-account"); err != nil || !fenced {
 		t.Fatalf("fence: %v %v", fenced, err)
 	}
 	canceled = append(canceled, seed)
@@ -82,11 +82,11 @@ func TestCancelAdmissionAtomicWithAdmissionAndRestart(t *testing.T) {
 			t.Fatalf("fence lost after restart: %v", err)
 		}
 		changed := sha256.Sum256([]byte("changed"))
-		if _, _, err := st.CancelAuthorizationAdmission(payer, payee, seed.ID, changed[:]); !errors.Is(err, ErrAuthorizationFingerprint) {
+		if _, _, err := st.CancelAuthorizationAdmission(payer, payee, seed.ID, changed[:], "test-account"); !errors.Is(err, ErrAuthorizationFingerprint) {
 			t.Fatalf("changed cancellation: %v", err)
 		}
 	}
-	account, err := st.GetWholesaleAccount(payer, payee)
+	account, err := st.GetWholesaleAccount(payer, payee, "test-account")
 	if err != nil || account.ReservedWei != "0" || account.DebitedWei != "0" {
 		t.Fatalf("cancellation changed accounting: %+v %v", account, err)
 	}
@@ -96,13 +96,13 @@ func TestCancelAcceptedRevisionPreservesInheritedBilling(t *testing.T) {
 	st := openTestStore(t)
 	payer, payee := bytes20(1), bytes20(2)
 	now := time.Now()
-	fundLegacySession(t, st, payer, "float", 1000)
-	previous := wholesaleSeed("previous", payer, payee, "120", now.Add(time.Hour))
+	fundRecoveryAccount(t, st, payer, payee, "test-account", 1000)
+	previous := recoverySeed("previous", payer, payee, "120", now.Add(time.Hour))
 	previous.Protocol, previous.SessionID, previous.PriceWei, previous.MaxTotalUnits = "paid-session/v1", "session", "1", 120
-	if _, err := st.AdmitWholesale(previous, "float", big.NewInt(120), now); err != nil {
+	if _, err := st.AdmitWholesale(previous, "", big.NewInt(120), now); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.AdvanceWholesale(payer, payee, previous.ID, 74, big.NewInt(46), 1, "", now); err != nil {
+	if _, err := st.AdvanceWholesale(payer, payee, previous.ID, 74, big.NewInt(46), 1, "", now, "test-account"); err != nil {
 		t.Fatal(err)
 	}
 	next := previous
@@ -115,15 +115,33 @@ func TestCancelAcceptedRevisionPreservesInheritedBilling(t *testing.T) {
 	if _, err := st.AdmitWholesale(next, "", big.NewInt(106), now); err != nil {
 		t.Fatal(err)
 	}
-	result, canceled, err := st.CancelAuthorizationAdmission(payer, payee, next.ID, fp[:])
+	result, canceled, err := st.CancelAuthorizationAdmission(payer, payee, next.ID, fp[:], "test-account")
 	if err != nil || canceled || result.Authorization.ActualUnits != 74 || result.Authorization.BilledWei != "74" || result.Authorization.ReservedWei != "106" || result.Authorization.State != AuthorizationAdmitted {
 		t.Fatalf("accepted revision altered: %+v canceled=%v err=%v", result, canceled, err)
 	}
-	if _, err := st.SettleWholesale(payer, payee, next.ID, 74, 2, now); err != nil {
+	if _, err := st.SettleWholesale(payer, payee, next.ID, 74, 2, now, "test-account"); err != nil {
 		t.Fatal(err)
 	}
-	result, canceled, err = st.CancelAuthorizationAdmission(payer, payee, next.ID, fp[:])
+	result, canceled, err = st.CancelAuthorizationAdmission(payer, payee, next.ID, fp[:], "test-account")
 	if err != nil || canceled || result.Authorization.State != AuthorizationSettled || result.Authorization.BilledWei != "74" {
 		t.Fatal("settled revision altered", err)
+	}
+}
+
+func recoverySeed(id string, payer, payee []byte, max string, expires time.Time) WholesaleAuthorizationSeed {
+	seed := wholesaleSeed(id, payer, payee, max, expires)
+	seed.WholesaleAccountID = "test-account"
+	return seed
+}
+func fundRecoveryAccount(t *testing.T, st *Store, payer, payee []byte, account string, amount int64) {
+	t.Helper()
+	digest := sha256.Sum256([]byte(account))
+	work := "fund-" + account
+	_, _, err := st.GetOrCreateTicketSession(TicketSessionKey{Sender: payer, Recipient: payee, Capability: "c", Offering: "o", WholesaleAccountID: account, TicketStreamID: "fixture"}, Session{WorkID: work, RecipientRand: new(big.Int).SetBytes(digest[:]).String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = st.ApplyWholesaleFunding(payer, payee, account, work, fmt.Sprintf("%x", digest), []FundingTicket{{Nonce: 1, Credit: big.NewInt(amount)}}, time.Now()); err != nil {
+		t.Fatal(err)
 	}
 }

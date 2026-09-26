@@ -76,7 +76,7 @@ func prepareWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDae
 		return fmt.Errorf("completed authorization: %w", err)
 	}
 	payerAddress := completedAuth.GetPayer()
-	accountBefore, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	accountBefore, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return fmt.Errorf("account before completed exchange: %w", err)
 	}
@@ -121,7 +121,7 @@ func prepareWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDae
 		return fmt.Errorf("completed settlement identity/outcome mismatch")
 	}
 
-	beforeAdmission, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	beforeAdmission, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return fmt.Errorf("account before held admission: %w", err)
 	}
@@ -164,7 +164,7 @@ func prepareWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDae
 	if admitted.GetState() != pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED {
 		return fmt.Errorf("held admission state=%s", admitted.GetState())
 	}
-	afterAdmission, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	afterAdmission, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return fmt.Errorf("account after held admission: %w", err)
 	}
@@ -195,6 +195,9 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 	}
 	if cp.Version != wholesaleRecoveryCheckpointVersion || cp.Phase != "admitted" {
 		return fmt.Errorf("checkpoint version/phase=%d/%q; want %d/admitted", cp.Version, cp.Phase, wholesaleRecoveryCheckpointVersion)
+	}
+	if cp.AccountAfterAdmission.WholesaleAccountID != cfg.wholesaleAccountID {
+		return fmt.Errorf("checkpoint wholesale account mismatch")
 	}
 	if err := cp.AccountAfterAdmission.validate(); err != nil {
 		return fmt.Errorf("checkpoint account: %w", err)
@@ -229,7 +232,7 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 		return fmt.Errorf("durable mint replay payer differs from checkpoint")
 	}
 
-	accountAfterRestart, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	accountAfterRestart, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return fmt.Errorf("account after restart: %w", err)
 	}
@@ -239,7 +242,7 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 	if !sameWholesaleAccountTotals(accountAfterRestart, &cp.AccountAfterAdmission) {
 		return fmt.Errorf("account changed across restart: checkpoint=%+v restarted=%+v", cp.AccountAfterAdmission, accountAfterRestart)
 	}
-	auth, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: cp.AuthorizationID})
+	auth, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{WholesaleAccountId: cfg.wholesaleAccountID, SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: cp.AuthorizationID})
 	if err != nil {
 		return fmt.Errorf("held authorization after restart: %w", err)
 	}
@@ -255,7 +258,7 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 		return fmt.Errorf("broker settlement changed across restart")
 	}
 
-	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID,
+	settled, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: cfg.wholesaleAccountID, SettlementDomainId: cfg.settlementDomainID,
 		Payer: payerAddress, AuthorizationId: cp.AuthorizationID, ActualUnits: 0, SettlementSeq: 1,
 	})
 	if err != nil {
@@ -264,14 +267,14 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 	if settled.GetReplayed() {
 		return fmt.Errorf("first recovery settlement unexpectedly replayed")
 	}
-	afterSettlement, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	afterSettlement, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return err
 	}
 	if err := afterSettlement.validate(); err != nil {
 		return fmt.Errorf("account after settlement: %w", err)
 	}
-	settlementReplay, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID,
+	settlementReplay, err := payee.SettleAuthorization(ctx, &pb.SettleAuthorizationRequest{WholesaleAccountId: cfg.wholesaleAccountID, SettlementDomainId: cfg.settlementDomainID,
 		Payer: payerAddress, AuthorizationId: cp.AuthorizationID, ActualUnits: 0, SettlementSeq: 1,
 	})
 	if err != nil {
@@ -280,7 +283,7 @@ func verifyWholesaleRecovery(ctx context.Context, cfg config, payer pb.PayerDaem
 	if !settlementReplay.GetReplayed() {
 		return fmt.Errorf("second recovery settlement was not identified as replay")
 	}
-	afterReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	afterReplay, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return err
 	}
@@ -401,7 +404,7 @@ func probeWholesaleEvidence(ctx context.Context, cfg config, payee pb.PayeeDaemo
 	if err != nil {
 		return err
 	}
-	account, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID)
+	account, err := queryWholesaleAccount(cfg.brokerURL, payerAddress, cfg.settlementDomainID, cfg.wholesaleAccountID)
 	if err != nil {
 		return err
 	}
@@ -415,7 +418,7 @@ func probeWholesaleEvidence(ctx context.Context, cfg config, payee pb.PayeeDaemo
 	if !ok || target.Sign() <= 0 || account.Available.big().Cmp(target) > 0 {
 		return fmt.Errorf("remaining available %s exceeds checkpoint target %s", account.Available.big(), cp.TargetAvailableWei)
 	}
-	auth, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: cp.AuthorizationID})
+	auth, err := payee.GetSpendAuthorization(ctx, &pb.GetSpendAuthorizationRequest{WholesaleAccountId: cfg.wholesaleAccountID, SettlementDomainId: cfg.settlementDomainID, Payer: payerAddress, AuthorizationId: cp.AuthorizationID})
 	if err != nil {
 		return err
 	}

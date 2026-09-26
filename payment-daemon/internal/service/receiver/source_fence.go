@@ -2,6 +2,7 @@ package receiver
 
 import (
 	"context"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"time"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
@@ -104,14 +105,17 @@ func (s *Service) GetRevenueSourceStatus(ctx context.Context, req *pb.GetRevenue
 }
 
 func (s *Service) CloseUnexecutedAuthorization(_ context.Context, req *pb.CloseUnexecutedAuthorizationRequest) (*pb.CloseUnexecutedAuthorizationResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "receiver source identity mismatch")
 	}
 	s.sourceGate.RLock()
 	defer s.sourceGate.RUnlock()
-	if err := s.store.CloseUnexecutedAuthorization(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetReason()); err != nil {
+	if err := s.store.CloseUnexecutedAuthorization(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetReason(), req.GetWholesaleAccountId()); err != nil {
 		return nil, status.Errorf(codes.FailedPrecondition, "unexecuted recovery held: %v", err)
 	}
 	s.recordWholesaleTotals()
-	return &pb.CloseUnexecutedAuthorizationResponse{SettlementDomainId: s.settlementDomainID, Fenced: true}, nil
+	return &pb.CloseUnexecutedAuthorizationResponse{WholesaleAccountId: req.GetWholesaleAccountId(), SettlementDomainId: s.settlementDomainID, Fenced: true}, nil
 }

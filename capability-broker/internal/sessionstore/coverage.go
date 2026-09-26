@@ -108,7 +108,16 @@ func (s *Store) RecordNonAdmission(requestID, envelope string, observedAt time.T
 		if jobs != nil && jobs.Get([]byte(requestID)) != nil {
 			return ErrExists
 		}
-		for _, bucket := range []string{openReservationsBucket, openRequestsBucket, admittedBucket, revisionRequestsBucket} {
+		if pending := tx.Bucket([]byte(openReservationsBucket)).Get([]byte(requestID)); pending != nil {
+			reservation, err := s.unsealReservation(pending)
+			if err != nil {
+				return err
+			}
+			if !reservation.AdmissionCanceled || reservation.AdmissionIntent == nil {
+				return ErrExists
+			}
+		}
+		for _, bucket := range []string{openRequestsBucket, admittedBucket, revisionRequestsBucket} {
 			if b := tx.Bucket([]byte(bucket)); b != nil && b.Get([]byte(requestID)) != nil {
 				return ErrExists
 			}

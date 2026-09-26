@@ -20,7 +20,7 @@ type deviceReceiver struct {
 	admissions int
 }
 
-func (r *deviceReceiver) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+func (r *deviceReceiver) GetSpendAuthorization(context.Context, []byte, string, string) (*payment.SpendAuthorizationStatus, error) {
 	return &payment.SpendAuthorizationStatus{State: r.state}, nil
 }
 func (r *deviceReceiver) AdmitAuthorization(context.Context, payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
@@ -29,7 +29,7 @@ func (r *deviceReceiver) AdmitAuthorization(context.Context, payment.AdmitAuthor
 }
 func deviceAuth(t *testing.T, id, previous string) []byte {
 	t.Helper()
-	raw, err := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{AuthorizationId: id, PredecessorAuthorizationId: previous, SettlementDomainId: "source", Payer: make([]byte, 20)}})
+	raw, err := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", AuthorizationId: id, PredecessorAuthorizationId: previous, SettlementDomainId: "source", Payer: make([]byte, 20)}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestDeviceDrainFencesNewBindingAndRenewalAcrossRestart(t *testing.T) {
 	if err != nil || proof.ActiveAuthorizations != 1 {
 		t.Fatalf("active proof %+v %v", proof, err)
 	}
-	op, err := s.Prepare(Operation{AuthorizationID: "job", Sequence: 1, Kind: "settle", Units: 2})
+	op, err := s.Prepare(Operation{WholesaleAccountID: "test-account", AuthorizationID: "job", Sequence: 1, Kind: "settle", Units: 2})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -365,7 +365,7 @@ func TestStubsReturnEmpty(t *testing.T) {
 		t.Errorf("GetQuote: want Unimplemented, got %v", err)
 	}
 	// Empty fields → InvalidArgument (sender, capability, offering all required).
-	if _, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); status.Code(err) != codes.InvalidArgument {
+	if _, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream"}); status.Code(err) != codes.InvalidArgument {
 		t.Errorf("GetTicketParams empty: want InvalidArgument, got %v", err)
 	}
 	caps, err := client.ListCapabilities(ctx, &pb.ListCapabilitiesRequest{})
@@ -404,7 +404,7 @@ func TestResetSession_AdminTokenRequired(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_, err := admin.ResetSession(ctx, &pb.ResetSessionRequest{
+	_, err := admin.ResetSession(ctx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     bytes20(0x01),
 		Recipient:  bytes20(0xaa),
 		Capability: "video:transcode.abr",
@@ -423,7 +423,7 @@ func TestResetSession_RotatesStableSessionAndDropsNonceLedger(t *testing.T) {
 	defer cancel()
 	mdCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer secret-token"))
 
-	req := &pb.GetTicketParamsRequest{
+	req := &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     bytes20(0x01),
 		Recipient:  bytes20(0xaa),
 		FaceValue:  big.NewInt(1234).Bytes(),
@@ -437,7 +437,7 @@ func TestResetSession_RotatesStableSessionAndDropsNonceLedger(t *testing.T) {
 	oldRand := new(big.Int).SetBytes(first.GetTicketParams().GetSeed())
 	_ = st.RecordNonce(oldRand, 77)
 
-	resp, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{
+	resp, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender:     bytes20(0x01),
 		Recipient:  bytes20(0xaa),
 		Capability: "video:transcode.abr",
@@ -501,7 +501,7 @@ func TestProcessPaymentRefusesRotatedAwaySession(t *testing.T) {
 	mdCtx := metadata.NewOutgoingContext(ctx, metadata.Pairs("authorization", "Bearer secret-token"))
 
 	sender := bytes20(0x01)
-	paramsReq := &pb.GetTicketParamsRequest{
+	paramsReq := &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender: sender, Recipient: bytes20(0xaa), FaceValue: big.NewInt(1234).Bytes(),
 		Capability: "video:transcode.abr", Offering: "default",
 	}
@@ -516,7 +516,7 @@ func TestProcessPaymentRefusesRotatedAwaySession(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("OpenSession: %v", err)
 	}
-	if _, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{
+	if _, err := admin.ResetSession(mdCtx, &pb.ResetSessionRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream",
 		Sender: sender, Recipient: bytes20(0xaa),
 		Capability: "video:transcode.abr", Offering: "default",
 	}); err != nil {

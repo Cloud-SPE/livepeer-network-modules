@@ -158,7 +158,7 @@ func (c *Client) DeviceDrainStatus(ctx context.Context, host, device string, gen
 		if p == nil || c.AccountClient == nil {
 			return out, fmt.Errorf("receiver authorization proof unavailable")
 		}
-		state, err := c.AccountClient.GetSpendAuthorization(ctx, p.Payer, p.AuthorizationId)
+		state, err := c.AccountClient.GetSpendAuthorization(ctx, p.Payer, p.AuthorizationId, p.GetWholesaleAccountId())
 		if err != nil {
 			return out, err
 		}

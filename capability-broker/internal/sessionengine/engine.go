@@ -217,7 +217,7 @@ func New(cfg Config) (*Engine, error) {
 	}
 	var legacySessions, legacyReservations int
 	if err := cfg.Store.ForEach(func(r *sessionstore.Record) error {
-		if !r.Terminal() && r.AccountAuthorizationID == "" {
+		if !r.Terminal() && (r.AccountAuthorizationID == "" || r.WholesaleAccountID == "") {
 			legacySessions++
 		}
 		return nil
@@ -225,7 +225,7 @@ func New(cfg Config) (*Engine, error) {
 		return nil, fmt.Errorf("sessionengine: inspect session store for authorization-only cutover: %w", err)
 	}
 	if err := cfg.Store.ForEachReservation(func(r sessionstore.OpenReservation) error {
-		if (r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated) && !r.AccountAuthorization {
+		if (r.Stage == sessionstore.ReservationPaid || r.Stage == sessionstore.ReservationRunnerCreated) && (!r.AccountAuthorization || r.WholesaleAccountID == "") {
 			legacyReservations++
 		}
 		return nil
@@ -339,8 +339,13 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			// The same rule replay applies: one id, one content. A
 			// different open under an in-flight id is a reuse, not a
 			// retry, and is refused rather than told to try again.
-			if held, lerr := e.cfg.Store.Reservation(req.RequestID); lerr == nil && !bytesEqual(held.Fingerprint, fingerprint) {
-				return nil, protoErr("request_id_reuse", "request id reused with different open content")
+			if held, lerr := e.cfg.Store.Reservation(req.RequestID); lerr == nil {
+				if !bytesEqual(held.Fingerprint, fingerprint) {
+					return nil, protoErr("request_id_reuse", "request id reused with different open content")
+				}
+				if held.AdmissionCanceled {
+					return nil, protoErr("payment_invalid", "authorization admission canceled; use a new authorization and request id")
+				}
 			}
 			return nil, protoErr("open_in_flight", "an open with this request id is in flight; retry")
 		case errors.Is(err, sessionstore.ErrNonAdmissionIssued):
@@ -381,26 +386,30 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 			releaseReservation()
 			return nil, protoErr("protocol_unsupported", "payment daemon does not support wholesale accounts")
 		}
+		// Persist exact authority and recovery identity BEFORE the receiver RPC.
+		sender = append([]byte(nil), accountPayload.GetPayer()...)
+		if err := recordStage(func(r *sessionstore.OpenReservation) {
+			r.WorkID, r.Sender, r.AccountAuthorization = workID, sender, true
+			r.WholesaleAccountID = accountPayload.GetWholesaleAccountId()
+			r.AdmissionIntent = &sessionstore.OpenAdmissionIntent{AuthorizationBytes: append([]byte(nil), req.AuthorizationBytes...), Record: *e.openRecoveryRecord(req, sessionID, accountPayload, fingerprint)}
+		}); err != nil {
+			e.release(req.CapacityRef)
+			releaseReservation() // The receiver has not been called.
+			return nil, &RetryableError{Err: err}
+		}
 		admitted, err := ac.AdmitAuthorization(ctx, payment.AdmitAuthorizationRequest{AuthorizationBytes: req.AuthorizationBytes, PaymentBytes: req.PaymentBytes, Reservation: req.InitialReservationWei})
 		if err != nil {
-			e.release(req.CapacityRef)
-			releaseReservation()
-			return nil, protoErr("payment_invalid", "authorization admission rejected: %v", err)
+			return nil, e.reconcileFailedOpen(ctx, req.RequestID)
 		}
-		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
-			e.release(req.CapacityRef)
-			releaseReservation()
-			return nil, &RetryableError{Err: errors.New("payment daemon returned an invalid account admission")}
+		if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || admitted.Account.WholesaleAccountID != accountPayload.GetWholesaleAccountId() || !bytesEqual(admitted.Account.Payer, accountPayload.GetPayer()) || admitted.Account.SettlementDomainID != accountPayload.GetSettlementDomainId() {
+			return nil, e.reconcileFailedOpen(ctx, req.RequestID)
 		}
-		sender = append([]byte(nil), accountPayload.GetPayer()...)
 		credited = admitted.Credited
 		if err := recordStage(func(r *sessionstore.OpenReservation) {
-			r.Stage, r.WorkID, r.CapacityRef, r.BackendRef, r.Sender = sessionstore.ReservationPaid, workID, req.CapacityRef, req.Spec.BackendRef, sender
-			r.AccountAuthorization = true
+			r.Stage = sessionstore.ReservationPaid
+			r.AdmissionIntent.Record.FundedWei = bigIntString(credited)
 		}); err != nil {
-			_, _ = ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: sender, AuthorizationID: workID, ActualUnits: 0, SettlementSeq: 1})
-			e.release(req.CapacityRef)
-			releaseReservation()
+			// Retain the pre-RPC intent even if recording success failed.
 			return nil, &RetryableError{Err: fmt.Errorf("record account admission: %w", err)}
 		}
 	}
@@ -451,7 +460,7 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 				ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
 				RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
 				Sender:                sender, OpenFingerprint: fingerprint,
-				SettlementDomainID:       accountPayload.GetSettlementDomainId(),
+				WholesaleAccountID: accountPayload.GetWholesaleAccountId(), SettlementDomainID: accountPayload.GetSettlementDomainId(),
 				AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 				AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 				AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -490,22 +499,22 @@ func (e *Engine) Open(ctx context.Context, req OpenRequest) (*OpenResult, error)
 	}
 
 	rec := &sessionstore.Record{
-		SessionID:                sessionID,
-		GatewaySessionID:         req.GatewaySessionID,
-		RunnerSessionID:          created.RunnerSessionID,
-		WorkID:                   workID,
-		Capability:               req.Spec.Capability,
-		Offering:                 req.Spec.Offering,
-		BackendRef:               req.Spec.BackendRef,
-		QuoteID:                  req.AcceptedQuoteRef.GetQuoteId(),
-		QuoteVersion:             req.AcceptedQuoteRef.GetQuoteVersion(),
-		ConstraintFingerprint:    append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
-		RouteFingerprint:         append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
-		Sender:                   sender,
-		CredentialHash:           sessionstore.HashSecret(credential),
-		CallbackTokenHash:        sessionstore.HashSecret(callbackToken),
-		OpenFingerprint:          fingerprint,
-		SettlementDomainID:       accountPayload.GetSettlementDomainId(),
+		SessionID:             sessionID,
+		GatewaySessionID:      req.GatewaySessionID,
+		RunnerSessionID:       created.RunnerSessionID,
+		WorkID:                workID,
+		Capability:            req.Spec.Capability,
+		Offering:              req.Spec.Offering,
+		BackendRef:            req.Spec.BackendRef,
+		QuoteID:               req.AcceptedQuoteRef.GetQuoteId(),
+		QuoteVersion:          req.AcceptedQuoteRef.GetQuoteVersion(),
+		ConstraintFingerprint: append([]byte(nil), req.AcceptedQuoteRef.GetConstraintFingerprint()...),
+		RouteFingerprint:      append([]byte(nil), req.AcceptedQuoteRef.GetRouteFingerprint()...),
+		Sender:                sender,
+		CredentialHash:        sessionstore.HashSecret(credential),
+		CallbackTokenHash:     sessionstore.HashSecret(callbackToken),
+		OpenFingerprint:       fingerprint,
+		WholesaleAccountID:    accountPayload.GetWholesaleAccountId(), SettlementDomainID: accountPayload.GetSettlementDomainId(),
 		AccountAuthorizationID:   accountPayload.GetAuthorizationId(),
 		AuthorizationMaxUnits:    accountPayload.GetMaxTotalUnits(),
 		AuthorizationMaxDebitWei: new(big.Int).SetBytes(accountPayload.GetMaxDebitWei().GetValue()).String(),
@@ -581,6 +590,12 @@ func (e *Engine) replayOpen(sessionID string, fingerprint []byte) (*OpenResult, 
 	if rec.CloseReason == ReasonCapacityExhausted {
 		return nil, &CapacityError{SessionID: rec.SessionID, GatewaySessionID: rec.GatewaySessionID,
 			WorkID: rec.WorkID, BackoffSeconds: 5}
+	}
+	if rec.CloseReason == ReasonOpenFailed {
+		if !rec.Terminal() {
+			return nil, &RetryableError{Err: errors.New("failed open accounting pending; query exchange by request id")}
+		}
+		return nil, protoErr("session_terminal", "initial open failed and was settled; query exchange by request id")
 	}
 	out := &OpenResult{
 		SessionID: rec.SessionID,
@@ -825,7 +840,7 @@ func (e *Engine) ProcessEvent(ctx context.Context, sessionID string, ev Event) (
 		} else if err := e.cfg.Store.Update(sessionID, func(r *sessionstore.Record) error { r.PendingDebitSeq = advanceSeq; return nil }); err != nil {
 			return nil, &RetryableError{Err: err}
 		}
-		advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: authorizationCumulative, TargetReserved: target, AdvanceSeq: advanceSeq})
+		advanced, err := ac.AdvanceAuthorization(ctx, payment.AdvanceAuthorizationRequest{WholesaleAccountID: rec.WholesaleAccountID, Payer: rec.Sender, AuthorizationID: rec.AccountAuthorizationID, CumulativeUnits: authorizationCumulative, TargetReserved: target, AdvanceSeq: advanceSeq})
 		if err != nil {
 			return nil, &RetryableError{Err: fmt.Errorf("advance account authorization: %w", err)}
 		}
@@ -999,7 +1014,7 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		if !ok {
 			return nil, &RetryableError{Err: errors.New("account receiver unavailable")}
 		}
-		usage, lookupErr := ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+		usage, lookupErr := ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID, rec.WholesaleAccountID)
 		if lookupErr != nil {
 			return nil, &RetryableError{Err: lookupErr}
 		}
@@ -1028,7 +1043,7 @@ func (e *Engine) ReviseAuthorization(ctx context.Context, sessionID, requestID s
 		return nil, protoErr("payment_invalid", "authorization revision is malformed")
 	}
 	p := auth.GetPayload()
-	if p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
+	if p.GetWholesaleAccountId() != rec.WholesaleAccountID || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID || p.GetSessionId() != rec.GatewaySessionID || !bytesEqual(p.GetPayer(), rec.Sender) {
 		return nil, protoErr("refill_refused", "authorization revision does not continue this session")
 	}
 	oldMaxDebit, _ := new(big.Int).SetString(rec.AuthorizationMaxDebitWei, 10)
@@ -1363,7 +1378,7 @@ func (e *Engine) Recover(ctx context.Context) {
 			var authStatus *payment.SpendAuthorizationStatus
 			var authErr error
 			if ok {
-				authStatus, authErr = ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+				authStatus, authErr = ac.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID, rec.WholesaleAccountID)
 			} else {
 				authErr = errors.New("wholesale account payment extension unavailable")
 			}

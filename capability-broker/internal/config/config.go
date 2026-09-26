@@ -287,6 +287,7 @@ type SessionHeartbeat struct {
 // SessionRunnerPaths declares the runner's session API paths relative
 // to backend.url; {id} is replaced with the runner session id.
 type SessionRunnerPaths struct {
+	ReconcilePath string `yaml:"reconcile_path,omitempty"`
 	CreatePath    string `yaml:"create_path"`
 	StatusPath    string `yaml:"status_path"`
 	TerminatePath string `yaml:"terminate_path"`

@@ -9,6 +9,7 @@ import "livepeer/payments/v1/types.proto";
 // MUST compare every identity, domain, quote and authorization hash with their
 // own issued grant. Claimed authorization scope does not attest signature validity.
 message SessionRevisionRecord {
+  string wholesale_account_id = 23;
   // Always "livepeer-session-revision/v1"; prevents cross-purpose replay.
   string evidence_domain = 1;
   string protocol = 2; // Always "paid-session/v1".

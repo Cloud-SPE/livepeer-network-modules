@@ -94,11 +94,15 @@ func TestBadDescriptorRetainsCapacityUntilCleanupConfirmed(t *testing.T) {
 		t.Fatal("released unreachable runner")
 	}
 	h.runner.failTerminate = false
-	h.pay.failSettles = 1
+	h.pay.failSettles = 2
 	h.engine.Sweep(context.Background())
-	r, err = h.store.Reservation("req-1")
-	if err != nil || !r.RunnerTerminated || r.CapacityRef != "" || len(h.release) != 1 {
-		t.Fatalf("stopped but payment pending: %+v %v releases=%v", r, err, h.release)
+	id, err := h.store.SessionIDForRequest("req-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec, err := h.store.Get(id)
+	if err != nil || !rec.RunnerTerminated || rec.CapacityRef != "" || rec.PaymentClosed || len(h.release) != 1 {
+		t.Fatalf("stopped but payment pending: %+v %v releases=%v", rec, err, h.release)
 	}
 	h.engine.Sweep(context.Background())
 	if _, err = h.store.Reservation("req-1"); !errors.Is(err, sessionstore.ErrNotFound) {
@@ -146,8 +150,15 @@ func TestFailedAdmissionReleasesCapacityWithoutRunnerEffects(t *testing.T) {
 	if len(h.release) != 1 || h.runner.created != 0 {
 		t.Fatalf("release=%v creates=%d", h.release, h.runner.created)
 	}
-	if _, err := h.store.Reservation("req-1"); !errors.Is(err, sessionstore.ErrNotFound) {
-		t.Fatal(err)
+	if r, err := h.store.Reservation("req-1"); err != nil || !r.AdmissionCanceled || r.AdmissionIntent == nil || r.CapacityRef != "" {
+		t.Fatalf("missing durable cancellation: %+v %v", r, err)
+	}
+	restartRevisionHarness(t, h)
+	if _, err := h.engine.Open(context.Background(), capacityOpenRequest(t, h)); err == nil {
+		t.Fatal("replayed canceled authorization")
+	}
+	if h.pay.openCalls != 0 || h.runner.created != 0 || len(h.release) != 1 {
+		t.Fatal("canceled open had side effects")
 	}
 }
 
@@ -159,6 +170,7 @@ func TestLegacyPaidOpenCannotProveCreateDidNotRun(t *testing.T) {
 	if err := h.store.UpdateReservation("legacy", func(r *sessionstore.OpenReservation) error {
 		r.Stage = sessionstore.ReservationPaid
 		r.WorkID = "legacy-auth"
+		r.WholesaleAccountID = "test-account"
 		r.AccountAuthorization = true
 		r.BackendRef = "b1"
 		r.CapacityRef = "legacy-slot"

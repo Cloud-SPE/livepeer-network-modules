@@ -33,28 +33,28 @@ type accountPaymentClient struct {
 	settled  payment.SettleAuthorizationRequest
 }
 
-func (c *accountPaymentClient) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
-	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
+func (c *accountPaymentClient) FundWholesaleAccount(context.Context, []byte, string) (*payment.FundWholesaleAccountResult, error) {
+	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
 }
 
 func (c *accountPaymentClient) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
 	c.admitted = req
-	return &payment.AdmitAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(900)}, Reserved: big.NewInt(100), Credited: new(big.Int)}, nil
+	return &payment.AdmitAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(900)}, Reserved: big.NewInt(100), Credited: new(big.Int)}, nil
 }
 
 func (c *accountPaymentClient) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
 	c.settled = req
-	return &payment.SettleAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(970)}, Billed: big.NewInt(30), Released: big.NewInt(70)}, nil
+	return &payment.SettleAuthorizationResult{State: int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2), Available: big.NewInt(970)}, Billed: big.NewInt(30), Released: big.NewInt(70)}, nil
 }
 
 func (c *accountPaymentClient) AdvanceAuthorization(context.Context, payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
 	return nil, nil
 }
 
-func (c *accountPaymentClient) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
+func (c *accountPaymentClient) GetWholesaleAccount(context.Context, []byte, string) (*payment.WholesaleAccount, error) {
 	return nil, nil
 }
-func (c *accountPaymentClient) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+func (c *accountPaymentClient) GetSpendAuthorization(context.Context, []byte, string, string) (*payment.SpendAuthorizationStatus, error) {
 	return nil, nil
 }
 
@@ -63,8 +63,8 @@ func bytes20ForBrokerTest(v byte) []byte { return bytes.Repeat([]byte{v}, 20) }
 func accountJobRequest(t *testing.T, body []byte) *http.Request {
 	t.Helper()
 	digest := sha256.Sum256(body)
-	p := &paymentsv1.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Domain: "livepeer-spend-authorization/v2", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2),
+	p := &paymentsv1.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v3", Payer: bytes20ForBrokerTest(1), Payee: bytes20ForBrokerTest(2),
 		ChainId: 42161, Denomination: "wei",
 		AuthorizationId: "auth-1", RequestId: "req-1", Protocol: "paid-job/v1", Capability: "cap", Offering: "off", BrokerUri: "https://broker.example",
 		AcceptedPrice: &paymentsv1.AcceptedPrice{PricePerUnitWei: &paymentsv1.BigUInt{Value: big.NewInt(1).Bytes()}, UnitsPerPrice: 1, WorkUnitName: "bytes", Capability: "cap", Offering: "off"},

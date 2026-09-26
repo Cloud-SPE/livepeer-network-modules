@@ -29,6 +29,8 @@ var ErrTicketParamsExpired = errors.New("ticket params expired")
 // receiver convert to/from the wire form at the boundary; the rest of
 // the code path uses this form so big-int math is clean.
 type TicketParams struct {
+	WholesaleAccountID string
+	TicketStreamID     string
 	SettlementDomainID string
 	Recipient          []byte // 20 bytes
 	FaceValue          *big.Int

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"time"
 
 	bolt "go.etcd.io/bbolt"
@@ -13,6 +14,7 @@ import (
 const canceledAdmissionsBucket = "canceled_authorization_admissions"
 
 type canceledAdmission struct {
+	Payee       []byte    `json:"payee"`
 	Fingerprint []byte    `json:"fingerprint"`
 	At          time.Time `json:"at"`
 }
@@ -39,14 +41,14 @@ var (
 // CancelAuthorizationAdmission serializes with AdmitWholesale. Existing
 // authority is returned unchanged, including inherited usage; otherwise the
 // identity is durably fenced before reporting non-admission.
-func (s *Store) CancelAuthorizationAdmission(payer, payee []byte, id string, fingerprint []byte) (*WholesaleAdmissionResult, bool, error) {
-	if len(payer) != 20 || len(payee) != 20 || id == "" || len(fingerprint) != sha256.Size {
+func (s *Store) CancelAuthorizationAdmission(payer, payee []byte, id string, fingerprint []byte, accountID string) (*WholesaleAdmissionResult, bool, error) {
+	if !identity.ValidWholesaleAccountID(accountID) || len(payer) != 20 || len(payee) != 20 || id == "" || len(fingerprint) != sha256.Size {
 		return nil, false, fmt.Errorf("invalid admission cancellation identity")
 	}
 	result := &WholesaleAdmissionResult{}
 	canceled := false
 	err := s.db.Update(func(tx *bolt.Tx) error {
-		key := wholesaleAuthorizationKey(payer, id)
+		key := wholesaleAuthorizationKey(payer, id, accountID)
 		if raw := tx.Bucket([]byte(spendAuthorizationsBucket)).Get(key); raw != nil {
 			var auth WholesaleAuthorization
 			if err := json.Unmarshal(raw, &auth); err != nil {
@@ -70,7 +72,7 @@ func (s *Store) CancelAuthorizationAdmission(payer, payee []byte, id string, fin
 					return ErrAuthorizationFingerprint
 				}
 			} else {
-				raw, err := json.Marshal(canceledAdmission{Fingerprint: fingerprint, At: time.Now().UTC()})
+				raw, err := json.Marshal(canceledAdmission{Payee: bytes.Clone(payee), Fingerprint: fingerprint, At: time.Now().UTC()})
 				if err != nil {
 					return err
 				}
@@ -81,7 +83,7 @@ func (s *Store) CancelAuthorizationAdmission(payer, payee []byte, id string, fin
 			canceled = true
 		}
 		var err error
-		result.Account, err = loadWholesaleAccount(tx, payer, payee)
+		result.Account, err = loadWholesaleAccount(tx, payer, payee, accountID)
 		return err
 	})
 	return result, canceled, err

@@ -461,9 +461,12 @@
             },
             "terminate": {
               "$ref": "#/$defs/session_id_path"
+            },
+            "reconcile": {
+              "$ref": "#/$defs/relative_path"
             }
           },
-          "description": "Job: invoke (required), options. Session: create, status, terminate (all required; status and terminate carry {id}). Which set applies is enforced by the protocol conditionals below."
+          "description": "Job: invoke (required), options. Session: create, status, terminate (all required; status and terminate carry {id}). Which set applies is enforced by the protocol conditionals below. Optional session reconcile is a POST endpoint for durable creation fencing by broker session_id."
         },
         "readiness": {
           "$ref": "#/$defs/readiness"
@@ -561,6 +564,11 @@
                     {
                       "required": [
                         "terminate"
+                      ]
+                    },
+                    {
+                      "required": [
+                        "reconcile"
                       ]
                     }
                   ]

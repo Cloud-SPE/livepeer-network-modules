@@ -15,6 +15,7 @@ import (
 // that owns the durable job record (idempotency), and the response has
 // usually been written by the time the debit runs.
 type PendingDebit struct {
+	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
 	AuthorizationBytes []byte
 	Sender             []byte
 	WorkID             string

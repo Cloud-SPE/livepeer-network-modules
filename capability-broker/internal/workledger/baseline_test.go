@@ -23,7 +23,7 @@ func (r *revisionReceiver) AdmitAuthorization(context.Context, payment.AdmitAuth
 	}
 	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED)}, nil
 }
-func (r *revisionReceiver) GetSpendAuthorization(_ context.Context, _ []byte, id string) (*payment.SpendAuthorizationStatus, error) {
+func (r *revisionReceiver) GetSpendAuthorization(_ context.Context, _ []byte, id string, wholesaleAccountID string) (*payment.SpendAuthorizationStatus, error) {
 	if id == "a-after" {
 		return &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED)}, nil
 	}
@@ -32,7 +32,7 @@ func (r *revisionReceiver) GetSpendAuthorization(_ context.Context, _ []byte, id
 func TestSuccessorBaselinePreventsReemittingInheritedWorkAfterRestart(t *testing.T) {
 	s, path := testStore(t)
 	bind(t, s, "z-before")
-	prior, err := s.Prepare(Operation{AuthorizationID: "z-before", Kind: "advance", Sequence: 1, Units: 5})
+	prior, err := s.Prepare(Operation{WholesaleAccountID: "test-account", AuthorizationID: "z-before", Kind: "advance", Sequence: 1, Units: 5})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,14 +41,14 @@ func TestSuccessorBaselinePreventsReemittingInheritedWorkAfterRestart(t *testing
 	}
 	// Leave predecessor unfinalized; successor sorts first. Emit order cannot
 	// establish the inherited receiver baseline.
-	raw, _ := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{AuthorizationId: "a-after", PredecessorAuthorizationId: "z-before", SettlementDomainId: "source", Payer: make([]byte, 20)}})
+	raw, _ := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", AuthorizationId: "a-after", PredecessorAuthorizationId: "z-before", SettlementDomainId: "source", Payer: make([]byte, 20)}})
 	remote := &revisionReceiver{loseResponse: true}
 	client := &Client{Store: s, AccountClient: remote}
 	request := payment.AdmitAuthorizationRequest{AuthorizationBytes: raw}
 	if _, err = client.AdmitAuthorization(context.Background(), request); err == nil {
 		t.Fatal("expected lost successor response")
 	}
-	next := Operation{AuthorizationID: "a-after", Kind: "advance", Sequence: 2, Units: 8}
+	next := Operation{WholesaleAccountID: "test-account", AuthorizationID: "a-after", Kind: "advance", Sequence: 2, Units: 8}
 	if _, err = s.Prepare(next); err == nil {
 		t.Fatal("successor billed without inherited evidence")
 	}
@@ -72,7 +72,7 @@ func TestSuccessorBaselinePreventsReemittingInheritedWorkAfterRestart(t *testing
 	if err = s.Complete(op.ID, big.NewInt(11)); err != nil {
 		t.Fatal(err)
 	}
-	terminal, err := s.Prepare(Operation{AuthorizationID: "a-after", Kind: "settle", Sequence: 3, Units: 8})
+	terminal, err := s.Prepare(Operation{WholesaleAccountID: "test-account", AuthorizationID: "a-after", Kind: "settle", Sequence: 3, Units: 8})
 	if err != nil {
 		t.Fatal(err)
 	}

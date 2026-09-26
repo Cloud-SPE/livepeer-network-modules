@@ -32,7 +32,7 @@ func (c *Client) CancelAuthorizationAdmission(ctx context.Context, wire []byte) 
 		return nil, fmt.Errorf("admission recovery source identity invalid")
 	}
 	if previous := p.GetPredecessorAuthorizationId(); previous != "" {
-		predecessor, err := c.AccountClient.GetSpendAuthorization(ctx, p.GetPayer(), previous)
+		predecessor, err := c.AccountClient.GetSpendAuthorization(ctx, p.GetPayer(), previous, p.GetWholesaleAccountId())
 		if err != nil {
 			return nil, err
 		}

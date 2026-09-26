@@ -198,11 +198,11 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed, "capability "+capability+"/"+offering+" is not served by this broker")
 		return
 	}
-	if p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetAuthorizationId() == "" || p.GetSessionId() != "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetRequestId() != requestID || p.GetProtocol() != protocol || protocol != "paid-job/v1" || p.GetCapability() != capability || p.GetOffering() != offering {
+	if p.GetDomain() != "livepeer-spend-authorization/v3" || p.GetAuthorizationId() == "" || p.GetSessionId() != "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetRequestId() != requestID || p.GetProtocol() != protocol || protocol != "paid-job/v1" || p.GetCapability() != capability || p.GetOffering() != offering {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization identity or route does not match this job")
 		return
 	}
-	if !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+	if !identity.ValidWholesaleAccountID(p.GetWholesaleAccountId()) || !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization chain or denomination is invalid")
 		return
 	}
@@ -256,7 +256,7 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 		livepeerheader.WriteError(w, code, errCode, "admit authorization: "+err.Error())
 		return
 	}
-	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) || admitted.Account.SettlementDomainID != p.GetSettlementDomainId() {
+	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) || admitted.Account.WholesaleAccountID != p.GetWholesaleAccountId() || admitted.Account.SettlementDomainID != p.GetSettlementDomainId() {
 		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, "payment daemon returned an invalid account admission")
 		return
 	}
@@ -278,14 +278,14 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 	if billable > p.GetMaxTotalUnits() {
 		billable = p.GetMaxTotalUnits()
 	}
-	settled, settleErr := account.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: p.GetPayer(), AuthorizationID: p.GetAuthorizationId(), ActualUnits: billable, SettlementSeq: 1})
+	settled, settleErr := account.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: p.GetWholesaleAccountId(), Payer: p.GetPayer(), AuthorizationID: p.GetAuthorizationId(), ActualUnits: billable, SettlementSeq: 1})
 	if settleErr == nil && (settled == nil || settled.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil) {
 		settleErr = errors.New("payment daemon returned invalid authorization settlement state")
 	}
 	if settleErr != nil {
 		log.Printf("ERROR: authorization settlement FAILED authorization_id=%s units=%d: %v", p.GetAuthorizationId(), actual, settleErr)
 		if slot := PendingDebitSlotFrom(r.Context()); slot != nil {
-			slot.Set(&PendingDebit{AuthorizationBytes: authBytes, Sender: append([]byte(nil), p.GetPayer()...), WorkID: p.GetAuthorizationId(), DebitSeq: 1, ActualUnits: billable, MeasuredUnits: actual, WorkUnitName: spec.WorkUnit, JobID: rec.Header().Get(livepeerheader.JobID), RequestID: requestID, ReservedValueWei: admitted.Reserved, AccountFundingWei: admitted.Credited, AccountVersion: admitted.Account.Version})
+			slot.Set(&PendingDebit{WholesaleAccountID: p.GetWholesaleAccountId(), AuthorizationBytes: authBytes, Sender: append([]byte(nil), p.GetPayer()...), WorkID: p.GetAuthorizationId(), DebitSeq: 1, ActualUnits: billable, MeasuredUnits: actual, WorkUnitName: spec.WorkUnit, JobID: rec.Header().Get(livepeerheader.JobID), RequestID: requestID, ReservedValueWei: admitted.Reserved, AccountFundingWei: admitted.Credited, AccountVersion: admitted.Account.Version})
 		}
 		rec.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
 		rec.Header().Set(livepeerheader.WorkUnits, "0")
@@ -365,7 +365,7 @@ func BuildAuthorizationSettlement(p *paymentsv1.SpendAuthorizationPayload, reser
 	if actual > billedUnits {
 		outcome = paymentsv1.SettlementRecord_STOPPED_AT_BUDGET
 	}
-	return &paymentsv1.SettlementRecord{SettlementDomainId: p.GetSettlementDomainId(), JobId: jobID, WorkId: p.GetAuthorizationId(), RequestId: p.GetRequestId(), IssuedAt: time.Now().UTC().Format(time.RFC3339Nano), AcceptedQuoteRef: p.GetAcceptedPrice().GetQuoteRef(), WorkUnitName: p.GetAcceptedPrice().GetWorkUnitName(), EstimatedUnits: p.GetMaxTotalUnits(), ActualUnits: actual, BilledUnits: billedUnits, DebitedUnits: billedUnits, FundedValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, BilledValueWei: &paymentsv1.BigUInt{Value: billed.Bytes()}, Outcome: outcome, AuthorizationId: p.GetAuthorizationId(), AuthorizedValueWei: p.GetMaxDebitWei(), ReservedValueWei: &paymentsv1.BigUInt{Value: reserved.Bytes()}, ReleasedValueWei: &paymentsv1.BigUInt{Value: released.Bytes()}, AccountFundingValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, AccountVersion: accountVersion}
+	return &paymentsv1.SettlementRecord{WholesaleAccountId: p.GetWholesaleAccountId(), SettlementDomainId: p.GetSettlementDomainId(), JobId: jobID, WorkId: p.GetAuthorizationId(), RequestId: p.GetRequestId(), IssuedAt: time.Now().UTC().Format(time.RFC3339Nano), AcceptedQuoteRef: p.GetAcceptedPrice().GetQuoteRef(), WorkUnitName: p.GetAcceptedPrice().GetWorkUnitName(), EstimatedUnits: p.GetMaxTotalUnits(), ActualUnits: actual, BilledUnits: billedUnits, DebitedUnits: billedUnits, FundedValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, BilledValueWei: &paymentsv1.BigUInt{Value: billed.Bytes()}, Outcome: outcome, AuthorizationId: p.GetAuthorizationId(), AuthorizedValueWei: p.GetMaxDebitWei(), ReservedValueWei: &paymentsv1.BigUInt{Value: reserved.Bytes()}, ReleasedValueWei: &paymentsv1.BigUInt{Value: released.Bytes()}, AccountFundingValueWei: &paymentsv1.BigUInt{Value: accountFunding.Bytes()}, AccountVersion: accountVersion}
 }
 
 func mapClientErr(err error) (int, string) {

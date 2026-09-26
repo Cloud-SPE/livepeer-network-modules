@@ -78,15 +78,15 @@ func NewMock() *Mock {
 	}
 }
 
-func (m *Mock) mockAccountLocked(payer, payee []byte) *WholesaleAccount {
-	key := hex.EncodeToString(payer)
+func (m *Mock) mockAccountLocked(payer, payee []byte, wholesaleAccountID string) *WholesaleAccount {
+	key := hex.EncodeToString(payer) + "|" + wholesaleAccountID
 	if account := m.wholesaleAccounts[key]; account != nil {
 		return account
 	}
 	// Unit and broker tests should fail on authorization shape, not on fixture
 	// treasury setup. Production funding is exercised by the receiver suite.
 	float := new(big.Int).Exp(big.NewInt(10), big.NewInt(18), nil)
-	account := &WholesaleAccount{SettlementDomainID: MockSettlementDomainID, Payer: append([]byte(nil), payer...), Payee: append([]byte(nil), payee...), Credited: new(big.Int).Set(float), Reserved: new(big.Int), Debited: new(big.Int), Available: new(big.Int).Set(float), Version: 1, ChainID: 42161, Denomination: "wei"}
+	account := &WholesaleAccount{WholesaleAccountID: wholesaleAccountID, SettlementDomainID: MockSettlementDomainID, Payer: append([]byte(nil), payer...), Payee: append([]byte(nil), payee...), Credited: new(big.Int).Set(float), Reserved: new(big.Int), Debited: new(big.Int), Available: new(big.Int).Set(float), Version: 1, ChainID: 42161, Denomination: "wei"}
 	m.wholesaleAccounts[key] = account
 	return account
 }
@@ -95,10 +95,10 @@ func cloneWholesaleAccount(in *WholesaleAccount) *WholesaleAccount {
 	if in == nil {
 		return nil
 	}
-	return &WholesaleAccount{SettlementDomainID: in.SettlementDomainID, Payer: append([]byte(nil), in.Payer...), Payee: append([]byte(nil), in.Payee...), Credited: new(big.Int).Set(in.Credited), Reserved: new(big.Int).Set(in.Reserved), Debited: new(big.Int).Set(in.Debited), Available: new(big.Int).Set(in.Available), Version: in.Version, ObservedAt: in.ObservedAt, ChainID: in.ChainID, Denomination: in.Denomination}
+	return &WholesaleAccount{WholesaleAccountID: in.WholesaleAccountID, SettlementDomainID: in.SettlementDomainID, Payer: append([]byte(nil), in.Payer...), Payee: append([]byte(nil), in.Payee...), Credited: new(big.Int).Set(in.Credited), Reserved: new(big.Int).Set(in.Reserved), Debited: new(big.Int).Set(in.Debited), Available: new(big.Int).Set(in.Available), Version: in.Version, ObservedAt: in.ObservedAt, ChainID: in.ChainID, Denomination: in.Denomination}
 }
 
-func (m *Mock) FundWholesaleAccount(_ context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error) {
+func (m *Mock) FundWholesaleAccount(_ context.Context, paymentBytes []byte, wholesaleAccountID string) (*FundWholesaleAccountResult, error) {
 	if len(paymentBytes) == 0 {
 		return nil, errors.New("payment is required")
 	}
@@ -107,11 +107,12 @@ func (m *Mock) FundWholesaleAccount(_ context.Context, paymentBytes []byte) (*Fu
 	defer m.flushLocked()
 	payer := bytes20(0x01)
 	payee := bytes20(0x02)
-	account := m.mockAccountLocked(payer, payee)
+	account := m.mockAccountLocked(payer, payee, wholesaleAccountID)
 	account.Credited.Add(account.Credited, mockCreditPerPayment)
 	account.Available.Add(account.Available, mockCreditPerPayment)
 	account.Version++
-	return &FundWholesaleAccountResult{Account: cloneWholesaleAccount(account), Credited: new(big.Int).Set(mockCreditPerPayment)}, nil
+	digest := sha256.Sum256(paymentBytes)
+	return &FundWholesaleAccountResult{FundingID: hex.EncodeToString(digest[:]), Account: cloneWholesaleAccount(account), Credited: new(big.Int).Set(mockCreditPerPayment)}, nil
 }
 
 func (m *Mock) AdmitAuthorization(_ context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error) {
@@ -130,7 +131,7 @@ func (m *Mock) AdmitAuthorization(_ context.Context, req AdmitAuthorizationReque
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.flushLocked()
-	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetAuthorizationId()
+	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetWholesaleAccountId() + "|" + p.GetAuthorizationId()
 	fp := sha256.Sum256(req.AuthorizationBytes)
 	if m.canceledAdmissions[key] != nil {
 		return nil, errors.New("admission canceled")
@@ -139,14 +140,14 @@ func (m *Mock) AdmitAuthorization(_ context.Context, req AdmitAuthorizationReque
 		if !bytesEqual(prior.fingerprint, fp[:]) {
 			return nil, errors.New("authorization fingerprint mismatch")
 		}
-		return &AdmitAuthorizationResult{State: prior.state, Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee())), Reserved: new(big.Int).Set(prior.reserved), Credited: new(big.Int), Replayed: true}, nil
+		return &AdmitAuthorizationResult{State: prior.state, Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee(), p.GetWholesaleAccountId())), Reserved: new(big.Int).Set(prior.reserved), Credited: new(big.Int), Replayed: true}, nil
 	}
-	account := m.mockAccountLocked(p.GetPayer(), p.GetPayee())
+	account := m.mockAccountLocked(p.GetPayer(), p.GetPayee(), p.GetWholesaleAccountId())
 	inherited := new(big.Int)
 	var units, seq uint64
 	var predecessor *mockAuthorization
 	if previous := p.GetPredecessorAuthorizationId(); previous != "" {
-		predecessor = m.accountAuthorizations[hex.EncodeToString(p.GetPayer())+"|"+previous]
+		predecessor = m.accountAuthorizations[hex.EncodeToString(p.GetPayer())+"|"+p.GetWholesaleAccountId()+"|"+previous]
 		if predecessor == nil || predecessor.state != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) {
 			return nil, errors.New("invalid revision predecessor")
 		}
@@ -191,12 +192,12 @@ func (m *Mock) AdvanceAuthorization(_ context.Context, req AdvanceAuthorizationR
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.flushLocked()
-	key := hex.EncodeToString(req.Payer) + "|" + req.AuthorizationID
+	key := hex.EncodeToString(req.Payer) + "|" + req.WholesaleAccountID + "|" + req.AuthorizationID
 	auth := m.accountAuthorizations[key]
 	if auth == nil {
 		return nil, errors.New("authorization not found")
 	}
-	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee())
+	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee(), req.WholesaleAccountID)
 	price := new(big.Int).SetBytes(auth.payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
 	per := auth.payload.GetAcceptedPrice().GetUnitsPerPrice()
 	billed := BillFor(price, per, req.CumulativeUnits)
@@ -232,12 +233,12 @@ func (m *Mock) SettleAuthorization(_ context.Context, req SettleAuthorizationReq
 		m.failDebits--
 		return nil, errors.New("injected authorization settlement failure")
 	}
-	key := hex.EncodeToString(req.Payer) + "|" + req.AuthorizationID
+	key := hex.EncodeToString(req.Payer) + "|" + req.WholesaleAccountID + "|" + req.AuthorizationID
 	auth := m.accountAuthorizations[key]
 	if auth == nil {
 		return nil, errors.New("authorization not found")
 	}
-	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee())
+	account := m.mockAccountLocked(req.Payer, auth.payload.GetPayee(), req.WholesaleAccountID)
 	price := new(big.Int).SetBytes(auth.payload.GetAcceptedPrice().GetPricePerUnitWei().GetValue())
 	per := auth.payload.GetAcceptedPrice().GetUnitsPerPrice()
 	total := BillFor(price, per, req.ActualUnits)
@@ -261,23 +262,23 @@ func (m *Mock) SettleAuthorization(_ context.Context, req SettleAuthorizationReq
 	return &SettleAuthorizationResult{State: auth.state, Account: cloneWholesaleAccount(account), Billed: new(big.Int).Set(total), Released: release}, nil
 }
 
-func (m *Mock) GetWholesaleAccount(_ context.Context, payer []byte) (*WholesaleAccount, error) {
+func (m *Mock) GetWholesaleAccount(_ context.Context, payer []byte, wholesaleAccountID string) (*WholesaleAccount, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return cloneWholesaleAccount(m.mockAccountLocked(payer, bytes20(0x02))), nil
+	return cloneWholesaleAccount(m.mockAccountLocked(payer, bytes20(0x02), wholesaleAccountID)), nil
 }
 
-func (m *Mock) GetSpendAuthorization(_ context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error) {
+func (m *Mock) GetSpendAuthorization(_ context.Context, payer []byte, authorizationID string, wholesaleAccountID string) (*SpendAuthorizationStatus, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	auth := m.accountAuthorizations[hex.EncodeToString(payer)+"|"+authorizationID]
+	auth := m.accountAuthorizations[hex.EncodeToString(payer)+"|"+wholesaleAccountID+"|"+authorizationID]
 	if auth == nil {
-		if m.canceledAdmissions[hex.EncodeToString(payer)+"|"+authorizationID] != nil {
+		if m.canceledAdmissions[hex.EncodeToString(payer)+"|"+wholesaleAccountID+"|"+authorizationID] != nil {
 			return &SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED), Reserved: new(big.Int), Billed: new(big.Int), Released: new(big.Int)}, nil
 		}
 		return nil, errors.New("authorization not found")
 	}
-	return &SpendAuthorizationStatus{State: auth.state, Reserved: new(big.Int).Set(auth.reserved), Billed: new(big.Int).Set(auth.billed), Released: new(big.Int).Set(auth.released), ActualUnits: auth.units, SettlementSeq: auth.seq}, nil
+	return &SpendAuthorizationStatus{WholesaleAccountID: auth.payload.GetWholesaleAccountId(), SettlementDomainID: MockSettlementDomainID, Payee: auth.payload.GetPayee(), State: auth.state, Reserved: new(big.Int).Set(auth.reserved), Billed: new(big.Int).Set(auth.billed), Released: new(big.Int).Set(auth.released), ActualUnits: auth.units, SettlementSeq: auth.seq}, nil
 }
 
 func bytes20(v byte) []byte {
@@ -306,7 +307,8 @@ func (m *Mock) GetTicketParams(_ context.Context, req GetTicketParamsRequest) (*
 	if req.FaceValue != nil {
 		faceValue.Set(req.FaceValue)
 	}
-	randHash := sha256.Sum256(append(append([]byte(nil), req.Sender...), req.Recipient...))
+	key := fmt.Sprintf("%x|%x|%s|%s|%s|%s", req.Sender, req.Recipient, req.Capability, req.Offering, req.WholesaleAccountID, req.TicketStreamID)
+	randHash := sha256.Sum256([]byte(key))
 	workID := hex.EncodeToString(randHash[:])
 
 	m.mu.Lock()
@@ -322,7 +324,7 @@ func (m *Mock) GetTicketParams(_ context.Context, req GetTicketParamsRequest) (*
 	}
 	m.mu.Unlock()
 
-	return &TicketParams{SettlementDomainID: MockSettlementDomainID,
+	return &TicketParams{WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID, IsolationVersion: 1, SettlementDomainID: MockSettlementDomainID,
 		Recipient:         append([]byte(nil), req.Recipient...),
 		FaceValue:         faceValue,
 		WinProb:           big.NewInt(0),
@@ -793,13 +795,13 @@ func (m *Mock) CancelAuthorizationAdmission(_ context.Context, wire []byte) (*Ca
 	defer m.mu.Unlock()
 	defer m.flushLocked()
 	p := auth.GetPayload()
-	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetAuthorizationId()
+	key := hex.EncodeToString(p.GetPayer()) + "|" + p.GetWholesaleAccountId() + "|" + p.GetAuthorizationId()
 	fp := sha256.Sum256(wire)
 	if a := m.accountAuthorizations[key]; a != nil {
 		if !bytesEqual(a.fingerprint, fp[:]) {
 			return nil, errors.New("authorization fingerprint mismatch")
 		}
-		return &CanceledAdmission{Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee())), Authorization: &SpendAuthorizationStatus{State: a.state, Reserved: new(big.Int).Set(a.reserved), Billed: new(big.Int).Set(a.billed), Released: new(big.Int).Set(a.released), ActualUnits: a.units, SettlementSeq: a.seq}}, nil
+		return &CanceledAdmission{Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee(), p.GetWholesaleAccountId())), Authorization: &SpendAuthorizationStatus{WholesaleAccountID: p.GetWholesaleAccountId(), SettlementDomainID: MockSettlementDomainID, Payee: p.GetPayee(), State: a.state, Reserved: new(big.Int).Set(a.reserved), Billed: new(big.Int).Set(a.billed), Released: new(big.Int).Set(a.released), ActualUnits: a.units, SettlementSeq: a.seq}}, nil
 	}
 	if previous := m.canceledAdmissions[key]; previous != nil && !bytesEqual(previous, fp[:]) {
 		return nil, errors.New("authorization fingerprint mismatch")

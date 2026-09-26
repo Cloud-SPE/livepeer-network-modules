@@ -39,11 +39,11 @@ func (p *revisionPayment) AdmitAuthorization(ctx context.Context, req payment.Ad
 	return p.fakePayment.AdmitAuthorization(ctx, req)
 }
 
-func (p *revisionPayment) GetSpendAuthorization(ctx context.Context, payer []byte, id string) (*payment.SpendAuthorizationStatus, error) {
+func (p *revisionPayment) GetSpendAuthorization(ctx context.Context, payer []byte, id string, wholesaleAccountID string) (*payment.SpendAuthorizationStatus, error) {
 	if p.accepted && id == "auth-req-1" {
 		return &payment.SpendAuthorizationStatus{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SUPERSEDED)}, nil
 	}
-	return p.fakePayment.GetSpendAuthorization(ctx, payer, id)
+	return p.fakePayment.GetSpendAuthorization(ctx, payer, id, wholesaleAccountID)
 }
 
 func revisionWire(t *testing.T, h *harness) []byte {

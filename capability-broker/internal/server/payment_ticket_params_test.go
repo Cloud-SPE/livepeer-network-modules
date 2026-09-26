@@ -11,7 +11,7 @@ import (
 )
 
 func TestTicketParamsHandler_HappyPath(t *testing.T) {
-	reqBody := ticketParamsRequestJSON{
+	reqBody := ticketParamsRequestJSON{WholesaleAccountID: "test-account", TicketStreamID: "stream-1",
 		SenderETHAddress:    "0x1111111111111111111111111111111111111111",
 		RecipientETHAddress: "0x2222222222222222222222222222222222222222",
 		FaceValueWei:        "1000",

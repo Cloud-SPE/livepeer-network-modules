@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -29,16 +30,18 @@ func (s *Server) handleExchangeByRequestID(w http.ResponseWriter, r *http.Reques
 		livepeerheader.WriteBadRequest(w, "request_id is required")
 		return
 	}
-	if s.jobIdem == nil {
+	if s.jobIdem == nil && s.sessionStore == nil {
 		livepeerheader.WriteError(w, http.StatusNotImplemented, livepeerheader.ErrInternalError,
 			"this broker keeps no durable exchange records")
 		return
 	}
 
-	rec, err := s.jobIdem.ByRequestID(requestID)
-	if err == nil && rec != nil {
-		s.writeExchangeState(w, rec)
-		return
+	if s.jobIdem != nil {
+		rec, err := s.jobIdem.ByRequestID(requestID)
+		if err == nil && rec != nil {
+			s.writeExchangeState(w, rec)
+			return
+		}
 	}
 
 	// No exchange. A non-admission record may already have been issued
@@ -52,6 +55,55 @@ func (s *Server) handleExchangeByRequestID(w http.ResponseWriter, r *http.Reques
 				"outcome":       "NOT_ADMITTED",
 				"non_admission": envelope,
 			})
+			return
+		}
+	}
+
+	// Session opens share the consumer's request identity. Pending recovery is
+	// never absence, and only frozen signed terminal evidence means SETTLED.
+	if s.sessionStore != nil {
+		if id, err := s.sessionStore.SessionIDForRequest(requestID); err == nil {
+			if rec, err := s.sessionStore.Get(id); err == nil {
+				body := map[string]any{"request_id": requestID, "session_id": id, "gateway_session_id": rec.GatewaySessionID, "state": rec.State, "outcome": "IN_FLIGHT"}
+				if rec.Terminal() {
+					if s.settlementSigner == nil && rec.TerminalSettlementEnvelope == "" {
+						livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrInternalError, "signed settlement unavailable")
+						return
+					}
+					_, encoded, err := s.signedSessionSettlement(r.Context(), id)
+					if err != nil || encoded == "" {
+						livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrInternalError, "settlement unavailable")
+						return
+					}
+					body["outcome"], body["settlement"] = "SETTLED", encoded
+					w.Header().Set(livepeerheader.Settlement, encoded)
+					writeJSON(w, http.StatusOK, body)
+					return
+				}
+				if rec.State == sessionstore.StateWindingDown {
+					body["outcome"] = "ACCOUNTING_PENDING"
+				}
+				writeJSON(w, http.StatusAccepted, body)
+				return
+			} else if !errors.Is(err, sessionstore.ErrNotFound) {
+				livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrInternalError, "session state unavailable")
+				return
+			}
+		} else if !errors.Is(err, sessionstore.ErrNotFound) {
+			livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrInternalError, "session state unavailable")
+			return
+		}
+		if held, err := s.sessionStore.Reservation(requestID); err == nil {
+			outcome := "IN_FLIGHT"
+			code := http.StatusAccepted
+			if held.AdmissionCanceled {
+				outcome = "ADMISSION_REJECTED"
+				code = http.StatusOK
+			}
+			writeJSON(w, code, map[string]any{"request_id": requestID, "outcome": outcome})
+			return
+		} else if !errors.Is(err, sessionstore.ErrNotFound) {
+			livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrInternalError, "open state unavailable")
 			return
 		}
 	}

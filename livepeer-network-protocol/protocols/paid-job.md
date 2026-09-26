@@ -69,7 +69,8 @@ MUST reject it before processing a payment or invoking a runner.
 
 The authorization payload MUST bind:
 
-- domain `livepeer-spend-authorization/v2`;
+- domain `livepeer-spend-authorization/v3`;
+- explicit `wholesale_account_id`, bound in settlement and non-admission evidence;
 - payer, payee, chain, and denomination;
 - the broker URI, protocol, capability, and offering;
 - the accepted quote and exact work-unit price;

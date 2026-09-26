@@ -236,16 +236,16 @@ reconstructed safely.
 
 `SPEND_AUTHORIZATION_CANCELED_UNUSED` is a durable receiver fence, committed in
 the same ledger transaction boundary used by admission. It survives restart and
-has no reversal or expiry operation. Future admission of the same payer and
+has no reversal or expiry operation. Future admission of the same payer, wholesale account, and
 authorization ID is rejected, even with different bytes; conflicting bytes also
 fail the fingerprint check. An existing admitted authorization is returned
 unchanged instead of being canceled. The fence records no usage and does not
 refund or settle any predecessor usage.
 
 The trusted receiver RPC checks the receiver's durable `settlement_domain_id`,
-uses the configured payee, and keys the fence by payer and authorization ID with
+uses the configured payee, and keys the fence by payer, required `wholesale_account_id`, and authorization ID with
 SHA-256 of the signed authorization. The broker's signed revision evidence binds
-those identities, domain, and hash for LOC; a bare status enum over the receiver
+those identities (including `wholesale_account_id`), domain, and hash for LOC; a bare status enum over the receiver
 socket is not a signed authorization-specific envelope. This guarantee assumes
 the same durable ledger is retained; destructive rollback to a pre-fence backup
 does not preserve it.
@@ -307,6 +307,32 @@ and a bounded payload size. The broker exposes only the schema-defined public
 projection. Grant secrets are delivered once on the successful open response,
 may be replayed only while the original open remains replayable, and are erased
 on winddown. Restarts MUST NOT mint replacement grants.
+
+### 4.1 Create reconciliation
+
+A session runner MAY advertise `paths.reconcile` in its attach document. This
+optional authenticated broker control endpoint accepts POST
+`{"session_id":"<broker-session-id>"}`. Only HTTP 200 with a matching `session_id`
+and one of these outcomes establishes a result:
+
+- `{"session_id":"…","outcome":"created","runner_session_id":"…"}` identifies
+  the original creation, active or terminal. The broker terminates this identity
+  and durably records confirmation before freeing compute.
+- `{"session_id":"…","outcome":"fenced"}` confirms no session was created and
+  that future creates for this broker ID are durably refused, including requests
+  already delayed in transport. `runner_session_id` MUST be absent or empty.
+
+Reconciliation MUST serialize with create through completion of runtime startup.
+The absence fence MUST persist before the response, survive process restart, and
+be checked atomically by create. A runner advertising this contract MUST make
+identical creates idempotent, reject changed content under the same broker ID,
+and prevent replay from restarting terminal work. A definitive capacity refusal
+must likewise prevent that create from later starting work. Transport errors,
+bare 404s, mismatched identities and unknown outcomes are not absence evidence.
+Runners MUST retain identities/fences for as long as delayed retries are possible;
+the reference live runner retains them without expiry. Reconciliation returns no
+grants, callback tokens or private descriptor material. The endpoint uses the
+same broker authentication and attached-runner routing as create and terminate.
 
 ## 5. Events and metering
 
@@ -384,6 +410,22 @@ gateway-initiated frame receives an ack or stable error frame.
 Nonterminal records persist the active authorization id and caps, payer, quote
 reference, usage/billing/event watermarks, session and runner bindings,
 credentials in sealed/hashed form, output health, and settlement obligations.
+Before initial admission, the broker MUST durably seal the exact signed authority
+and its request/session/quote bindings. An ambiguous RPC or failed success write
+MUST retain that intent. Recovery atomically fences unused admission or adopts
+receiver-confirmed admission; it MUST NOT infer non-admission from a lookup miss,
+repeat funding, or reset cumulative billing. An accepted failed open follows
+normal winddown and signed terminal publication. Canceled opens retain a replay
+guard and allow only scope-matching non-admission evidence. Historical intents
+missing recovery authority remain unresolved, rather than asserting zero use.
+
+`GET /v1/exchange/{request_id}` also covers session opens: `IN_FLIGHT` (202) during
+open recovery, `ACCOUNTING_PENDING` (202) during winddown, `ADMISSION_REJECTED`
+(200) for fenced unused authority before signed non-admission is requested,
+`NOT_ADMITTED` (200) with that evidence, and `SETTLED` (200) with a signed terminal
+settlement. Session responses include `session_id` when one has been committed.
+No pending state is refund or zero-use evidence.
+
 Open reservations persist capacity ownership and runner-create intent before
 external effects. Starting and live sessions count toward the local limit. Replay,
 refill and control reconnects MUST NOT acquire a second slot. Before serving after
@@ -392,7 +434,7 @@ capacity tracking existed. Reducing the limit does not erase existing occupancy.
 
 Known abandoned runner sessions are terminated before capacity is released.
 Unknown create outcomes, transport failure or runner disconnection MUST NOT be
-interpreted as proof of absence. Without an idempotent-create/lookup contract,
+interpreted as proof of absence. Without the §4.1 create-reconciliation contract,
 a lost create response retains the opening reservation and capacity until the
 runner outcome can be established. Recovery MUST NOT undo an opening request
 that is still executing. Slot release is idempotent and follows durable evidence

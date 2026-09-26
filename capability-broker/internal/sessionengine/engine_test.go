@@ -55,8 +55,8 @@ type fakePayment struct {
 	authStatuses    map[string]*payment.SpendAuthorizationStatus
 }
 
-func (f *fakePayment) FundWholesaleAccount(context.Context, []byte) (*payment.FundWholesaleAccountResult, error) {
-	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
+func (f *fakePayment) FundWholesaleAccount(context.Context, []byte, string) (*payment.FundWholesaleAccountResult, error) {
+	return &payment.FundWholesaleAccountResult{Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, Credited: big.NewInt(100)}, nil
 }
 
 func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
@@ -93,7 +93,7 @@ func (f *fakePayment) AdmitAuthorization(_ context.Context, req payment.AdmitAut
 		f.authStatuses[id] = next
 	}
 	f.mu.Unlock()
-	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
+	return &payment.AdmitAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: payer, Payee: auth.GetPayload().GetPayee(), Available: big.NewInt(1000)}, Reserved: reserved, Credited: new(big.Int)}, nil
 }
 func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.AdvanceAuthorizationRequest) (*payment.AdvanceAuthorizationResult, error) {
 	f.mu.Lock()
@@ -114,7 +114,7 @@ func (f *fakePayment) AdvanceAuthorization(_ context.Context, req payment.Advanc
 	if a := f.authStatuses[req.AuthorizationID]; a != nil {
 		a.ActualUnits, a.SettlementSeq, a.Billed, a.Reserved = req.CumulativeUnits, req.AdvanceSeq, new(big.Int).Set(after), new(big.Int).Set(req.TargetReserved)
 	}
-	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
+	return &payment.AdvanceAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(900)}, BilledDelta: charged, CumulativeBilled: after, Reserved: new(big.Int).Set(req.TargetReserved)}, nil
 }
 func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleAuthorizationRequest) (*payment.SettleAuthorizationResult, error) {
 	f.mu.Lock()
@@ -132,12 +132,12 @@ func (f *fakePayment) SettleAuthorization(_ context.Context, req payment.SettleA
 		a.ActualUnits, a.SettlementSeq, a.Billed = req.ActualUnits, req.SettlementSeq, new(big.Int).Set(billed)
 		a.Reserved.SetInt64(0)
 	}
-	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
+	return &payment.SettleAuthorizationResult{State: int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED), Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Payer: req.Payer, Available: big.NewInt(970)}, Billed: billed, Released: big.NewInt(20)}, nil
 }
-func (f *fakePayment) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
-	return &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, nil
+func (f *fakePayment) GetWholesaleAccount(context.Context, []byte, string) (*payment.WholesaleAccount, error) {
+	return &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Available: big.NewInt(1000)}, nil
 }
-func (f *fakePayment) GetSpendAuthorization(_ context.Context, _ []byte, id string) (*payment.SpendAuthorizationStatus, error) {
+func (f *fakePayment) GetSpendAuthorization(_ context.Context, _ []byte, id string, accountID string) (*payment.SpendAuthorizationStatus, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	a := f.authStatuses[id]
@@ -154,11 +154,11 @@ func (f *fakePayment) CancelAuthorizationAdmission(ctx context.Context, wire []b
 	if err := proto.Unmarshal(wire, &auth); err != nil {
 		return nil, err
 	}
-	a, err := f.GetSpendAuthorization(ctx, nil, auth.GetPayload().GetAuthorizationId())
+	a, err := f.GetSpendAuthorization(ctx, nil, auth.GetPayload().GetAuthorizationId(), auth.GetPayload().GetWholesaleAccountId())
 	if err != nil {
 		return &payment.CanceledAdmission{Canceled: true}, nil
 	}
-	return &payment.CanceledAdmission{Authorization: a, Account: &payment.WholesaleAccount{Available: big.NewInt(1000)}}, nil
+	return &payment.CanceledAdmission{Authorization: a, Account: &payment.WholesaleAccount{WholesaleAccountID: auth.GetPayload().GetWholesaleAccountId(), SettlementDomainID: auth.GetPayload().GetSettlementDomainId(), Payer: auth.GetPayload().GetPayer(), Available: big.NewInt(1000)}}, nil
 }
 
 func newFakePayment() *fakePayment {
@@ -430,8 +430,8 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) authorization(t *testing.T, authorizationID, requestID, sessionID string, maxUnits uint64) []byte {
 	t.Helper()
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Domain: "livepeer-spend-authorization/v2", AuthorizationId: authorizationID, RequestId: requestID, SessionId: sessionID,
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v3", AuthorizationId: authorizationID, RequestId: requestID, SessionId: sessionID,
 		Payer: bytes.Repeat([]byte{0x11}, 20), Payee: bytes.Repeat([]byte{0x22}, 20), Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
 		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: h.spec.WorkUnit},
 		MaxDebitWei:   &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: maxUnits,
@@ -547,7 +547,7 @@ func TestOpenCapacityRefusalPersistsZeroUseAndRecoversSettlement(t *testing.T) {
 func TestAccountBackedSessionUsesBoundedRunwayAndSettles(t *testing.T) {
 	h := newHarness(t)
 	payer, payee := bytes.Repeat([]byte{0x11}, 20), bytes.Repeat([]byte{0x22}, 20)
-	payload := &pb.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	payload := &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		AuthorizationId: "auth-session-1", RequestId: "req-account-1", SessionId: "gws-account-1",
 		Payer: payer, Payee: payee, Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering,
 		MaxDebitWei: &pb.BigUInt{Value: big.NewInt(1000).Bytes()}, MaxTotalUnits: 100,
@@ -1162,7 +1162,7 @@ func TestConcurrentOpensWithOneRequestIDFundOnce(t *testing.T) {
 // A crash between payment and the session record leaves a reservation
 // naming what was opened. Recover closes it, releases the capacity, and
 // drops the reservation, so nothing funds a session nobody holds.
-func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
+func TestLegacyAbandonedOpenStopsRunnerButRetainsFinancialObligation(t *testing.T) {
 	h := newHarness(t)
 	if err := h.store.ReserveOpen("req-crash", []byte("fp")); err != nil {
 		t.Fatal(err)
@@ -1174,8 +1174,8 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 		return nil
 	})
 	h.engine.Recover(context.Background())
-	if len(h.pay.accountSettles) != 1 {
-		t.Fatalf("authorization settled %d times, want 1", len(h.pay.accountSettles))
+	if len(h.pay.accountSettles) != 0 {
+		t.Fatalf("authorization settled %d times, want 0", len(h.pay.accountSettles))
 	}
 	if len(h.runner.terminated) != 1 || h.runner.terminated[0] != ReasonOpenFailed {
 		t.Fatalf("runner terminated: %v", h.runner.terminated)
@@ -1185,13 +1185,12 @@ func TestRecoverUndoesAnAbandonedOpen(t *testing.T) {
 	}
 	n := 0
 	_ = h.store.ForEachReservation(func(sessionstore.OpenReservation) error { n++; return nil })
-	if n != 0 {
-		t.Fatal("reservation survived recovery")
+	if n != 1 {
+		t.Fatal("legacy financial obligation was discarded")
 	}
-	// The id is free again: a retry of the open proceeds fresh.
-	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2",
-		SessionParams: json.RawMessage(`{}`), PaymentBytes: []byte{1}, AuthorizationBytes: h.authorization(t, "auth-crash-2", "req-crash", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec, CapacityRef: "slot-2"}); err != nil {
-		t.Fatalf("retry after recovery: %v", err)
+	// Without the signed authority, no fresh admission or zero-use claim is safe.
+	if _, err := h.engine.Open(context.Background(), OpenRequest{RequestID: "req-crash", GatewaySessionID: "g2", SessionParams: json.RawMessage(`{}`), AuthorizationBytes: h.authorization(t, "auth-crash-2", "req-crash", "g2", 100), InitialReservationWei: big.NewInt(50), Spec: h.spec}); err == nil {
+		t.Fatal("legacy open replayed")
 	}
 }
 

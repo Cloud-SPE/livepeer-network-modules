@@ -33,6 +33,13 @@ Dispatches inbound requests to attached runners over the connection those
 runners opened. Validates payment via a co-located `payment-daemon` (over
 unix socket; a stub client is available for dev via `payment_daemon.mock`).
 
+Paid routes require shared-wallet isolation version 1. Account queries and
+non-admission queries carry `wholesale_account_id`; funding-only requests carry
+`Livepeer-Wholesale-Account-Id`. Ticket-parameter requests carry both the account
+and the payer daemon's persistent `ticket_stream_id`. Spend authorizations use
+`livepeer-spend-authorization/v3`; signed settlement evidence binds the account.
+Missing identities fail closed. See the [cutover procedure](docs/operator-runbook.md#shared-wallet-account-cutover).
+
 Private runners may refuse pre-execution host admission with HTTP `429` and
 `{"error":"capacity_reached"}`. The broker deliberately recognizes only that
 typed response, converts it to public `503 capacity_exhausted`, bounds

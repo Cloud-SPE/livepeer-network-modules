@@ -37,6 +37,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"math/big"
 	"os"
@@ -52,6 +53,7 @@ type config struct {
 	payeeSocket             string
 	brokerURL               string
 	brokerURI               string
+	wholesaleAccountID      string
 	settlementDomainID      string
 	recipient               []byte
 	capability              string
@@ -79,6 +81,7 @@ func main() {
 		payerSocket             = flag.String("payer-socket", "/tmp/lpm-payer.sock", "payer daemon UDS")
 		payeeSocket             = flag.String("payee-socket", "/tmp/lpm-payee.sock", "payee daemon UDS")
 		brokerURL               = flag.String("broker-url", "http://127.0.0.1:8411", "broker base URL")
+		wholesaleAccountID      = flag.String("wholesale-account-id", "", "required product/environment account identity for the probe")
 		settlementDomainID      = flag.String("settlement-domain-id", "", "wholesale: expected payment-ledger ID from the cold-signed route")
 		brokerURI               = flag.String("broker-uri", "", "wholesale only: externally advertised broker origin signed into authorizations (defaults to --broker-url)")
 		recipient               = flag.String("recipient", "", "required: payee ETH address (0x-prefixed)")
@@ -102,6 +105,9 @@ func main() {
 		checkpointDir           = flag.String("checkpoint-dir", "/var/lib/livepeer/payment-daemon", "wholesale evidence only: directory containing recovery checkpoints")
 	)
 	flag.Parse()
+	if !identity.ValidWholesaleAccountID(*wholesaleAccountID) {
+		fatal("--wholesale-account-id is required (1-128 ASCII letters/digits/._:-)")
+	}
 
 	addr, err := hexTo20(*recipient)
 	if err != nil {
@@ -120,7 +126,7 @@ func main() {
 	}
 	cfg := config{
 		payerSocket: *payerSocket, payeeSocket: *payeeSocket, brokerURL: *brokerURL,
-		brokerURI: *brokerURI, settlementDomainID: *settlementDomainID,
+		brokerURI: *brokerURI, settlementDomainID: *settlementDomainID, wholesaleAccountID: *wholesaleAccountID,
 		recipient: addr, capability: *capability, offering: *offering,
 		workUnit: *workUnit, priceWei: *priceWei, perUnits: *perUnits,
 		protocol: *protocol,

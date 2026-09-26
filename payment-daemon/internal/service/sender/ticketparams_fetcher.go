@@ -18,12 +18,14 @@ import (
 // TicketParamsRequest is the sender-side input to the quote-free
 // payee-issued TicketParams fetch.
 type TicketParamsRequest struct {
-	BaseURL    string
-	Sender     []byte
-	Recipient  []byte
-	FaceValue  *big.Int
-	Capability string
-	Offering   string
+	WholesaleAccountID string
+	TicketStreamID     string
+	BaseURL            string
+	Sender             []byte
+	Recipient          []byte
+	FaceValue          *big.Int
+	Capability         string
+	Offering           string
 }
 
 // TicketParamsFetcher resolves authoritative payee-issued TicketParams
@@ -56,6 +58,7 @@ func (f *HTTPTicketParamsFetcher) Fetch(ctx context.Context, req TicketParamsReq
 	}
 
 	body, err := json.Marshal(ticketParamsHTTPRequest{
+		WholesaleAccountID: req.WholesaleAccountID, TicketStreamID: req.TicketStreamID,
 		SenderETHAddress:    hexAddress(req.Sender),
 		RecipientETHAddress: hexAddress(req.Recipient),
 		FaceValueWei:        req.FaceValue.String(),
@@ -90,6 +93,10 @@ func (f *HTTPTicketParamsFetcher) Fetch(ctx context.Context, req TicketParamsReq
 	if err != nil {
 		return nil, err
 	}
+	if parsed.IsolationVersion != 1 || parsed.WholesaleAccountID != req.WholesaleAccountID || parsed.TicketStreamID != req.TicketStreamID || parsed.WholesaleAccountID == "" || parsed.TicketStreamID == "" {
+		return nil, fmt.Errorf("ticket parameters do not support requested account/stream isolation")
+	}
+	out.WholesaleAccountID, out.TicketStreamID = parsed.WholesaleAccountID, parsed.TicketStreamID
 	out.SettlementDomainID = parsed.SettlementDomainID
 	out.HighestSeenNonce = parsed.HighestSeenNonce
 	out.HasSeenNonces = parsed.HasSeenNonces
@@ -97,6 +104,8 @@ func (f *HTTPTicketParamsFetcher) Fetch(ctx context.Context, req TicketParamsReq
 }
 
 type ticketParamsHTTPRequest struct {
+	WholesaleAccountID  string `json:"wholesale_account_id"`
+	TicketStreamID      string `json:"ticket_stream_id"`
 	SenderETHAddress    string `json:"sender_eth_address"`
 	RecipientETHAddress string `json:"recipient_eth_address"`
 	FaceValueWei        string `json:"face_value_wei"`
@@ -105,6 +114,9 @@ type ticketParamsHTTPRequest struct {
 }
 
 type ticketParamsHTTPResponse struct {
+	WholesaleAccountID string           `json:"wholesale_account_id"`
+	TicketStreamID     string           `json:"ticket_stream_id"`
+	IsolationVersion   uint32           `json:"isolation_version"`
 	SettlementDomainID string           `json:"settlement_domain_id"`
 	TicketParams       ticketParamsJSON `json:"ticket_params"`
 	// Relayed from the payee's GetTicketParams. The broker is a

@@ -75,7 +75,8 @@ func (SessionRevisionRecord_Outcome) EnumDescriptor() ([]byte, []int) {
 // MUST compare every identity, domain, quote and authorization hash with their
 // own issued grant. Claimed authorization scope does not attest signature validity.
 type SessionRevisionRecord struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	WholesaleAccountId string                 `protobuf:"bytes,23,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
 	// Always "livepeer-session-revision/v1"; prevents cross-purpose replay.
 	EvidenceDomain             string                        `protobuf:"bytes,1,opt,name=evidence_domain,json=evidenceDomain,proto3" json:"evidence_domain,omitempty"`
 	Protocol                   string                        `protobuf:"bytes,2,opt,name=protocol,proto3" json:"protocol,omitempty"` // Always "paid-session/v1".
@@ -133,6 +134,13 @@ func (x *SessionRevisionRecord) ProtoReflect() protoreflect.Message {
 // Deprecated: Use SessionRevisionRecord.ProtoReflect.Descriptor instead.
 func (*SessionRevisionRecord) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_session_revision_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *SessionRevisionRecord) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
 }
 
 func (x *SessionRevisionRecord) GetEvidenceDomain() string {
@@ -293,8 +301,9 @@ var File_livepeer_payments_v1_session_revision_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_session_revision_proto_rawDesc = "" +
 	"\n" +
-	"+livepeer/payments/v1/session_revision.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xfb\a\n" +
-	"\x15SessionRevisionRecord\x12'\n" +
+	"+livepeer/payments/v1/session_revision.proto\x12\x14livepeer.payments.v1\x1a livepeer/payments/v1/types.proto\"\xad\b\n" +
+	"\x15SessionRevisionRecord\x120\n" +
+	"\x14wholesale_account_id\x18\x17 \x01(\tR\x12wholesaleAccountId\x12'\n" +
 	"\x0fevidence_domain\x18\x01 \x01(\tR\x0eevidenceDomain\x12\x1a\n" +
 	"\bprotocol\x18\x02 \x01(\tR\bprotocol\x120\n" +
 	"\x14settlement_domain_id\x18\x03 \x01(\tR\x12settlementDomainId\x12\x1d\n" +

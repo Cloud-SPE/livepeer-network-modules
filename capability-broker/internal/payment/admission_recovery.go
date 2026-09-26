@@ -1,9 +1,12 @@
 package payment
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"errors"
+	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
@@ -33,10 +36,19 @@ func (g *GRPC) CancelAuthorizationAdmission(ctx context.Context, wire []byte) (*
 	if err := proto.Unmarshal(wire, &auth); err != nil {
 		return nil, err
 	}
+	if !identity.ValidWholesaleAccountID(auth.GetPayload().GetWholesaleAccountId()) || auth.GetPayload().GetSettlementDomainId() != domain {
+		return nil, fmt.Errorf("authorization account or domain mismatch")
+	}
 	fingerprint := sha256.Sum256(wire)
-	r, err := g.client.CancelAuthorizationAdmission(ctx, &pb.CancelAuthorizationAdmissionRequest{SettlementDomainId: domain, Payer: auth.GetPayload().GetPayer(), AuthorizationId: auth.GetPayload().GetAuthorizationId(), AuthorizationFingerprint: fingerprint[:]})
+	r, err := g.client.CancelAuthorizationAdmission(ctx, &pb.CancelAuthorizationAdmissionRequest{WholesaleAccountId: auth.GetPayload().GetWholesaleAccountId(), SettlementDomainId: domain, Payer: auth.GetPayload().GetPayer(), AuthorizationId: auth.GetPayload().GetAuthorizationId(), AuthorizationFingerprint: fingerprint[:]})
 	if err != nil {
 		return nil, err
+	}
+	if err := g.validateAccount(r.GetAccount(), auth.GetPayload().GetPayer(), auth.GetPayload().GetWholesaleAccountId()); err != nil {
+		return nil, err
+	}
+	if a := r.GetAuthorization(); a != nil && (a.GetWholesaleAccountId() != auth.GetPayload().GetWholesaleAccountId() || a.GetSettlementDomainId() != domain || !bytes.Equal(a.GetPayee(), auth.GetPayload().GetPayee())) {
+		return nil, fmt.Errorf("authorization recovery account mismatch")
 	}
 	return &CanceledAdmission{Canceled: r.GetCanceled(), Authorization: authorizationStatusFromProto(r.GetAuthorization()), Account: accountFromProto(r.GetAccount())}, nil
 }

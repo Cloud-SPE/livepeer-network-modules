@@ -143,6 +143,7 @@ func (s *Server) syntheticCapability(view offers.View, shape *offers.Frozen, pai
 		// being folded into it.
 		cap.Session.Runner = config.SessionRunnerPaths{
 			CreatePath:    live.Paths["create"],
+			ReconcilePath: live.Paths["reconcile"],
 			StatusPath:    live.Paths["status"],
 			TerminatePath: live.Paths["terminate"],
 		}

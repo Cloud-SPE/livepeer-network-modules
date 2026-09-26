@@ -64,29 +64,9 @@ func (s *Store) EnqueueRedemption(ticketHash []byte, t *SignedTicket) (bool, err
 	}
 	enqueued := false
 	err = s.db.Update(func(tx *bolt.Tx) error {
-		byHash := tx.Bucket([]byte(redemptionsByHash))
-		redeemed := tx.Bucket([]byte(redemptionsRedeemed))
-		pending := tx.Bucket([]byte(redemptionsPending))
-		meta := tx.Bucket([]byte(redemptionsMeta))
-
-		if v := byHash.Get(ticketHash); len(v) > 0 {
-			return nil
-		}
-		if v := redeemed.Get(ticketHash); len(v) > 0 {
-			return nil
-		}
-		seq := readSeq(meta.Get([]byte(metaNextSeq))) + 1
-		if err := meta.Put([]byte(metaNextSeq), seqBytes(seq)); err != nil {
-			return err
-		}
-		if err := pending.Put(seqBytes(seq), encoded); err != nil {
-			return err
-		}
-		if err := byHash.Put(ticketHash, seqBytes(seq)); err != nil {
-			return err
-		}
-		enqueued = true
-		return nil
+		var err error
+		enqueued, err = enqueueRedemption(tx, ticketHash, encoded)
+		return err
 	})
 	return enqueued, err
 }
@@ -291,4 +271,29 @@ func (s *Store) RedemptionHistory() ([]PendingRedemption, []RedeemedRedemption, 
 		})
 	})
 	return pending, redeemed, legacy, err
+}
+
+func enqueueRedemption(tx *bolt.Tx, ticketHash, encoded []byte) (bool, error) {
+	byHash := tx.Bucket([]byte(redemptionsByHash))
+	redeemed := tx.Bucket([]byte(redemptionsRedeemed))
+	pending := tx.Bucket([]byte(redemptionsPending))
+	meta := tx.Bucket([]byte(redemptionsMeta))
+
+	if v := byHash.Get(ticketHash); len(v) > 0 {
+		return false, nil
+	}
+	if v := redeemed.Get(ticketHash); len(v) > 0 {
+		return false, nil
+	}
+	seq := readSeq(meta.Get([]byte(metaNextSeq))) + 1
+	if err := meta.Put([]byte(metaNextSeq), seqBytes(seq)); err != nil {
+		return false, err
+	}
+	if err := pending.Put(seqBytes(seq), encoded); err != nil {
+		return false, err
+	}
+	if err := byHash.Put(ticketHash, seqBytes(seq)); err != nil {
+		return false, err
+	}
+	return true, nil
 }

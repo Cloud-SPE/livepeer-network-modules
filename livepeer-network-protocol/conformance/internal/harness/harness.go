@@ -188,7 +188,7 @@ func (c *Ctx) authorization(capability, offering, protocol, requestID, sessionID
 		revision = 1
 	}
 	p := &pb.SpendAuthorizationPayload{
-		SettlementDomainId: "0x" + strings.Repeat("a", 64), Domain: "livepeer-spend-authorization/v2", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+		SettlementDomainId: "0x" + strings.Repeat("a", 64), WholesaleAccountId: "conformance", Domain: "livepeer-spend-authorization/v3", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
 		ChainId: 42161, Denomination: "wei", AuthorizationId: "conf-auth-" + requestID, Revision: revision, PredecessorAuthorizationId: predecessor,
 		RequestId: requestID, SessionId: sessionID, Protocol: protocol, Capability: capability, Offering: offering, BrokerUri: strings.TrimRight(c.BrokerURL, "/"),
 		AcceptedPrice: &pb.AcceptedPrice{PricePerUnitWei: &pb.BigUInt{Value: big.NewInt(amount).Bytes()}, UnitsPerPrice: per, WorkUnitName: unit, Capability: capability, Offering: offering, QuoteRef: &pb.QuoteRef{QuoteId: "conformance-quote", QuoteVersion: 1, ConstraintFingerprint: []byte{1}, RouteFingerprint: []byte{2}}},
@@ -355,7 +355,7 @@ func (c *Ctx) QuerySettlement(id string) (*HTTPResult, error) {
 // signed NOT_ADMITTED claim. It is intentionally separate from workload
 // invocation: silence or an HTTP refusal alone is not financial evidence.
 func (c *Ctx) QueryNonAdmission(requestID, protocol string) (*HTTPResult, error) {
-	body := fmt.Sprintf(`{"protocol":%q,"work_id":%q,"sender":%q,"recipient":%q,`+
+	body := fmt.Sprintf(`{"wholesale_account_id":"conformance","protocol":%q,"work_id":%q,"sender":%q,"recipient":%q,`+
 		`"quote_id":"conformance-quote","quote_version":1,`+
 		`"constraint_fingerprint":"01","route_fingerprint":"02","job_issued_at":%q}`,
 		protocol, "conf-auth-"+requestID, strings.Repeat("01", 20), strings.Repeat("02", 20),

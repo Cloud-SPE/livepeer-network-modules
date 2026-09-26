@@ -11,13 +11,15 @@ option go_package = "github.com/Cloud-SPE/livepeer-network-modules/livepeer-netw
 
 service PayeeAdmin {
   // Reset the active GetTicketParams session keyed by the stable
-  // sender/recipient/capability/offering identity. The current open
+  // sender/recipient/capability/offering/account/stream identity. The current open
   // session is marked closed, its recipientRand nonce ledger is
   // dropped, and the next GetTicketParams call mints a fresh work_id.
   rpc ResetSession(ResetSessionRequest) returns (ResetSessionResponse);
 }
 
 message ResetSessionRequest {
+ string wholesale_account_id = 5;
+ string ticket_stream_id = 6;
   bytes sender = 1;
   bytes recipient = 2;
   string capability = 3;

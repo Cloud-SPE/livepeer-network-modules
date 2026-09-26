@@ -55,27 +55,27 @@ func (m *metered) RevenueSourceStatus(ctx context.Context) (*pb.RevenueSourceSta
 }
 
 type UnexecutedRecovery interface {
-	CloseUnexecutedAuthorization(context.Context, []byte, string, string) error
+	CloseUnexecutedAuthorization(context.Context, []byte, string, string, string) error
 }
 
-func (g *GRPC) CloseUnexecutedAuthorization(ctx context.Context, payer []byte, id, reason string) error {
+func (g *GRPC) CloseUnexecutedAuthorization(ctx context.Context, payer []byte, id, reason string, wholesaleAccountID string) error {
 	domain, err := g.SettlementDomain(ctx)
 	if err != nil {
 		return err
 	}
-	result, err := g.client.CloseUnexecutedAuthorization(ctx, &pb.CloseUnexecutedAuthorizationRequest{SettlementDomainId: domain, Payer: payer, AuthorizationId: id, Reason: reason})
+	result, err := g.client.CloseUnexecutedAuthorization(ctx, &pb.CloseUnexecutedAuthorizationRequest{SettlementDomainId: domain, Payer: payer, AuthorizationId: id, Reason: reason, WholesaleAccountId: wholesaleAccountID})
 	if err != nil {
 		return err
 	}
-	if result == nil || !result.Fenced || result.SettlementDomainId != domain {
+	if result == nil || !result.Fenced || result.SettlementDomainId != domain || wholesaleAccountID == "" || result.GetWholesaleAccountId() != wholesaleAccountID {
 		return fmt.Errorf("unexecuted recovery source proof invalid")
 	}
 	return nil
 }
-func (m *metered) CloseUnexecutedAuthorization(ctx context.Context, payer []byte, id, reason string) error {
+func (m *metered) CloseUnexecutedAuthorization(ctx context.Context, payer []byte, id, reason string, wholesaleAccountID string) error {
 	inner, ok := m.inner.(UnexecutedRecovery)
 	if !ok {
 		return fmt.Errorf("receiver unexecuted recovery unavailable")
 	}
-	return inner.CloseUnexecutedAuthorization(ctx, payer, id, reason)
+	return inner.CloseUnexecutedAuthorization(ctx, payer, id, reason, wholesaleAccountID)
 }

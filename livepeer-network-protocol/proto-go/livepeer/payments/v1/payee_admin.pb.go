@@ -27,13 +27,15 @@ const (
 )
 
 type ResetSessionRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Sender        []byte                 `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
-	Recipient     []byte                 `protobuf:"bytes,2,opt,name=recipient,proto3" json:"recipient,omitempty"`
-	Capability    string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
-	Offering      string                 `protobuf:"bytes,4,opt,name=offering,proto3" json:"offering,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	WholesaleAccountId string                 `protobuf:"bytes,5,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	TicketStreamId     string                 `protobuf:"bytes,6,opt,name=ticket_stream_id,json=ticketStreamId,proto3" json:"ticket_stream_id,omitempty"`
+	Sender             []byte                 `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
+	Recipient          []byte                 `protobuf:"bytes,2,opt,name=recipient,proto3" json:"recipient,omitempty"`
+	Capability         string                 `protobuf:"bytes,3,opt,name=capability,proto3" json:"capability,omitempty"`
+	Offering           string                 `protobuf:"bytes,4,opt,name=offering,proto3" json:"offering,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *ResetSessionRequest) Reset() {
@@ -64,6 +66,20 @@ func (x *ResetSessionRequest) ProtoReflect() protoreflect.Message {
 // Deprecated: Use ResetSessionRequest.ProtoReflect.Descriptor instead.
 func (*ResetSessionRequest) Descriptor() ([]byte, []int) {
 	return file_livepeer_payments_v1_payee_admin_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *ResetSessionRequest) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
+}
+
+func (x *ResetSessionRequest) GetTicketStreamId() string {
+	if x != nil {
+		return x.TicketStreamId
+	}
+	return ""
 }
 
 func (x *ResetSessionRequest) GetSender() []byte {
@@ -150,8 +166,10 @@ var File_livepeer_payments_v1_payee_admin_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payee_admin_proto_rawDesc = "" +
 	"\n" +
-	"&livepeer/payments/v1/payee_admin.proto\x12\x14livepeer.payments.v1\"\x87\x01\n" +
-	"\x13ResetSessionRequest\x12\x16\n" +
+	"&livepeer/payments/v1/payee_admin.proto\x12\x14livepeer.payments.v1\"\xe3\x01\n" +
+	"\x13ResetSessionRequest\x120\n" +
+	"\x14wholesale_account_id\x18\x05 \x01(\tR\x12wholesaleAccountId\x12(\n" +
+	"\x10ticket_stream_id\x18\x06 \x01(\tR\x0eticketStreamId\x12\x16\n" +
 	"\x06sender\x18\x01 \x01(\fR\x06sender\x12\x1c\n" +
 	"\trecipient\x18\x02 \x01(\fR\trecipient\x12\x1e\n" +
 	"\n" +

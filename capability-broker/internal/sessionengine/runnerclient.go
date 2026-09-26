@@ -14,7 +14,7 @@ import (
 )
 
 // RunnerClient is the broker's contract with a paid-session backend
-// (paid-session/v1 §7.1). Paths are operator configuration — the
+// (paid-session/v1 §7.1). Paths are runner declarations — the
 // protocol imposes no URL space.
 type RunnerClient interface {
 	// CreateSession binds a runner session. The runner's response
@@ -68,9 +68,21 @@ type RunnerStatus struct {
 	State           string `json:"state"`
 }
 
-// RunnerPaths is the operator-declared URL surface of a backend.
-// {id} is substituted with the escaped runner session id.
+// RunnerCreateRecovery atomically identifies creation or fences its absence.
+// It is optional: legacy runners cannot prove that a delayed create will not run.
+type RunnerCreateRecovery interface {
+	ReconcileSessionCreate(context.Context, string) (*RunnerCreateResolution, error)
+}
+type RunnerCreateResolution struct {
+	SessionID       string `json:"session_id"`
+	Outcome         string `json:"outcome"`
+	RunnerSessionID string `json:"runner_session_id,omitempty"`
+}
+
+// RunnerPaths is the attached runner URL surface.
+// {id} is substituted with the escaped runner session ID.
 type RunnerPaths struct {
+	Reconcile string // optional POST endpoint keyed by broker session_id
 	Create    string // e.g. "/sessions"
 	Status    string // e.g. "/sessions/{id}"
 	Terminate string // e.g. "/sessions/{id}"
@@ -198,4 +210,31 @@ func runnerCapacityRefusal(code int, header http.Header, raw []byte) (int, bool)
 		backoff = n
 	}
 	return backoff, true
+}
+
+func (c *HTTPRunnerClient) ReconcileSessionCreate(ctx context.Context, id string) (*RunnerCreateResolution, error) {
+	if c.Paths.Reconcile == "" {
+		return nil, fmt.Errorf("runner does not declare create reconciliation")
+	}
+	var result RunnerCreateResolution
+	code, _, _, err := c.do(ctx, http.MethodPost, c.urlFor(c.Paths.Reconcile, ""), map[string]string{"session_id": id}, &result)
+	if err != nil {
+		return nil, err
+	}
+	if code != http.StatusOK || result.SessionID != id {
+		return nil, fmt.Errorf("runner create reconciliation unconfirmed")
+	}
+	switch result.Outcome {
+	case "fenced":
+		if result.RunnerSessionID != "" {
+			return nil, fmt.Errorf("runner returned conflicting creation outcome")
+		}
+	case "created":
+		if result.RunnerSessionID == "" {
+			return nil, fmt.Errorf("runner omitted reconciled session identity")
+		}
+	default:
+		return nil, fmt.Errorf("runner create outcome unknown")
+	}
+	return &result, nil
 }

@@ -193,15 +193,28 @@ financial obligations to be resolved. Repeated cleanup does not release another
 session's slot.
 
 An abandoned open with a known runner session ID is retried on recovery/sweep.
-A lost create response with no runner ID is logged as `runner create outcome
-unknown`, with the request ID, broker session ID and backend binding. The current
-runner contract cannot safely query by broker session ID or replay create, so
-this case retains its slot and opening reservation. Pre-upgrade paid opening
-reservations without create evidence are treated the same way. Diagnose the
-runner using those identifiers and establish its actual outcome; do not delete
-the reservation or reset counters to make capacity appear free. Automatic
-reconciliation of this case needs a runner contract for idempotent creation and
-lookup by broker session ID.
+For a lost create response, runners can advertise `paths.reconcile`. The broker
+posts its durable broker session ID and accepts either an existing runner ID
+(which it terminates) or `fenced` (the runner has durably blocked delayed creates
+for that ID). A timeout, bare 404, unsupported endpoint or invalid reply retains
+the opening reservation and slot. Deploy the broker before runners advertise
+the optional path; older strict attach validators reject unknown path fields.
+
+Before initial admission, the broker seals the exact signed authorization and
+recovery identity. Recovery atomically fences unused authority at the receiver,
+or adopts an accepted admission and settles its verified cumulative usage.
+Compute may be released while accounting remains pending. Recovery never repeats
+funding. `GET /v1/exchange/{request_id}` reports `IN_FLIGHT`,
+`ACCOUNTING_PENDING`, `ADMISSION_REJECTED`, or a terminal `SETTLED` envelope.
+A rejected open can obtain scoped signed non-admission; pending admission cannot.
+Canceled requests cannot open again, including after restart.
+
+Pre-upgrade reservations missing the exact authorization cannot be automatically
+financially reconciled. Those missing broker create identity or a supported runner
+reconciliation path also cannot establish an unknown runner outcome. Diagnose
+using the request ID, broker session ID and backend binding; do not delete the
+reservation or reset counters to make capacity appear free. Keep the broker
+sealing key and runner state/key across upgrades and restarts.
 
 The limit applies within one broker. Runners remain responsible for physical
 capacity across brokers, and for canceling job execution when its transport ends.
@@ -420,3 +433,33 @@ admission tombstones or rewrite old terminal records from HTTP logs: historical
 ambiguous outcomes lack the new durable refusal evidence. This change does not
 automatically repair those records or change deployed image tags. The associated
 implementation bead is lnm-9da.
+
+
+## Shared-wallet account cutover
+
+Coordinate broker, receiver, sender and payer-application upgrades. Stop new
+admissions and drain active sessions, open reservations, pending settlements and
+work-ledger operations using the old version before upgrading. The new session
+engine refuses active records without a wholesale account identity. Do not edit
+saved authorizations or assign old balances to a product automatically; retain
+legacy records for audit and reconcile their ownership explicitly.
+
+Each product/environment configures its own stable `wholesale_account_id`.
+Independent payer daemons have distinct persisted ticket streams, even when they
+share an account. Multiple replicas using one account still coordinate funding
+and admission through their application database. Independent development
+installations use distinct accounts. Preserve each payer database and never clone
+an active stream into another running daemon.
+
+`POST /v1/payment/account` requires `wholesale_account_id`, including authorization
+status queries. `POST /v1/payment/account/fund` requires
+`Livepeer-Wholesale-Account-Id`. Account, status and funding replies echo the
+account and `isolation_version: 1`. Funding replies also identify the exact
+payment bytes with `funding_id` (lowercase SHA-256 hex without a prefix). Retrying
+returns the original credit and account snapshot; query the account separately
+for current availability. A receipt is not permission to execute work.
+
+Request and authorization IDs must remain globally unique at a broker: account
+isolation does not make reused job IDs safe. New signed evidence carries the
+account; a payer must reject evidence for another account. The on-chain deposit
+is still shared and account labels do not limit a holder of the wallet key.

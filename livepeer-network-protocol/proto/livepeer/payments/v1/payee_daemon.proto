@@ -154,6 +154,10 @@ message GetQuoteResponse {
 // ─── GetTicketParams (quote-free) ─────────────────────────────────────
 
 message GetTicketParamsRequest {
+  string ticket_stream_id = 7;
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 6;
+
   // ETH address of the sender that will sign the ticket.
   bytes sender = 1;
 
@@ -176,6 +180,9 @@ message GetTicketParamsRequest {
 }
 
 message GetTicketParamsResponse {
+  string wholesale_account_id = 6;
+  string ticket_stream_id = 7;
+  uint32 isolation_version = 8;
   TicketParams ticket_params = 1;
 
   // Set when answering this call ROTATED the ticket session: the work_id
@@ -275,11 +282,17 @@ message ProcessPaymentRequest {
 }
 
 message FundWholesaleAccountRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 3;
+
   bytes payment_bytes = 1;
   string settlement_domain_id = 2;
 }
 
 message FundWholesaleAccountResponse {
+  // Required shared-wallet isolation identity.
+  string funding_id = 4;
+
   WholesaleAccountView account = 1;
   BigUInt credited_value_wei = 2;
   bool replayed = 3;
@@ -325,6 +338,9 @@ message AdmitAuthorizationRequest {
 }
 
 message AdvanceAuthorizationRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 8;
+
   bytes payer = 1;
   string authorization_id = 2;
   uint64 cumulative_units = 3;
@@ -353,6 +369,9 @@ message AdmitAuthorizationResponse {
 }
 
 message SettleAuthorizationRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 6;
+
   bytes payer = 1;
   string authorization_id = 2;
   uint64 actual_units = 3;
@@ -369,6 +388,9 @@ message SettleAuthorizationResponse {
 }
 
 message GetWholesaleAccountRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 3;
+
   bytes payer = 1;
   string settlement_domain_id = 2;
 }
@@ -378,12 +400,18 @@ message GetWholesaleAccountResponse {
 }
 
 message GetSpendAuthorizationRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 4;
+
   bytes payer = 1;
   string authorization_id = 2;
   string settlement_domain_id = 3;
 }
 
 message GetSpendAuthorizationResponse {
+ bytes payee = 9;
+ string settlement_domain_id = 10;
+ string wholesale_account_id = 8;
   SpendAuthorizationState state = 1;
   BigUInt reserved_value_wei = 2;
   BigUInt billed_value_wei = 3;
@@ -394,6 +422,7 @@ message GetSpendAuthorizationResponse {
 }
 
 message CancelAuthorizationAdmissionRequest {
+  string wholesale_account_id = 5;
   string settlement_domain_id = 1;
   bytes payer = 2;
   string authorization_id = 3;
@@ -579,12 +608,16 @@ message RevenueSourceStatus {
 }
 
 message CloseUnexecutedAuthorizationRequest {
+  // Required shared-wallet isolation identity.
+  string wholesale_account_id = 5;
+
  string settlement_domain_id = 1;
  bytes payer = 2;
  string authorization_id = 3;
  string reason = 4;
 }
 message CloseUnexecutedAuthorizationResponse {
+ string wholesale_account_id = 3;
  string settlement_domain_id = 1;
  bool fenced = 2;
 }

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"log/slog"
 	"math/big"
 	"sync"
@@ -77,6 +78,9 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	if s.settlementDomainErr != nil || payload.GetSettlementDomainId() != s.settlementDomainID || s.settlementDomainID == "" {
 		return nil, admissionStatus(codes.PermissionDenied, "SETTLEMENT_DOMAIN_MISMATCH", "authorization settlement domain does not match receiver ledger")
 	}
+	if !identity.ValidWholesaleAccountID(payload.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if !bytes.Equal(payload.GetPayee(), s.recipient) {
 		return nil, admissionStatus(codes.PermissionDenied, "PAYEE_MISMATCH", "authorization payee does not match receiver")
 	}
@@ -136,7 +140,7 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	// turn a lost AdmitAuthorization response into a false payment failure (or,
 	// with a freshly-minted retry, duplicate funding). The authorization is the
 	// durable idempotency record and therefore wins this race.
-	if existing, lookupErr := s.store.GetWholesaleAuthorization(payload.GetPayer(), payload.GetAuthorizationId()); lookupErr == nil {
+	if existing, lookupErr := s.store.GetWholesaleAuthorization(payload.GetPayer(), payload.GetAuthorizationId(), payload.GetWholesaleAccountId()); lookupErr == nil {
 		if !bytes.Equal(existing.Fingerprint, fingerprint[:]) {
 			return nil, admissionStatus(codes.InvalidArgument, "AUTHORIZATION_ID_REUSED", "authorization_id reused with different content")
 		}
@@ -146,7 +150,7 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		if existing.State != store.AuthorizationAdmitted {
 			return nil, admissionFailure("AUTHORIZATION_NOT_ADMITTED", "authorization is already "+existing.State)
 		}
-		account, accountErr := s.store.GetWholesaleAccount(payload.GetPayer(), payload.GetPayee())
+		account, accountErr := s.store.GetWholesaleAccount(payload.GetPayer(), payload.GetPayee(), payload.GetWholesaleAccountId())
 		if accountErr != nil {
 			return nil, status.Errorf(codes.Internal, "load wholesale account: %v", accountErr)
 		}
@@ -160,6 +164,7 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	}
 
 	fundingWorkID := ""
+	inlineCredit := new(big.Int)
 	if len(req.GetPaymentBytes()) > 0 && expiresAt.After(now) {
 		var payment pb.Payment
 		if err := proto.Unmarshal(req.GetPaymentBytes(), &payment); err != nil || payment.GetTicketParams() == nil {
@@ -168,27 +173,18 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 		if !bytes.Equal(payment.GetSender(), payload.GetPayer()) {
 			return nil, admissionStatus(codes.PermissionDenied, "FUNDING_PAYER_MISMATCH", "funding payment sender does not match authorization payer")
 		}
-		fundingWorkID = hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-		processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
+		funded, err := s.fundWholesale(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: req.GetPaymentBytes(), SettlementDomainId: s.settlementDomainID, WholesaleAccountId: payload.GetWholesaleAccountId()})
 		if err != nil {
 			if status.Code(err) == codes.InvalidArgument || status.Code(err) == codes.PermissionDenied || status.Code(err) == codes.FailedPrecondition {
 				return nil, admissionStatus(status.Code(err), "FUNDING_VALIDATION_FAILED", "funding validation failed")
 			}
 			return nil, err
 		}
-		// NONCE_REPLAY is the expected recovery signal if the daemon
-		// credited the batch and crashed before atomically migrating that
-		// session balance into the account. AdmitWholesale below can still
-		// recover the already-credited balance; every other all-rejected
-		// batch is a real refusal.
-		allRejected := processed.GetTicketsRejected() == int32(len(payment.GetTicketSenderParams()))
-		if len(payment.GetTicketSenderParams()) == 0 || (allRejected && processed.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY) {
-			return nil, admissionFailure(fundingRejectionReason(processed.GetDominantRejection()), "funding payment credited no tickets")
-		}
+		inlineCredit.SetBytes(funded.GetCreditedValueWei().GetValue())
 	}
 	reservation := new(big.Int).SetBytes(req.GetReservationValueWei().GetValue())
 	result, err := s.store.AdmitWholesale(store.WholesaleAuthorizationSeed{
-		ID: payload.GetAuthorizationId(), Fingerprint: fingerprint[:], Payer: payload.GetPayer(), Payee: payload.GetPayee(),
+		WholesaleAccountID: payload.GetWholesaleAccountId(), ID: payload.GetAuthorizationId(), Fingerprint: fingerprint[:], Payer: payload.GetPayer(), Payee: payload.GetPayee(),
 		RequestID: payload.GetRequestId(), SessionID: payload.GetSessionId(), Protocol: payload.GetProtocol(),
 		Capability: payload.GetCapability(), Offering: payload.GetOffering(), PriceWei: price.String(),
 		PerUnits: payload.GetAcceptedPrice().GetUnitsPerPrice(), WorkUnit: payload.GetAcceptedPrice().GetWorkUnitName(),
@@ -221,12 +217,15 @@ func (s *Service) admitAuthorization(ctx context.Context, req *pb.AdmitAuthoriza
 	s.recordWholesaleTotals()
 	return &pb.AdmitAuthorizationResponse{
 		State: authorizationState(result.Authorization.State), Account: s.wholesaleAccountView(result.Account),
-		ReservedValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.ReservedWei)}, CreditedValueWei: &pb.BigUInt{Value: result.Transferred.Bytes()},
+		ReservedValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.ReservedWei)}, CreditedValueWei: &pb.BigUInt{Value: inlineCredit.Bytes()},
 		Replayed: result.Replayed,
 	}, nil
 }
 
 func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAuthorizationRequest) (*pb.AdvanceAuthorizationResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	s.sourceGate.RLock()
 	defer s.sourceGate.RUnlock()
 	if err := s.requireUnfrozenSource(); err != nil {
@@ -241,7 +240,7 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 	// As with admission, the durable sequence is checked before an optional
 	// payment is processed. A retry of an already-applied advance must not
 	// replay a ticket nonce or entice the payer to mint a replacement ticket.
-	existing, lookupErr := s.store.GetWholesaleAuthorization(req.GetPayer(), req.GetAuthorizationId())
+	existing, lookupErr := s.store.GetWholesaleAuthorization(req.GetPayer(), req.GetAuthorizationId(), req.GetWholesaleAccountId())
 	if errors.Is(lookupErr, store.ErrAuthorizationNotFound) {
 		return nil, status.Error(codes.NotFound, "spend authorization not found")
 	}
@@ -249,6 +248,7 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 		return nil, status.Errorf(codes.Internal, "lookup spend authorization: %v", lookupErr)
 	}
 	fundingWorkID := ""
+	inlineCredit := new(big.Int)
 	isReplay := req.GetAdvanceSeq() <= existing.SettlementSeq
 	if len(req.GetPaymentBytes()) > 0 && !isReplay {
 		var payment pb.Payment
@@ -258,18 +258,14 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 		if !bytes.Equal(payment.GetSender(), req.GetPayer()) {
 			return nil, status.Error(codes.PermissionDenied, "funding payment sender does not match authorization payer")
 		}
-		fundingWorkID = hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-		processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: fundingWorkID})
+		funded, err := s.fundWholesale(ctx, &pb.FundWholesaleAccountRequest{PaymentBytes: req.GetPaymentBytes(), SettlementDomainId: s.settlementDomainID, WholesaleAccountId: req.GetWholesaleAccountId()})
 		if err != nil {
 			return nil, err
 		}
-		allRejected := processed.GetTicketsRejected() == int32(len(payment.GetTicketSenderParams()))
-		if len(payment.GetTicketSenderParams()) == 0 || (allRejected && processed.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY) {
-			return nil, status.Error(codes.FailedPrecondition, "funding payment credited no tickets")
-		}
+		inlineCredit.SetBytes(funded.GetCreditedValueWei().GetValue())
 	}
 	target := new(big.Int).SetBytes(req.GetTargetReservedValueWei().GetValue())
-	result, err := s.store.AdvanceWholesale(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetCumulativeUnits(), target, req.GetAdvanceSeq(), fundingWorkID, time.Now().UTC())
+	result, err := s.store.AdvanceWholesale(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetCumulativeUnits(), target, req.GetAdvanceSeq(), fundingWorkID, time.Now().UTC(), req.GetWholesaleAccountId())
 	switch {
 	case errors.Is(err, store.ErrInsufficientWholesale):
 		return nil, status.Error(codes.FailedPrecondition, "insufficient wholesale account balance for requested runway")
@@ -281,17 +277,20 @@ func (s *Service) AdvanceAuthorization(ctx context.Context, req *pb.AdvanceAutho
 		return nil, status.Errorf(codes.Internal, "advance authorization: %v", err)
 	}
 	s.recordWholesaleTotals()
-	return &pb.AdvanceAuthorizationResponse{State: authorizationState(result.Authorization.State), Account: s.wholesaleAccountView(result.Account), BilledDeltaWei: &pb.BigUInt{Value: result.BilledDelta.Bytes()}, CumulativeBilledValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.BilledWei)}, ReservedValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.ReservedWei)}, CreditedValueWei: &pb.BigUInt{Value: result.Transferred.Bytes()}, Replayed: result.Replayed}, nil
+	return &pb.AdvanceAuthorizationResponse{State: authorizationState(result.Authorization.State), Account: s.wholesaleAccountView(result.Account), BilledDeltaWei: &pb.BigUInt{Value: result.BilledDelta.Bytes()}, CumulativeBilledValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.BilledWei)}, ReservedValueWei: &pb.BigUInt{Value: decimalBytes(result.Authorization.ReservedWei)}, CreditedValueWei: &pb.BigUInt{Value: inlineCredit.Bytes()}, Replayed: result.Replayed}, nil
 }
 
 func (s *Service) SettleAuthorization(_ context.Context, req *pb.SettleAuthorizationRequest) (*pb.SettleAuthorizationResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
 	}
 	if len(req.GetPayer()) != 20 || req.GetAuthorizationId() == "" || req.GetSettlementSeq() == 0 {
 		return nil, status.Error(codes.InvalidArgument, "payer, authorization_id, and positive settlement_seq are required")
 	}
-	result, err := s.store.SettleWholesale(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetActualUnits(), req.GetSettlementSeq(), time.Now().UTC())
+	result, err := s.store.SettleWholesale(req.GetPayer(), s.recipient, req.GetAuthorizationId(), req.GetActualUnits(), req.GetSettlementSeq(), time.Now().UTC(), req.GetWholesaleAccountId())
 	switch {
 	case errors.Is(err, store.ErrAuthorizationNotFound):
 		return nil, status.Error(codes.NotFound, "spend authorization not found")
@@ -316,44 +315,20 @@ func (s *Service) FundWholesaleAccount(ctx context.Context, req *pb.FundWholesal
 	if err := s.requireUnfrozenSource(); err != nil {
 		return nil, err
 	}
-	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
-		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
-	}
-	var payment pb.Payment
-	if err := proto.Unmarshal(req.GetPaymentBytes(), &payment); err != nil || payment.GetTicketParams() == nil || len(payment.GetSender()) != 20 || len(payment.GetTicketSenderParams()) == 0 {
-		return nil, status.Error(codes.InvalidArgument, "funding payment is malformed")
-	}
-	workID := hex.EncodeToString(payment.GetTicketParams().GetRecipientRandHash())
-	processed, err := s.processPayment(ctx, &pb.ProcessPaymentRequest{PaymentBytes: req.GetPaymentBytes(), WorkId: workID})
-	if err != nil {
-		return nil, err
-	}
-	allRejected := processed.GetTicketsRejected() == int32(len(payment.GetTicketSenderParams()))
-	if allRejected && processed.GetDominantRejection() != pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY {
-		return nil, status.Error(codes.FailedPrecondition, "funding payment credited no tickets")
-	}
-	account, transferred, err := s.store.FundWholesale(payment.GetSender(), s.recipient, workID, time.Now().UTC())
-	if errors.Is(err, store.ErrNotFound) {
-		return nil, status.Error(codes.FailedPrecondition, "funding payment session not found")
-	}
-	if err != nil {
-		return nil, status.Errorf(codes.Internal, "fund wholesale account: %v", err)
-	}
-	s.recordWholesaleTotals()
-	return &pb.FundWholesaleAccountResponse{
-		Account: s.wholesaleAccountView(account), CreditedValueWei: &pb.BigUInt{Value: transferred.Bytes()},
-		Replayed: allRejected && processed.GetDominantRejection() == pb.PaymentRejectionReason_PAYMENT_REJECTION_REASON_NONCE_REPLAY,
-	}, nil
+	return s.fundWholesale(ctx, req)
 }
 
 func (s *Service) GetWholesaleAccount(_ context.Context, req *pb.GetWholesaleAccountRequest) (*pb.GetWholesaleAccountResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
 	}
 	if len(req.GetPayer()) != 20 {
 		return nil, status.Error(codes.InvalidArgument, "payer must be 20 bytes")
 	}
-	account, err := s.store.GetWholesaleAccount(req.GetPayer(), s.recipient)
+	account, err := s.store.GetWholesaleAccount(req.GetPayer(), s.recipient, req.GetWholesaleAccountId())
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get wholesale account: %v", err)
 	}
@@ -361,17 +336,20 @@ func (s *Service) GetWholesaleAccount(_ context.Context, req *pb.GetWholesaleAcc
 }
 
 func (s *Service) GetSpendAuthorization(_ context.Context, req *pb.GetSpendAuthorizationRequest) (*pb.GetSpendAuthorizationResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
 		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
 	}
-	auth, err := s.store.GetWholesaleAuthorization(req.GetPayer(), req.GetAuthorizationId())
+	auth, err := s.store.GetWholesaleAuthorization(req.GetPayer(), req.GetAuthorizationId(), req.GetWholesaleAccountId())
 	if errors.Is(err, store.ErrAuthorizationNotFound) {
 		return nil, status.Error(codes.NotFound, "spend authorization not found")
 	}
 	if err != nil {
 		return nil, status.Errorf(codes.Internal, "get spend authorization: %v", err)
 	}
-	return authorizationView(auth), nil
+	return s.authorizationView(auth), nil
 }
 
 func authorizationState(state string) pb.SpendAuthorizationState {
@@ -393,7 +371,8 @@ func authorizationState(state string) pb.SpendAuthorizationState {
 
 func (s *Service) wholesaleAccountView(account *store.WholesaleAccount) *pb.WholesaleAccountView {
 	return &pb.WholesaleAccountView{
-		Payer: append([]byte(nil), account.Payer...), Payee: append([]byte(nil), account.Payee...),
+		WholesaleAccountId: account.WholesaleAccountID,
+		Payer:              append([]byte(nil), account.Payer...), Payee: append([]byte(nil), account.Payee...),
 		CreditedValueWei:  &pb.BigUInt{Value: decimalBytes(account.CreditedWei)},
 		ReservedValueWei:  &pb.BigUInt{Value: decimalBytes(account.ReservedWei)},
 		DebitedValueWei:   &pb.BigUInt{Value: decimalBytes(account.DebitedWei)},
@@ -682,6 +661,10 @@ func (s *Service) processPayment(_ context.Context, req *pb.ProcessPaymentReques
 			TicketsRejected:   rejected,
 			DominantRejection: dominant,
 		}, nil
+	}
+
+	if sess.WholesaleAccountID != "" {
+		return nil, status.Error(codes.FailedPrecondition, "isolated generation requires wholesale funding")
 	}
 
 	// Recover the per-session rand. Empty rand = session was opened by
@@ -1151,7 +1134,11 @@ func (s *Service) ResetSession(_ context.Context, req *pb.ResetSessionRequest) (
 	if req.GetOffering() == "" {
 		return nil, status.Error(codes.InvalidArgument, "offering is empty")
 	}
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) || !identity.ValidWholesaleAccountID(req.GetTicketStreamId()) {
+		return nil, status.Error(codes.InvalidArgument, "account and ticket stream identity required")
+	}
 	oldWorkID, reset, err := s.store.ResetTicketSession(store.TicketSessionKey{
+		WholesaleAccountID: req.GetWholesaleAccountId(), TicketStreamID: req.GetTicketStreamId(),
 		Sender:     req.GetSender(),
 		Recipient:  s.recipient,
 		Capability: req.GetCapability(),
@@ -1185,6 +1172,9 @@ func (s *Service) ResetSession(_ context.Context, req *pb.ResetSessionRequest) (
 // Re-issuing after the session has been closed generates a fresh rand
 // (and thus a fresh work_id).
 func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequest) (*pb.GetTicketParamsResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, status.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	s.sourceGate.RLock()
 	defer s.sourceGate.RUnlock()
 	if err := s.requireUnfrozenSource(); err != nil {
@@ -1232,7 +1222,11 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 		}
 	}
 
+	if !identity.ValidWholesaleAccountID(req.GetTicketStreamId()) {
+		return nil, status.Error(codes.InvalidArgument, "ticket_stream_id is required")
+	}
 	tupleKey := store.TicketSessionKey{
+		WholesaleAccountID: req.GetWholesaleAccountId(), TicketStreamID: req.GetTicketStreamId(),
 		Sender:     req.GetSender(),
 		Recipient:  s.recipient,
 		Capability: req.GetCapability(),
@@ -1346,6 +1340,7 @@ func (s *Service) GetTicketParams(_ context.Context, req *pb.GetTicketParamsRequ
 	}
 
 	return &pb.GetTicketParamsResponse{
+		WholesaleAccountId: req.GetWholesaleAccountId(), TicketStreamId: req.GetTicketStreamId(), IsolationVersion: 1,
 		PredecessorWorkId: predecessorWorkID,
 		HighestSeenNonce:  highestSeen,
 		HasSeenNonces:     hasSeen,

@@ -66,7 +66,7 @@ func (s *Server) retryOneDebit(ctx context.Context, rec *sessionstore.JobRecord,
 		_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "wholesale account extension unavailable")
 		return
 	}
-	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{Payer: pd.Sender, AuthorizationID: pd.WorkID, ActualUnits: pd.ActualUnits, SettlementSeq: pd.DebitSeq})
+	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: pd.WholesaleAccountID, Payer: pd.Sender, AuthorizationID: pd.WorkID, ActualUnits: pd.ActualUnits, SettlementSeq: pd.DebitSeq})
 	if err != nil {
 		if rerr := s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), err.Error()); rerr != nil {
 			log.Printf("warning: recording debit retry failure failed request_id=%s: %v",

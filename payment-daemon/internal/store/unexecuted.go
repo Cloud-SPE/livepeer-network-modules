@@ -14,12 +14,12 @@ const unexecutedFencesBucket = "unexecuted_authorization_fences"
 // CloseUnexecutedAuthorization consumes the trusted broker's durable no-binding
 // evidence. The tombstone and zero-use reservation release are one transaction,
 // preventing an admission RPC already in flight from creating an orphan later.
-func (s *Store) CloseUnexecutedAuthorization(payer, payee []byte, id, reason string) error {
+func (s *Store) CloseUnexecutedAuthorization(payer, payee []byte, id, reason string, accountID ...string) error {
 	if len(payer) != 20 || len(payee) != 20 || id == "" || reason == "" {
 		return fmt.Errorf("unexecuted authorization identity and reason required")
 	}
 	return s.db.Update(func(tx *bolt.Tx) error {
-		key := wholesaleAuthorizationKey(payer, id)
+		key := wholesaleAuthorizationKey(payer, id, accountID...)
 		fences, err := tx.CreateBucketIfNotExists([]byte(unexecutedFencesBucket))
 		if err != nil {
 			return err
@@ -37,7 +37,7 @@ func (s *Store) CloseUnexecutedAuthorization(payer, payee []byte, id, reason str
 				return fmt.Errorf("authorization has usage or inconsistent identity; cannot classify as unexecuted")
 			}
 			if auth.State == AuthorizationAdmitted {
-				account, err := loadWholesaleAccount(tx, payer, payee)
+				account, err := loadWholesaleAccount(tx, payer, payee, accountID...)
 				if err != nil {
 					return err
 				}

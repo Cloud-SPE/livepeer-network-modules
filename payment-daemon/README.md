@@ -31,10 +31,11 @@ Simulation inputs: [`scenarios/`](./scenarios/).
   envelopes from this daemon decode against go-livepeer's `pm/`.
 - Receiver sessions persist to BoltDB
   (`/var/lib/livepeer/payment-daemon/sessions.db`). Sender mode opens the
-  same `--db` path for mint-idempotency records and its durable nonce
-  watermark; give each mode its own file.
+  same `--db` path for mint-idempotency records, its durable nonce
+  watermark, and its persistent ticket stream identity; give each independently
+  running daemon its own durable file. Never clone an active sender database.
 - `GetTicketParams` is restart-stable for an open
-  `(sender, recipient, capability, offering)` session. Repeated calls
+  `(sender, recipient, capability, offering, wholesale_account_id, ticket_stream_id)` session. Repeated calls
   reuse the same `recipient_rand_hash` until the session is closed or
   reset.
 - Receiver-side `ProcessPayment` returns machine-readable per-ticket
@@ -142,3 +143,28 @@ of that boundary.
 
 Regional collectors use [source-qualified revenue reporting](docs/regional-revenue-reporting.md),
 including inclusion-block rounds and explicit completeness evidence.
+
+## Shared-wallet isolation
+
+Every payer application configures an explicit `wholesale_account_id` per environment
+and passes it in account funding and spend-authorization requests. Independent payer
+daemons may share one wallet only when every serving broker/daemon supports the
+[shared-wallet contract](../livepeer-network-protocol/protocols/wholesale-account.md).
+Until coordinated cutover, use one wallet per independent payer daemon. A `--db`
+flag is optional because a default exists; persistent database storage is mandatory.
+
+Each daemon generates `ticket_stream_id` once in its database. The same account may
+have multiple streams; different accounts keep independent balances and versions.
+All streams still spend the wallet's shared on-chain deposit. Product/environment
+labels are accounting boundaries, not permissions for parties holding the same key.
+
+Funding returns an immutable SHA-256-identified receipt. Replay exact payment bytes
+after an uncertain response; do not infer credit from cumulative account deltas or
+remint automatically. Isolated ticket generations cannot use legacy `ProcessPayment`;
+use `FundWholesaleAccount` or signed authorization admission with inline funding.
+Drain old account credit and active authorizations before upgrade; old balances are
+retained and never assigned automatically. See the protocol's coordinated cutover.
+
+The manual `livepeer-chain-probe` also requires `--wholesale-account-id`; use a
+dedicated probe account and preserve that identity when replaying its recovery
+checkpoint. This change does not run the probe or spend on-chain funds.

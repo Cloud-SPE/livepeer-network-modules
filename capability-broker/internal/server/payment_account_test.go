@@ -3,7 +3,9 @@ package server
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"math/big"
@@ -24,11 +26,12 @@ type fundingAccountClient struct {
 	wantWire  []byte
 }
 
-func (f *fundingAccountClient) FundWholesaleAccount(_ context.Context, wire []byte) (*payment.FundWholesaleAccountResult, error) {
+func (f *fundingAccountClient) FundWholesaleAccount(_ context.Context, wire []byte, wholesaleAccountID string) (*payment.FundWholesaleAccountResult, error) {
 	f.fundCalls.Add(1)
 	f.wantWire = append([]byte(nil), wire...)
-	return &payment.FundWholesaleAccountResult{
-		Account: &payment.WholesaleAccount{SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	digest := sha256.Sum256(wire)
+	return &payment.FundWholesaleAccountResult{FundingID: hex.EncodeToString(digest[:]),
+		Account: &payment.WholesaleAccount{WholesaleAccountID: "test-account", SettlementDomainID: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 			Payer:     bytesOf(0xab, 20),
 			Payee:     bytesOf(0xcd, 20),
 			Available: big.NewInt(37),
@@ -50,11 +53,11 @@ func (f *fundingAccountClient) SettleAuthorization(context.Context, payment.Sett
 	panic("not called")
 }
 
-func (f *fundingAccountClient) GetWholesaleAccount(context.Context, []byte) (*payment.WholesaleAccount, error) {
+func (f *fundingAccountClient) GetWholesaleAccount(context.Context, []byte, string) (*payment.WholesaleAccount, error) {
 	panic("not called")
 }
 
-func (f *fundingAccountClient) GetSpendAuthorization(context.Context, []byte, string) (*payment.SpendAuthorizationStatus, error) {
+func (f *fundingAccountClient) GetSpendAuthorization(context.Context, []byte, string, string) (*payment.SpendAuthorizationStatus, error) {
 	panic("not called")
 }
 
@@ -79,6 +82,7 @@ func TestFundWholesaleAccountAcceptsValueWithoutSpendAuthority(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	req.Header.Set("Livepeer-Wholesale-Account-Id", "test-account")
 	req.Header.Set(livepeerheader.Capability, "openai:chat-completions")
 	req.Header.Set(livepeerheader.Offering, "default")
 	req.Header.Set(livepeerheader.Payment, base64.StdEncoding.EncodeToString(wire))

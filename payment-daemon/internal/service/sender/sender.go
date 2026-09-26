@@ -142,6 +142,9 @@ func New(keystore providers.KeyStore, broker providers.Broker, clock providers.C
 // CreateSpendAuthorization signs one route- and workload-bound debit grant.
 // It mints no ticket and therefore cannot add value to a payee account.
 func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpendAuthorizationRequest) (*pb.CreateSpendAuthorizationResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	if len(req.GetPayee()) != 20 {
 		return nil, grpcstatus.Error(codes.InvalidArgument, "payee must be 20 bytes")
 	}
@@ -213,7 +216,7 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 		return nil, grpcstatus.Error(codes.InvalidArgument, "a positive revision requires predecessor_authorization_id")
 	}
 	payload := &pb.SpendAuthorizationPayload{
-		SettlementDomainId: req.GetSettlementDomainId(), Domain: spendauth.Domain, Payer: append([]byte(nil), s.keystore.Address()...),
+		SettlementDomainId: req.GetSettlementDomainId(), Domain: spendauth.Domain, WholesaleAccountId: req.GetWholesaleAccountId(), Payer: append([]byte(nil), s.keystore.Address()...),
 		Payee: append([]byte(nil), req.GetPayee()...), AuthorizationId: req.GetAuthorizationId(),
 		RequestId: req.GetRequestId(), SessionId: req.GetSessionId(), Protocol: req.GetProtocol(),
 		Capability: accepted.CapabilityName, Offering: accepted.Offering,
@@ -234,7 +237,7 @@ func (s *Service) CreateSpendAuthorization(_ context.Context, req *pb.CreateSpen
 		return nil, grpcstatus.Errorf(codes.Internal, "authorization fingerprint: %v", err)
 	}
 	fingerprint := sha256.Sum256(payloadWire)
-	storeID := fmt.Sprintf("authorization/v2/%d/%x/%s/%s/%s", payload.GetChainId(), payload.GetPayee(), payload.GetSettlementDomainId(), payload.GetDenomination(), payload.GetAuthorizationId())
+	storeID := fmt.Sprintf("authorization/v3/%d/%x/%s/%s/%s/%s", payload.GetChainId(), payload.GetPayee(), payload.GetSettlementDomainId(), payload.GetDenomination(), payload.GetWholesaleAccountId(), payload.GetAuthorizationId())
 	prior, err := s.store.MintReserve(s.keystore.Address(), storeID, fingerprint[:])
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.AlreadyExists, "authorization idempotency: %v", err)
@@ -323,6 +326,9 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	if err != nil {
 		return nil, fmt.Errorf("funding: %w", err)
 	}
+	if !identity.ValidWholesaleAccountID(req.GetAccountFunding().GetWholesaleAccountId()) {
+		return nil, grpcstatus.Error(codes.InvalidArgument, "wholesale_account_id is required")
+	}
 	shortfall, err := accountShortfall(req.GetAccountFunding(), funding.fundedValueWei)
 	if err != nil {
 		return nil, grpcstatus.Errorf(codes.InvalidArgument, "account_funding: %v", err)
@@ -395,7 +401,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	// request changes underneath them. Unrelated routes remain concurrent.
 	unlockSession := s.lockSession(sessionKey(req.GetRecipient(),
 		acceptedPrice.CapabilityName, acceptedPrice.Offering,
-		req.GetTicketParamsBaseUrl(), req.GetAccountFunding().GetSettlementDomainId()))
+		req.GetTicketParamsBaseUrl(), req.GetAccountFunding().GetSettlementDomainId(), req.GetAccountFunding().GetWholesaleAccountId()))
 	defer unlockSession()
 
 	// Refresh an exhausted cached identity BEFORE resizing its quote. The payee
@@ -407,7 +413,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 	var session *senderSession
 	key := sessionKey(req.GetRecipient(), acceptedPrice.CapabilityName,
 		acceptedPrice.Offering, req.GetTicketParamsBaseUrl(),
-		req.GetAccountFunding().GetSettlementDomainId())
+		req.GetAccountFunding().GetSettlementDomainId(), req.GetAccountFunding().GetWholesaleAccountId())
 	s.mu.Lock()
 	cachedSession := s.sessions[key]
 	s.mu.Unlock()
@@ -440,7 +446,7 @@ func (s *Service) CreatePayment(ctx context.Context, req *pb.CreatePaymentReques
 			acceptedPrice.Offering,
 			req.GetTicketParamsBaseUrl(),
 			acceptedPrice.toPriceInfo(funding.estimatedUnits),
-			req.GetAcceptedPrice().GetQuoteRef(), req.GetAccountFunding().GetSettlementDomainId(),
+			req.GetAcceptedPrice().GetQuoteRef(), req.GetAccountFunding().GetSettlementDomainId(), req.GetAccountFunding().GetWholesaleAccountId(),
 		)
 		if err != nil {
 			return nil, fmt.Errorf("ticket params: %w", err)
@@ -860,7 +866,7 @@ func (s *Service) rotateExhaustedSession(ctx context.Context, old *senderSession
 
 	next, err := s.findOrOpenSession(ctx, recipient, funding.fundedValueWei,
 		old.capability, old.offering, baseURL,
-		acceptedPrice.toPriceInfo(funding.estimatedUnits), acceptedQuote, old.ticketParams.SettlementDomainID)
+		acceptedPrice.toPriceInfo(funding.estimatedUnits), acceptedQuote, old.ticketParams.SettlementDomainID, old.ticketParams.WholesaleAccountID)
 	if err != nil {
 		return nil, fmt.Errorf("rotating exhausted ticket session %s: %w", old.workID, err)
 	}
@@ -904,6 +910,7 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 	// this exact shortfall.
 	fetchStart := time.Now()
 	retry, err := s.fetcher.Fetch(ctx, TicketParamsRequest{
+		WholesaleAccountID: current.WholesaleAccountID, TicketStreamID: current.TicketStreamID,
 		BaseURL:    baseURL,
 		Sender:     append([]byte(nil), s.keystore.Address()...),
 		Recipient:  append([]byte(nil), recipient...),
@@ -915,6 +922,9 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 	if err != nil {
 		s.metrics.IncTicketParamsFetch(metrics.ResultError)
 		return nil, fmt.Errorf("re-quoting ticket params for %s wei expected value: %w", want, err)
+	}
+	if retry.WholesaleAccountID != current.WholesaleAccountID || retry.TicketStreamID != current.TicketStreamID {
+		return nil, fmt.Errorf("account or stream changed during ticket re-quote")
 	}
 	if retry.SettlementDomainID != current.SettlementDomainID {
 		return nil, fmt.Errorf("settlement domain changed during ticket re-quote")
@@ -947,6 +957,17 @@ func (s *Service) rescaleTicketParams(ctx context.Context, recipient []byte, wan
 
 func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceValue *big.Int, capability, offering, ticketParamsBaseURL string, acceptedPrice *types.PriceInfo, acceptedQuote *pb.QuoteRef, expectedDomain ...string) (*senderSession, error) {
 	key := sessionKey(recipient, capability, offering, ticketParamsBaseURL, expectedDomain...)
+	accountID := ""
+	if len(expectedDomain) > 1 {
+		accountID = expectedDomain[1]
+	}
+	if s.store == nil {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "durable sender database is required")
+	}
+	streamID, err := s.store.TicketStreamID()
+	if err != nil {
+		return nil, err
+	}
 
 	s.mu.Lock()
 	if sess, ok := s.sessions[key]; ok {
@@ -980,6 +1001,7 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	fetch := func(face *big.Int) (*types.TicketParams, error) {
 		fetchStart := time.Now()
 		got, ferr := s.fetcher.Fetch(ctx, TicketParamsRequest{
+			WholesaleAccountID: accountID, TicketStreamID: streamID,
 			BaseURL:    ticketParamsBaseURL,
 			Sender:     append([]byte(nil), s.keystore.Address()...),
 			Recipient:  append([]byte(nil), recipient...),
@@ -999,6 +1021,10 @@ func (s *Service) findOrOpenSession(ctx context.Context, recipient []byte, faceV
 	params, err := fetch(faceValue)
 	if err != nil {
 		return nil, err
+	}
+
+	if params.WholesaleAccountID != accountID || params.TicketStreamID != streamID {
+		return nil, grpcstatus.Error(codes.FailedPrecondition, "ticket account or stream mismatch")
 	}
 
 	// Open the session at a face value whose EXPECTED value carries the
@@ -1316,7 +1342,7 @@ func evToBytes(ev *big.Rat) []byte {
 func sessionKey(recipient []byte, capability, offering string, ticketParamsBaseURL string, domain ...string) string {
 	scope := ""
 	if len(domain) > 0 {
-		scope = domain[0]
+		scope = strings.Join(domain, "|")
 	}
 	return hex.EncodeToString(recipient) + "|" + capability + "|" + offering + "|" + strings.TrimSpace(ticketParamsBaseURL) + "|" + scope
 }

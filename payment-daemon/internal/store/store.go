@@ -76,6 +76,8 @@ var ErrPricingUnset = errors.New("store: session has no offering price; refusing
 
 // Session is the on-disk receiver session record.
 type Session struct {
+	WholesaleAccountID  string `json:"wholesale_account_id,omitempty"`
+	TicketStreamID      string `json:"ticket_stream_id,omitempty"`
 	WorkID              string `json:"work_id"`
 	Sender              []byte `json:"sender,omitempty"` // nil until first ProcessPayment seals it
 	Recipient           []byte `json:"recipient,omitempty"`
@@ -159,10 +161,12 @@ type Store struct {
 // that GetTicketParams should reuse for the lifetime of an open
 // session.
 type TicketSessionKey struct {
-	Sender     []byte
-	Recipient  []byte
-	Capability string
-	Offering   string
+	WholesaleAccountID string
+	TicketStreamID     string
+	Sender             []byte
+	Recipient          []byte
+	Capability         string
+	Offering           string
 }
 
 // Open creates or opens the BoltDB file at path and ensures buckets
@@ -319,6 +323,8 @@ func (s *Store) GetOrCreateTicketSession(key TicketSessionKey, seed Session) (se
 	seed.Recipient = append([]byte(nil), key.Recipient...)
 	seed.Capability = key.Capability
 	seed.Offering = key.Offering
+	seed.WholesaleAccountID = key.WholesaleAccountID
+	seed.TicketStreamID = key.TicketStreamID
 	seed.OpenedAt = time.Now().UTC()
 	if seed.BalanceWei == "" {
 		seed.BalanceWei = "0"
@@ -708,12 +714,17 @@ func (s *Store) CloseSession(sender []byte, workID string) (alreadyClosed bool, 
 			return err
 		}
 		if len(sess.Sender) > 0 && len(sess.Recipient) > 0 {
-			return tx.Bucket([]byte(ticketIdxBucket)).Delete(ticketSessionIndexKey(TicketSessionKey{
+			indexKey := ticketSessionIndexKey(TicketSessionKey{
+				WholesaleAccountID: sess.WholesaleAccountID, TicketStreamID: sess.TicketStreamID,
 				Sender:     sess.Sender,
 				Recipient:  sess.Recipient,
 				Capability: sess.Capability,
 				Offering:   sess.Offering,
-			}))
+			})
+			idx := tx.Bucket([]byte(ticketIdxBucket))
+			if string(idx.Get(indexKey)) == sess.WorkID {
+				return idx.Delete(indexKey)
+			}
 		}
 		return nil
 	})
@@ -833,6 +844,13 @@ func compositeKey(sender []byte, workID string) []byte {
 }
 
 func ticketSessionIndexKey(key TicketSessionKey) []byte {
+	if key.WholesaleAccountID != "" || key.TicketStreamID != "" {
+		// Version prefix is disjoint from legacy keys (which begin with 20).
+		// JSON preserves tuple boundaries even for arbitrary route strings.
+		encoded, _ := json.Marshal(key)
+		return append([]byte{0}, encoded...)
+	}
+
 	out := make([]byte, 0, len(key.Sender)+len(key.Recipient)+len(key.Capability)+len(key.Offering)+4)
 	out = append(out, byte(len(key.Sender)))
 	out = append(out, key.Sender...)
@@ -843,6 +861,7 @@ func ticketSessionIndexKey(key TicketSessionKey) []byte {
 	out = append(out, []byte(key.Capability)...)
 	out = append(out, ':')
 	out = append(out, []byte(key.Offering)...)
+
 	return out
 }
 

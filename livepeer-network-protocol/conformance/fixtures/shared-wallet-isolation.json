@@ -1,0 +1,10 @@
+{
+  "description": "Independent payer databases sharing a wallet must isolate nonce streams and application accounts; exact funding receipt replay is immutable.",
+  "isolation_version": 1,
+  "spend_authorization_domain": "livepeer-spend-authorization/v3",
+  "accounts": ["loc-prod", "blueclaw-prod", "loc-dev", "blueclaw-dev"],
+  "funding_header": "Livepeer-Wholesale-Account-Id",
+  "funding_id": "lowercase SHA-256 hex of exact payment bytes, without 0x",
+  "executable_fixture": "payment-daemon/internal/service/sender/isolation_e2e_test.go",
+  "required_outcomes": ["distinct first-nonce-one generations", "concurrent same-account credit", "cross-account funding rejection", "cross-account debit rejection", "immutable replay after later funding and debit", "alternate envelope cannot replay consumed nonce", "inline and standalone credit once", "missing account rejects"]
+}

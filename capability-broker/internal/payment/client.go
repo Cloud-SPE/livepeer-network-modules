@@ -44,21 +44,25 @@ type Client interface {
 // lets the broker detect an old daemon and fail closed rather than treating a
 // funding ticket as workload authority.
 type AccountClient interface {
-	FundWholesaleAccount(ctx context.Context, paymentBytes []byte) (*FundWholesaleAccountResult, error)
+	FundWholesaleAccount(ctx context.Context, paymentBytes []byte, wholesaleAccountID string) (*FundWholesaleAccountResult, error)
 	AdmitAuthorization(ctx context.Context, req AdmitAuthorizationRequest) (*AdmitAuthorizationResult, error)
 	AdvanceAuthorization(ctx context.Context, req AdvanceAuthorizationRequest) (*AdvanceAuthorizationResult, error)
 	SettleAuthorization(ctx context.Context, req SettleAuthorizationRequest) (*SettleAuthorizationResult, error)
-	GetWholesaleAccount(ctx context.Context, payer []byte) (*WholesaleAccount, error)
-	GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string) (*SpendAuthorizationStatus, error)
+	GetWholesaleAccount(ctx context.Context, payer []byte, wholesaleAccountID string) (*WholesaleAccount, error)
+	GetSpendAuthorization(ctx context.Context, payer []byte, authorizationID string, wholesaleAccountID string) (*SpendAuthorizationStatus, error)
 }
 
 type FundWholesaleAccountResult struct {
-	Account  *WholesaleAccount
-	Credited *big.Int
-	Replayed bool
+	FundingID string
+	Account   *WholesaleAccount
+	Credited  *big.Int
+	Replayed  bool
 }
 
 type SpendAuthorizationStatus struct {
+	SettlementDomainID         string
+	Payee                      []byte
+	WholesaleAccountID         string
 	State                      int32
 	Reserved, Billed, Released *big.Int
 	ActualUnits, SettlementSeq uint64
@@ -72,12 +76,13 @@ type AdmitAuthorizationRequest struct {
 }
 
 type AdvanceAuthorizationRequest struct {
-	Payer           []byte
-	AuthorizationID string
-	CumulativeUnits uint64
-	TargetReserved  *big.Int
-	AdvanceSeq      uint64
-	PaymentBytes    []byte
+	WholesaleAccountID string
+	Payer              []byte
+	AuthorizationID    string
+	CumulativeUnits    uint64
+	TargetReserved     *big.Int
+	AdvanceSeq         uint64
+	PaymentBytes       []byte
 }
 
 type AdvanceAuthorizationResult struct {
@@ -91,6 +96,7 @@ type AdvanceAuthorizationResult struct {
 }
 
 type WholesaleAccount struct {
+	WholesaleAccountID                     string
 	SettlementDomainID                     string
 	Payer, Payee                           []byte
 	Credited, Reserved, Debited, Available *big.Int
@@ -109,10 +115,11 @@ type AdmitAuthorizationResult struct {
 }
 
 type SettleAuthorizationRequest struct {
-	Payer           []byte
-	AuthorizationID string
-	ActualUnits     uint64
-	SettlementSeq   uint64
+	WholesaleAccountID string
+	Payer              []byte
+	AuthorizationID    string
+	ActualUnits        uint64
+	SettlementSeq      uint64
 }
 
 type SettleAuthorizationResult struct {
@@ -156,15 +163,20 @@ type OpenSessionRequest struct {
 // GetTicketParamsRequest mirrors the payee-daemon quote-free request
 // without exposing generated proto types to the broker's HTTP layer.
 type GetTicketParamsRequest struct {
-	Sender     []byte
-	Recipient  []byte
-	FaceValue  *big.Int
-	Capability string
-	Offering   string
+	TicketStreamID     string
+	WholesaleAccountID string
+	Sender             []byte
+	Recipient          []byte
+	FaceValue          *big.Int
+	Capability         string
+	Offering           string
 }
 
 // TicketParams is the broker-local shape of payee-issued ticket params.
 type TicketParams struct {
+	IsolationVersion   uint32
+	TicketStreamID     string
+	WholesaleAccountID string
 	SettlementDomainID string
 	Recipient          []byte
 	FaceValue          *big.Int

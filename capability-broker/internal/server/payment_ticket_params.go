@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/identity"
 	"io"
 	"math/big"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 const maxTicketParamsBodyBytes = 8 << 10
 
 type ticketParamsRequestJSON struct {
+	WholesaleAccountID  string `json:"wholesale_account_id"`
+	TicketStreamID      string `json:"ticket_stream_id"`
 	SenderETHAddress    string `json:"sender_eth_address"`
 	RecipientETHAddress string `json:"recipient_eth_address"`
 	// Historical JSON name; semantically this is target expected value. The
@@ -25,6 +28,9 @@ type ticketParamsRequestJSON struct {
 }
 
 type ticketParamsResponseJSON struct {
+	WholesaleAccountID string           `json:"wholesale_account_id"`
+	TicketStreamID     string           `json:"ticket_stream_id"`
+	IsolationVersion   uint32           `json:"isolation_version"`
 	SettlementDomainID string           `json:"settlement_domain_id"`
 	TicketParams       ticketParamsJSON `json:"ticket_params"`
 	// Relayed verbatim from the payee. A payer that lost its durable
@@ -77,12 +83,16 @@ func ticketParamsHandler(client payment.Client) http.HandlerFunc {
 			return
 		}
 
+		if params == nil || params.WholesaleAccountID != req.WholesaleAccountID || params.TicketStreamID != req.TicketStreamID || params.IsolationVersion != 1 {
+			http.Error(w, "receiver isolation identity mismatch", http.StatusBadGateway)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(ticketParamsResponseJSON{
-			SettlementDomainID: params.SettlementDomainID,
-			TicketParams:       renderTicketParamsJSON(params),
-			HighestSeenNonce:   params.HighestSeenNonce,
-			HasSeenNonces:      params.HasSeenNonces,
+			SettlementDomainID: params.SettlementDomainID, WholesaleAccountID: params.WholesaleAccountID, TicketStreamID: params.TicketStreamID, IsolationVersion: params.IsolationVersion,
+			TicketParams:     renderTicketParamsJSON(params),
+			HighestSeenNonce: params.HighestSeenNonce,
+			HasSeenNonces:    params.HasSeenNonces,
 		})
 	}
 }
@@ -99,6 +109,9 @@ func ensureSingleJSONDocument(dec *json.Decoder) error {
 }
 
 func parseTicketParamsRequest(in ticketParamsRequestJSON) (payment.GetTicketParamsRequest, error) {
+	if !identity.ValidWholesaleAccountID(in.WholesaleAccountID) || !identity.ValidWholesaleAccountID(in.TicketStreamID) {
+		return payment.GetTicketParamsRequest{}, fmt.Errorf("valid wholesale_account_id and ticket_stream_id are required")
+	}
 	sender, err := parseHexAddress("sender_eth_address", in.SenderETHAddress)
 	if err != nil {
 		return payment.GetTicketParamsRequest{}, err
@@ -121,7 +134,7 @@ func parseTicketParamsRequest(in ticketParamsRequestJSON) (payment.GetTicketPara
 		return payment.GetTicketParamsRequest{}, fmt.Errorf("offering is required")
 	}
 	return payment.GetTicketParamsRequest{
-		Sender:     sender,
+		WholesaleAccountID: in.WholesaleAccountID, TicketStreamID: in.TicketStreamID, Sender: sender,
 		Recipient:  recipient,
 		FaceValue:  faceValue,
 		Capability: strings.TrimSpace(in.Capability),

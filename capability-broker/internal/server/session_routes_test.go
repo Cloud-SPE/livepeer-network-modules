@@ -198,7 +198,7 @@ func sessionAttachDoc(token, hostID string) []byte {
 			"metering":           "runner-reported",
 			"work_unit":          map[string]any{"name": "participant_minutes"},
 			"paths": map[string]any{
-				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}",
+				"create": "/sessions", "status": "/sessions/{id}", "terminate": "/sessions/{id}", "reconcile": "/reconcile",
 			},
 			"readiness":       map[string]any{"type": "http-status", "path": "/ready"},
 			"identity":        map[string]any{},
@@ -239,8 +239,8 @@ func setSessionTestAuthorization(t *testing.T, req *http.Request, gatewaySession
 	if predecessor != "" {
 		revision = 1
 	}
-	payload := &paymentsv1.SpendAuthorizationPayload{SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		Domain: "livepeer-spend-authorization/v2", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
+	payload := &paymentsv1.SpendAuthorizationPayload{WholesaleAccountId: "test-account", SettlementDomainId: "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Domain: "livepeer-spend-authorization/v3", Payer: bytes.Repeat([]byte{1}, 20), Payee: bytes.Repeat([]byte{2}, 20),
 		ChainId: 42161, Denomination: "wei", AuthorizationId: "auth-" + requestID, Revision: revision, PredecessorAuthorizationId: predecessor,
 		RequestId: requestID, SessionId: gatewaySessionID, Protocol: "paid-session/v1", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), BrokerUri: "https://broker.example.com",
 		AcceptedPrice: &paymentsv1.AcceptedPrice{PricePerUnitWei: &paymentsv1.BigUInt{Value: big.NewInt(10).Bytes()}, UnitsPerPrice: 1, WorkUnitName: "participant_minutes", Capability: req.Header.Get(livepeerheader.Capability), Offering: req.Header.Get(livepeerheader.Offering), QuoteRef: &paymentsv1.QuoteRef{QuoteId: "quote-test", QuoteVersion: 1}},

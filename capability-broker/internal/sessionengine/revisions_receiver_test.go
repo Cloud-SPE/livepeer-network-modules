@@ -31,6 +31,9 @@ import (
 const revisionTestKey = "0101010101010101010101010101010101010101010101010101010101010101"
 
 func realRevisionWire(t *testing.T, h *harness, id, predecessor string, units uint64, expired bool, revision ...uint64) []byte {
+	return realRevisionWireForAccount(t, h, "test-account", id, predecessor, units, expired, revision...)
+}
+func realRevisionWireForAccount(t *testing.T, h *harness, accountID, id, predecessor string, units uint64, expired bool, revision ...uint64) []byte {
 	t.Helper()
 	key, _ := crypto.HexToECDSA(revisionTestKey)
 	now := time.Now()
@@ -43,7 +46,7 @@ func realRevisionWire(t *testing.T, h *harness, id, predecessor string, units ui
 	if per == 0 {
 		per = 1
 	}
-	p := &pb.SpendAuthorizationPayload{Domain: "livepeer-spend-authorization/v2", SettlementDomainId: payment.MockSettlementDomainID,
+	p := &pb.SpendAuthorizationPayload{Domain: "livepeer-spend-authorization/v3", WholesaleAccountId: accountID, SettlementDomainId: payment.MockSettlementDomainID,
 		Payer: crypto.PubkeyToAddress(key.PublicKey).Bytes(), Payee: bytes.Repeat([]byte{0xaa}, 20), AuthorizationId: id, RequestId: id, SessionId: "gws-1", BrokerUri: "https://broker.example.com", Protocol: "paid-session/v1", Capability: h.spec.Capability, Offering: h.spec.Offering, ChainId: 42161, Denomination: "wei",
 		AcceptedPrice: &pb.AcceptedPrice{Capability: h.spec.Capability, Offering: h.spec.Offering, PricePerUnitWei: &pb.BigUInt{Value: price.Bytes()}, UnitsPerPrice: per, WorkUnitName: h.spec.WorkUnit}, MaxTotalUnits: units, MaxDebitWei: &pb.BigUInt{Value: payment.BillFor(price, per, units).Bytes()}, RequestDigest: make([]byte, 32), NotBefore: now.Add(-time.Hour).Format(time.RFC3339Nano), ExpiresAt: end.Format(time.RFC3339Nano)}
 	if predecessor != "" {
@@ -257,7 +260,7 @@ func TestRevisionRealReceiver(t *testing.T) {
 			if err != nil || !rec.Terminal() || !rec.PaymentClosed || rec.CloseReason != ReasonHeartbeatLost {
 				t.Fatalf("winddown state=%s closed=%v reason=%s err=%v", rec.State, rec.PaymentClosed, rec.CloseReason, err)
 			}
-			account, err := client.GetWholesaleAccount(ctx, rec.Sender)
+			account, err := client.GetWholesaleAccount(ctx, rec.Sender, "test-account")
 			if err != nil || account.Debited.String() != "74000000000000" || account.Reserved.Sign() != 0 {
 				t.Fatalf("final account=%+v err=%v", account, err)
 			}

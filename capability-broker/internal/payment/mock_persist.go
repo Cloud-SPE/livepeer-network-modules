@@ -51,6 +51,7 @@ type persistedState struct {
 }
 
 type persistedAccount struct {
+	WholesaleAccountID                     string
 	SettlementDomainID                     string
 	Payer, Payee                           []byte
 	Credited, Reserved, Debited, Available string
@@ -131,7 +132,7 @@ func (m *Mock) loadLocked() error {
 		if pa.SettlementDomainID == "" {
 			pa.SettlementDomainID = MockSettlementDomainID
 		}
-		m.wholesaleAccounts[k] = &WholesaleAccount{SettlementDomainID: pa.SettlementDomainID, Payer: pa.Payer, Payee: pa.Payee, Credited: decimal(pa.Credited), Reserved: decimal(pa.Reserved), Debited: decimal(pa.Debited), Available: decimal(pa.Available), Version: pa.Version, ObservedAt: pa.ObservedAt, ChainID: pa.ChainID, Denomination: pa.Denomination}
+		m.wholesaleAccounts[k] = &WholesaleAccount{WholesaleAccountID: pa.WholesaleAccountID, SettlementDomainID: pa.SettlementDomainID, Payer: pa.Payer, Payee: pa.Payee, Credited: decimal(pa.Credited), Reserved: decimal(pa.Reserved), Debited: decimal(pa.Debited), Available: decimal(pa.Available), Version: pa.Version, ObservedAt: pa.ObservedAt, ChainID: pa.ChainID, Denomination: pa.Denomination}
 	}
 	if st.CanceledAdmissions != nil {
 		m.canceledAdmissions = st.CanceledAdmissions
@@ -180,7 +181,7 @@ func (m *Mock) flushLocked() {
 		st.Debits[k] = v
 	}
 	for k, a := range m.wholesaleAccounts {
-		st.Accounts[k] = persistedAccount{SettlementDomainID: a.SettlementDomainID, Payer: a.Payer, Payee: a.Payee, Credited: a.Credited.String(), Reserved: a.Reserved.String(), Debited: a.Debited.String(), Available: a.Available.String(), Version: a.Version, ObservedAt: a.ObservedAt, ChainID: a.ChainID, Denomination: a.Denomination}
+		st.Accounts[k] = persistedAccount{WholesaleAccountID: a.WholesaleAccountID, SettlementDomainID: a.SettlementDomainID, Payer: a.Payer, Payee: a.Payee, Credited: a.Credited.String(), Reserved: a.Reserved.String(), Debited: a.Debited.String(), Available: a.Available.String(), Version: a.Version, ObservedAt: a.ObservedAt, ChainID: a.ChainID, Denomination: a.Denomination}
 	}
 	for k, a := range m.accountAuthorizations {
 		payload, err := proto.Marshal(a.payload)

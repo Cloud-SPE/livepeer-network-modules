@@ -23,18 +23,24 @@ func TestFrozenReceiverRejectsEveryNewFinancialIntake(t *testing.T) {
 	for name, call := range map[string]func() error{
 		"admit": func() error { _, err := client.AdmitAuthorization(ctx, &pb.AdmitAuthorizationRequest{}); return err },
 		"advance": func() error {
-			_, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{})
+			_, err := client.AdvanceAuthorization(ctx, &pb.AdvanceAuthorizationRequest{WholesaleAccountId: "test-account"})
 			return err
 		},
 		"fund": func() error {
-			_, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{})
+			_, err := client.FundWholesaleAccount(ctx, &pb.FundWholesaleAccountRequest{WholesaleAccountId: "test-account"})
 			return err
 		},
-		"open":          func() error { _, err := client.OpenSession(ctx, &pb.OpenSessionRequest{}); return err },
-		"payment":       func() error { _, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{}); return err },
-		"ticket-params": func() error { _, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{}); return err },
-		"debit":         func() error { _, err := client.DebitBalance(ctx, &pb.DebitBalanceRequest{}); return err },
-		"close":         func() error { _, err := client.CloseSession(ctx, &pb.CloseSessionRequest{}); return err },
+		"open": func() error { _, err := client.OpenSession(ctx, &pb.OpenSessionRequest{}); return err },
+		"payment": func() error {
+			_, err := client.ProcessPayment(ctx, &pb.ProcessPaymentRequest{})
+			return err
+		},
+		"ticket-params": func() error {
+			_, err := client.GetTicketParams(ctx, &pb.GetTicketParamsRequest{WholesaleAccountId: "test-account", TicketStreamId: "test-stream"})
+			return err
+		},
+		"debit": func() error { _, err := client.DebitBalance(ctx, &pb.DebitBalanceRequest{}); return err },
+		"close": func() error { _, err := client.CloseSession(ctx, &pb.CloseSessionRequest{}); return err },
 	} {
 		if err := call(); status.Code(err) != codes.FailedPrecondition {
 			t.Fatalf("%s admitted after freeze: %v", name, err)
@@ -51,7 +57,7 @@ func TestUnexecutedRecoveryRPCFencesLateAdmissions(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 	domain := "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	request := &pb.CloseUnexecutedAuthorizationRequest{SettlementDomainId: domain, Payer: bytes20(1), AuthorizationId: "lost-admission", Reason: "broker durable no-binding evidence"}
+	request := &pb.CloseUnexecutedAuthorizationRequest{WholesaleAccountId: "test-account", SettlementDomainId: domain, Payer: bytes20(1), AuthorizationId: "lost-admission", Reason: "broker durable no-binding evidence"}
 	for i := 0; i < 2; i++ {
 		result, err := client.CloseUnexecutedAuthorization(ctx, request)
 		if err != nil || !result.Fenced || result.SettlementDomainId != domain {

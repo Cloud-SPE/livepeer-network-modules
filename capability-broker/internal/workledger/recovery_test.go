@@ -16,7 +16,7 @@ type orphanReceiver struct {
 	fail  bool
 }
 
-func (r *orphanReceiver) CloseUnexecutedAuthorization(_ context.Context, _ []byte, id, reason string) error {
+func (r *orphanReceiver) CloseUnexecutedAuthorization(_ context.Context, _ []byte, id, reason string, wholesaleAccountID string) error {
 	r.calls = append(r.calls, id)
 	if r.fail {
 		return fmt.Errorf("recovery unavailable")
@@ -29,7 +29,7 @@ func (r *orphanReceiver) CloseUnexecutedAuthorization(_ context.Context, _ []byt
 func TestRestartRecoveryOnlyFencesUnboundAdmissions(t *testing.T) {
 	s, path := testStore(t)
 	for _, id := range []string{"unbound", "bound"} {
-		raw, _ := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{AuthorizationId: id, SettlementDomainId: "source", Payer: make([]byte, 20)}})
+		raw, _ := proto.Marshal(&pb.SpendAuthorization{Payload: &pb.SpendAuthorizationPayload{WholesaleAccountId: "test-account", AuthorizationId: id, SettlementDomainId: "source", Payer: make([]byte, 20)}})
 		if err := s.SaveAuthorization(id, raw); err != nil {
 			t.Fatal(err)
 		}

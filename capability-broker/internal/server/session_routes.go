@@ -86,6 +86,7 @@ func specFromCapability(c *config.Capability) *sessionengine.OfferingSpec {
 		Metering:            c.Session.AdvertisedMetering(),
 		RunnerPaths: sessionengine.RunnerPaths{
 			Create:    c.Session.Runner.CreatePath,
+			Reconcile: c.Session.Runner.ReconcilePath,
 			Status:    c.Session.Runner.StatusPath,
 			Terminate: c.Session.Runner.TerminatePath,
 		},
@@ -120,6 +121,7 @@ func (s *Server) runnerClientFor(backendRef string) sessionengine.RunnerClient {
 		BaseURL: c.Backend.URL,
 		Paths: sessionengine.RunnerPaths{
 			Create:    c.Session.Runner.CreatePath,
+			Reconcile: c.Session.Runner.ReconcilePath,
 			Status:    c.Session.Runner.StatusPath,
 			Terminate: c.Session.Runner.TerminatePath,
 		},
@@ -175,6 +177,14 @@ func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 		if rec, getErr := s.sessionStore.Get(existingID); getErr == nil && rec.Capability == capID && rec.Offering == offID {
 			if pinnedCap, pinnedOff, pair, pinned := splitSessionBackendRef(rec.BackendRef); pinned {
 				c = s.pinnedSessionCapability(pinnedCap, pinnedOff, pair)
+			}
+		}
+	}
+	if c == nil {
+		if pending, err := s.sessionStore.Reservation(r.Header.Get(livepeerheader.RequestID)); err == nil {
+			pc, po, pair, pinned := splitSessionBackendRef(pending.BackendRef)
+			if pinned && pc == capID && po == offID {
+				c = s.pinnedSessionCapability(pc, po, pair)
 			}
 		}
 	}
@@ -345,10 +355,10 @@ func validateSessionAuthorization(wire []byte, callerProof string, raw []byte, b
 	}
 	p := auth.GetPayload()
 	price := p.GetAcceptedPrice()
-	if p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetAuthorizationId() == "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != body.GatewaySessionID || p.GetCapability() != capability || p.GetOffering() != offering {
+	if p.GetDomain() != "livepeer-spend-authorization/v3" || p.GetAuthorizationId() == "" || p.GetRevision() != 0 || p.GetPredecessorAuthorizationId() != "" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != requestID || p.GetSessionId() != body.GatewaySessionID || p.GetCapability() != capability || p.GetOffering() != offering {
 		return nil, errors.New("authorization identity or route does not match this session")
 	}
-	if !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
+	if !identity.ValidWholesaleAccountID(p.GetWholesaleAccountId()) || !identity.ValidDomain(p.GetSettlementDomainId()) || p.GetChainId() == 0 || p.GetDenomination() != "wei" {
 		return nil, errors.New("authorization chain or denomination is invalid")
 	}
 	if brokerURI == "" || !identity.SameBrokerURI(p.GetBrokerUri(), brokerURI) {
@@ -502,7 +512,7 @@ func (s *Server) handleSessionTopUp(w http.ResponseWriter, r *http.Request) {
 	}
 	p := auth.GetPayload()
 	spec := s.specForRecord(rec)
-	if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v2" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
+	if spec == nil || p.GetDomain() != "livepeer-spend-authorization/v3" || p.GetChainId() == 0 || p.GetDenomination() != "wei" || p.GetProtocol() != sessionProtocol || p.GetRequestId() != r.Header.Get(livepeerheader.RequestID) || p.GetSessionId() != rec.GatewaySessionID || p.GetCapability() != rec.Capability || p.GetOffering() != rec.Offering || strings.TrimRight(p.GetBrokerUri(), "/") != strings.TrimRight(s.cfg.ExternalBaseURL, "/") {
 		livepeerheader.WriteError(w, http.StatusUnauthorized, livepeerheader.ErrPaymentEnvelopeMismatch, "authorization revision scope does not match session")
 		return
 	}
@@ -877,7 +887,7 @@ func (s *Server) balanceObject(r *http.Request, rec *sessionstore.Record, spec *
 	}
 	status := "ok"
 	if ac, ok := s.payment.(payment.AccountClient); ok {
-		if account, err := ac.GetWholesaleAccount(r.Context(), rec.Sender); err == nil && account != nil {
+		if account, err := ac.GetWholesaleAccount(r.Context(), rec.Sender, rec.WholesaleAccountID); err == nil && account != nil {
 			obj["account_available_value_wei"] = account.Available.String()
 			obj["account_version"] = account.Version
 		}

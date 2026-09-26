@@ -57,7 +57,7 @@ func TestRealReceiverMultipleRefillsAndResponseReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec, _ := h.store.Get(id)
-	account, err := client.GetWholesaleAccount(ctx, rec.Sender)
+	account, err := client.GetWholesaleAccount(ctx, rec.Sender, "test-account")
 	if err != nil || account.Debited.Cmp(big.NewInt(3100)) != 0 || account.Reserved.Sign() != 0 {
 		t.Fatalf("account: %+v %v", account, err)
 	}
@@ -105,7 +105,7 @@ func TestRealRefusedRevisionExhaustionFreezesTerminalEvidence(t *testing.T) {
 	restartRevisionHarness(t, h)
 	restart()
 	before, _ := h.store.Get(id)
-	fenced, err := client.GetSpendAuthorization(ctx, before.Sender, "refused")
+	fenced, err := client.GetSpendAuthorization(ctx, before.Sender, "refused", "test-account")
 	if err != nil || fenced.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_CANCELED_UNUSED) {
 		t.Fatal("successor fence did not survive restart", err)
 	}
@@ -116,12 +116,12 @@ func TestRealRefusedRevisionExhaustionFreezesTerminalEvidence(t *testing.T) {
 	if !rec.Terminal() || !rec.PaymentClosed || !rec.RunnerTerminated || rec.AccountAuthorizationID != "initial" {
 		t.Fatal("incorrect terminal authority")
 	}
-	state, err := client.GetSpendAuthorization(ctx, rec.Sender, "initial")
+	state, err := client.GetSpendAuthorization(ctx, rec.Sender, "initial", "test-account")
 	if err != nil || state.SettlementSeq != 15 {
 		t.Fatal("receiver sequence mismatch", err)
 	}
 	first, err := h.engine.RecordSettlement(ctx, id)
-	if err != nil || first.GetSettlementSeq() != 1 || first.GetClaimedUnits() != 124 || first.GetDebitedUnits() != 120 || first.GetActualUnits() != 120 || first.GetBreakdown()["claim_debit_gap_reason"] != "authorization_cap" {
+	if err != nil || first.GetWholesaleAccountId() != "test-account" || first.GetSettlementSeq() != 1 || first.GetClaimedUnits() != 124 || first.GetDebitedUnits() != 120 || first.GetActualUnits() != 120 || first.GetBreakdown()["claim_debit_gap_reason"] != "authorization_cap" {
 		t.Fatalf("terminal: %+v %v", first, err)
 	}
 	for i := 0; i < 3; i++ {

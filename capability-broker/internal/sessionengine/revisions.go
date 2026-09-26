@@ -79,7 +79,7 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 		return nil, err
 	}
 	p := authorization.GetPayload()
-	if p == nil || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID {
+	if p == nil || p.GetWholesaleAccountId() != rec.WholesaleAccountID || p.GetSettlementDomainId() != rec.SettlementDomainID || p.GetPredecessorAuthorizationId() != rec.AccountAuthorizationID {
 		return nil, fmt.Errorf("persisted revision authority mismatch")
 	}
 	reservation, ok := new(big.Int).SetString(intent.ReservationWei, 10)
@@ -98,7 +98,7 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 	if rec.Closing() {
 		return e.requestRevisionCancellation(ctx, rec, p, "SESSION_CLOSING", "lifecycle", "")
 	}
-	predecessor, err := account.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID)
+	predecessor, err := account.GetSpendAuthorization(ctx, rec.Sender, rec.AccountAuthorizationID, rec.WholesaleAccountID)
 	if err != nil {
 		return nil, receiverRevisionFailure("predecessor_lookup", err)
 	}
@@ -149,7 +149,7 @@ func (e *Engine) resolveRevisionLocked(ctx context.Context, rec *sessionstore.Re
 	if admitted == nil || admitted.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil {
 		return nil, fmt.Errorf("receiver did not confirm revision admission")
 	}
-	usage, err := account.GetSpendAuthorization(ctx, rec.Sender, p.GetAuthorizationId())
+	usage, err := account.GetSpendAuthorization(ctx, rec.Sender, p.GetAuthorizationId(), rec.WholesaleAccountID)
 	if err != nil {
 		return nil, err
 	}
@@ -215,7 +215,7 @@ func (e *Engine) cancelRevisionLocked(ctx context.Context, rec *sessionstore.Rec
 }
 
 func (e *Engine) commitRevisionLocked(rec *sessionstore.Record, p *pb.SpendAuthorizationPayload, usage *payment.SpendAuthorizationStatus, account *payment.WholesaleAccount, credited *big.Int) (*TopUpResult, error) {
-	if account == nil || usage == nil || (usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) && usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
+	if account == nil || account.WholesaleAccountID != rec.WholesaleAccountID || account.SettlementDomainID != rec.SettlementDomainID || !bytesEqual(account.Payer, rec.Sender) || usage == nil || (usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) && usage.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED)) {
 		return nil, fmt.Errorf("receiver revision authority unresolved")
 	}
 	if err := e.prepareRevisionEvidence(rec, true, ""); err != nil {

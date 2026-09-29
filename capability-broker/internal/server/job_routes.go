@@ -119,6 +119,7 @@ func negotiateTransport(r *http.Request) string {
 // broker has a configured state store; in-process otherwise (logged —
 // spec conformance requires the durable form).
 type jobIdemStore interface {
+	UpdateJob(string, func(*sessionstore.JobRecord) error) error
 	FinishPaymentRejected(id string, status int, digest, authorization []byte) error
 	Begin(requestID string, fingerprint []byte, jobID string, deadline time.Time) (*sessionstore.JobRecord, bool, error)
 	Finish(requestID string, status int, workUnits uint64, unit string, bodyDigest []byte, settlement string) error
@@ -397,9 +398,18 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		if !created {
 			switch {
 			case rec.State == sessionstore.JobPaymentRejected:
+				if rec.Status == 503 && rec.Recovery == nil {
+					w.Header().Set(livepeerheader.Backoff, "5")
+					livepeerheader.WriteError(w, 503, livepeerheader.ErrCapacityExhausted, "original request refused before admission")
+					return
+				}
 				// Never retry the admission under this request identity. A
 				// signed non-admission may have permanently fenced it already.
-				livepeerheader.WriteError(w, rec.Status, livepeerheader.ErrInsufficientBalance, "original payment admission was rejected; reconcile this request before retrying work")
+				errorCode := livepeerheader.ErrPaymentInvalid
+				if rec.Status == http.StatusPaymentRequired {
+					errorCode = livepeerheader.ErrInsufficientBalance
+				}
+				livepeerheader.WriteError(w, rec.Status, errorCode, "original payment admission was rejected; reconcile this request before retrying work")
 				return
 			case rec.State == sessionstore.JobTerminal:
 				// The envelope matched; the body still has to. Draining
@@ -431,6 +441,13 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 				fmt.Fprintf(w, `{"replayed":true,"job_id":%q}`, rec.JobID)
 				observability.RecordJobExchange(transport, "replayed")
 				return
+			case rec.Recovery != nil || rec.State == sessionstore.JobAccountingPending:
+				if _, active := s.activeJobs.Load(requestID); active {
+					livepeerheader.WriteError(w, http.StatusConflict, livepeerheader.ErrJobInFlight, "request id has an exchange in flight; retry after it completes")
+					return
+				}
+				livepeerheader.WriteError(w, http.StatusAccepted, livepeerheader.ErrAccountingPending, "job outcome pending reconciliation")
+				return
 			case time.Now().After(rec.Deadline):
 				// Crash leftover: converge on a failed terminal.
 				_ = s.jobIdem.Finish(requestID, http.StatusInternalServerError, 0, c.WorkUnit.Name, nil, "")
@@ -447,6 +464,8 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 			}
 		}
 
+		s.activeJobs.Store(requestID, true)
+		defer s.activeJobs.Delete(requestID)
 		w.Header().Set(livepeerheader.JobID, rec.JobID)
 		w.Header().Set(livepeerheader.WorkUnitName, c.WorkUnit.Name)
 		body := newHashingBody(r.Body)
@@ -457,6 +476,9 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 		// here, so the failure has to travel outward.
 		ctx, pendingSlot := middleware.WithPendingDebitSlot(r.Context())
 		ctx, admissionFailure := middleware.WithAdmissionFailure(ctx)
+		life := &jobLifecycle{server: s, id: requestID}
+		defer life.release()
+		ctx = middleware.WithJobLifecycle(ctx, life)
 		// And one for handleJob to say which runner it chose, so the
 		// outcome can be reported from here — the one place every
 		// transport's exchange is classified — rather than from each
@@ -479,6 +501,9 @@ func (s *Server) jobIdempotency(next http.Handler) http.Handler {
 			observability.RecordJobExchange(transport, "backend_error")
 		}
 		s.reportJobOutcome(dispatchSlot.Get(), jrec.status())
+		if life.prepared {
+			return
+		} // Lifecycle owns durable financial completion.
 		if len(admissionFailure.Authorization) > 0 {
 			if err := s.jobIdem.FinishPaymentRejected(requestID, jrec.status(), body.digest(), admissionFailure.Authorization); err != nil {
 				log.Printf("warning: rejected payment record failed request_id=%s: %v", requestID, err)
@@ -561,20 +586,12 @@ func (j *jobRecorder) units() uint64 {
 func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	capID := r.Header.Get(livepeerheader.Capability)
 	offID := r.Header.Get(livepeerheader.Offering)
-	group, ok := s.groupFor(capID, offID)
-	if !ok {
-		livepeerheader.WriteError(w, http.StatusNotFound, livepeerheader.ErrCapabilityNotServed,
-			"no backend group for "+capID+"/"+offID)
+	life, ok := middleware.JobLifecycleFrom(r.Context()).(*jobLifecycle)
+	if !ok || life.selected == nil {
+		livepeerheader.WriteError(w, 503, livepeerheader.ErrBackendUnavailable, "reserved backend missing")
 		return
 	}
-	c, release, err := s.reserveJobBackend(group)
-	if err != nil {
-		w.Header().Set(livepeerheader.Backoff, "5")
-		livepeerheader.WriteError(w, http.StatusServiceUnavailable, livepeerheader.ErrCapacityExhausted,
-			"backend selection: "+err.Error())
-		return
-	}
-	defer release()
+	c := life.selected
 	if s.workAccounting != nil {
 		meta, ok := middleware.SessionStateFromContext(r.Context()).ReceiptMeta()
 		if !ok {
@@ -617,6 +634,10 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 	// Forward returns when the runner's response HEADERS arrive, on
 	// every transport, so this is time to first byte for unary and
 	// stream alike — the one latency the pool is told about.
+	if err := life.Executing(); err != nil {
+		livepeerheader.WriteError(w, 503, livepeerheader.ErrAccountingPending, "record execution intent")
+		return
+	}
 	dispatch.DispatchedAt = time.Now()
 	resp, err := s.backend.Forward(r.Context(), backend.ForwardRequest{
 		URL:     c.Backend.URL,
@@ -625,6 +646,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 		Body:    bytes.NewReader(reqBody),
 	})
 	if err != nil {
+		life.Uncertain()
 		w.Header().Set(livepeerheader.WorkUnits, "0")
 		livepeerheader.WriteError(w, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable,
 			"backend forward: "+err.Error())
@@ -641,6 +663,7 @@ func (s *Server) handleJob(w http.ResponseWriter, r *http.Request) {
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxJobBodyBytes))
 	if err != nil {
+		life.Uncertain()
 		w.Header().Set(livepeerheader.WorkUnits, "0")
 		livepeerheader.WriteError(w, http.StatusBadGateway, livepeerheader.ErrBackendUnavailable,
 			"read backend body: "+err.Error())

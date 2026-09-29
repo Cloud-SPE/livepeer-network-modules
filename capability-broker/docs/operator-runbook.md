@@ -367,6 +367,41 @@ aggregate account.
 A settlement RPC left uncertain remains `accounting_pending` and retries
 idempotently rather than releasing value after delivered work.
 
+### Paid-job recovery
+
+The job store seals exact authorization/funding bytes and recovery accounting
+under `session_store.sealing_key_file`. Keep the database and its key together;
+production jobs require durable storage. New job records reserve runner capacity
+before calling the receiver. Full capacity returns 503 with backoff and has no
+financial side effect or waiting queue. A runner refusal after admission still
+settles confirmed zero use.
+
+Upgrade the receiver before the broker to enable read-only funding receipt
+recovery (`GetWholesaleFundingReceipt`). Older receivers continue serving normal
+jobs, but a lost admission with inline funding stays pending until that RPC is
+available. Missing receipts also stay pending; recovery never processes funding.
+
+On startup and every 30 seconds, the broker reconciles inactive admission intents
+with receiver fencing/status and retries persisted measured settlements. It never
+reruns the runner. Accepted but undispatched work can close at zero; a confirmed
+unused authorization remains refused. Signed terminal evidence is saved before
+publication and replayed unchanged with job settlement sequence 1.
+
+A crash after dispatch but before durable usage, including a failed usage write,
+leaves `GET /v1/exchange/{request_id}` at HTTP 202 with
+`ADMITTED_OUTCOME_UNKNOWN`. The runner protocol does not provide a generic durable
+job-result lookup. Preserve broker/runner logs, the database and receiver ledger
+for usage reconciliation; do not delete the intent, infer zero usage, reuse the
+request ID or release its financial reservation. Retention and request deadlines
+do not expire these unresolved records. Transport errors with uncertain execution
+follow the same rule. Once usage is durably recorded, ordinary receiver outages
+recover automatically as `ACCOUNTING_PENDING`.
+
+Existing records remain readable, but a pre-upgrade crash record without exact
+recovery inputs cannot acquire evidence retroactively. Drain old jobs before
+upgrading and retain unresolved records for reconciliation. The sealed job format
+also means downgrading with pending jobs is unsupported.
+
 ## 5. Metrics
 
 Registry surface metrics (`livepeer_broker_registry_*`) are unchanged.

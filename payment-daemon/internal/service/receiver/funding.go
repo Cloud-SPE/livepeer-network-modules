@@ -95,3 +95,30 @@ func (s *Service) fundWholesale(_ context.Context, req *pb.FundWholesaleAccountR
 	s.recordWholesaleTotals()
 	return response(receipt, replay), nil
 }
+
+// GetWholesaleFundingReceipt cannot mint credit, even if the original admission
+// was already accepted without this payment. It also works while new funding is
+// frozen, since reconciliation must not require reopening admission.
+func (s *Service) GetWholesaleFundingReceipt(_ context.Context, req *pb.GetWholesaleFundingReceiptRequest) (*pb.FundWholesaleAccountResponse, error) {
+	if !identity.ValidWholesaleAccountID(req.GetWholesaleAccountId()) || len(req.GetPayer()) != 20 {
+		return nil, status.Error(codes.InvalidArgument, "payer and wholesale_account_id are required")
+	}
+	if s.settlementDomainErr != nil || req.GetSettlementDomainId() == "" || req.GetSettlementDomainId() != s.settlementDomainID {
+		return nil, status.Error(codes.PermissionDenied, "settlement domain does not match receiver ledger")
+	}
+	digest, err := hex.DecodeString(req.GetFundingId())
+	if err != nil || len(digest) != sha256.Size || hex.EncodeToString(digest) != req.GetFundingId() {
+		return nil, status.Error(codes.InvalidArgument, "funding_id must be lowercase hex SHA-256")
+	}
+	receipt, err := s.store.GetFundingReceipt(req.GetPayer(), s.recipient, req.GetWholesaleAccountId(), req.GetFundingId())
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, status.Error(codes.NotFound, "funding receipt not found")
+	}
+	if errors.Is(err, store.ErrSenderMismatch) {
+		return nil, status.Error(codes.PermissionDenied, "funding receipt identity mismatch")
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, "funding receipt unavailable")
+	}
+	return &pb.FundWholesaleAccountResponse{FundingId: receipt.FundingID, Account: s.wholesaleAccountView(receipt.Account), CreditedValueWei: &pb.BigUInt{Value: decimalBytes(receipt.CreditedWei)}, Replayed: true}, nil
+}

@@ -50,6 +50,8 @@ type Options struct {
 // the admin surface, and a metrics listener (cfg.Listen.Metrics) for
 // Prometheus scraping.
 type Server struct {
+	activeJobs           sync.Map
+	jobRecoveryMu        sync.Mutex
 	ownershipMu          sync.Mutex
 	ownershipChecks      map[ownershipCacheKey]uint64
 	settlementSigner     *settlement.Signer

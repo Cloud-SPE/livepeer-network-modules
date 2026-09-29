@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/base64"
 	"io"
 	"net/http"
@@ -12,12 +13,14 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 )
 
 func TestJobTransportsHoldCapacityUntilCompletion(t *testing.T) {
 	for _, transport := range []string{"unary", "stream", "multipart"} {
 		t.Run(transport, func(t *testing.T) {
-			srv, s := newJobOfferBrokerBare(t, nil, "", func(c *config.Config) { c.Offers[0].Capacity.MaxInFlight = 1; c.Offers[0].Capacity.QueueLimit = 8 })
+			receiver := &countJobAdmissions{Mock: payment.NewMock()}
+			srv, s := newJobOfferBrokerBare(t, receiver, "", func(c *config.Config) { c.Offers[0].Capacity.MaxInFlight = 1; c.Offers[0].Capacity.QueueLimit = 8 })
 			var armed atomic.Bool
 			entered := make(chan struct{}, 1)
 			proceed := make(chan struct{})
@@ -77,6 +80,12 @@ func TestJobTransportsHoldCapacityUntilCompletion(t *testing.T) {
 			rejected.Body.Close()
 			if rejected.StatusCode != 503 || rejected.Header.Get(livepeerheader.Backoff) == "" {
 				t.Fatalf("full runner=%d headers=%v", rejected.StatusCode, rejected.Header)
+			}
+			if receiver.calls.Load() != 1 {
+				t.Fatal("capacity refusal reached payment admission")
+			}
+			if rejected.Header.Get(livepeerheader.Settlement) != "" {
+				t.Fatal("capacity refusal fabricated settlement")
 			}
 			unblock()
 			resp := <-done
@@ -158,4 +167,14 @@ func TestJobUsesOtherRunnerWhenSelectedSlotIsTaken(t *testing.T) {
 	if selected.Backend.ID == group.Backends[0].Backend.ID {
 		t.Fatal("dispatched to full runner")
 	}
+}
+
+type countJobAdmissions struct {
+	*payment.Mock
+	calls atomic.Int64
+}
+
+func (p *countJobAdmissions) AdmitAuthorization(ctx context.Context, r payment.AdmitAuthorizationRequest) (*payment.AdmitAuthorizationResult, error) {
+	p.calls.Add(1)
+	return p.Mock.AdmitAuthorization(ctx, r)
 }

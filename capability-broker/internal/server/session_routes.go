@@ -704,8 +704,8 @@ func (s *Server) writeJobSettlement(w http.ResponseWriter, job *sessionstore.Job
 		// Delivered, not yet settled. 202 with a distinct state because
 		// the remedy differs from a job still running: there is nothing
 		// left to wait for from the backend, only from the ledger, and
-		// the exchange WILL reach a terminal settlement — either signed
-		// after the debit lands, or DEBIT_FAILED once retries are spent.
+		// the exchange remains pending until authoritative settlement
+		// lands. Retry exhaustion never creates a financial write-off.
 		// A clearinghouse holds the encumbrance until then instead of
 		// booking or writing off.
 		body := map[string]any{

@@ -3215,6 +3215,76 @@ func (x *CloseUnexecutedAuthorizationResponse) GetFenced() bool {
 	return false
 }
 
+// funding_id is the lowercase hex SHA-256 of the exact original Payment bytes.
+// The payer, receiver settlement domain and account bind the receipt lookup.
+type GetWholesaleFundingReceiptRequest struct {
+	state              protoimpl.MessageState `protogen:"open.v1"`
+	Payer              []byte                 `protobuf:"bytes,1,opt,name=payer,proto3" json:"payer,omitempty"`
+	SettlementDomainId string                 `protobuf:"bytes,2,opt,name=settlement_domain_id,json=settlementDomainId,proto3" json:"settlement_domain_id,omitempty"`
+	WholesaleAccountId string                 `protobuf:"bytes,3,opt,name=wholesale_account_id,json=wholesaleAccountId,proto3" json:"wholesale_account_id,omitempty"`
+	FundingId          string                 `protobuf:"bytes,4,opt,name=funding_id,json=fundingId,proto3" json:"funding_id,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
+}
+
+func (x *GetWholesaleFundingReceiptRequest) Reset() {
+	*x = GetWholesaleFundingReceiptRequest{}
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[43]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetWholesaleFundingReceiptRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetWholesaleFundingReceiptRequest) ProtoMessage() {}
+
+func (x *GetWholesaleFundingReceiptRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_livepeer_payments_v1_payee_daemon_proto_msgTypes[43]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetWholesaleFundingReceiptRequest.ProtoReflect.Descriptor instead.
+func (*GetWholesaleFundingReceiptRequest) Descriptor() ([]byte, []int) {
+	return file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP(), []int{43}
+}
+
+func (x *GetWholesaleFundingReceiptRequest) GetPayer() []byte {
+	if x != nil {
+		return x.Payer
+	}
+	return nil
+}
+
+func (x *GetWholesaleFundingReceiptRequest) GetSettlementDomainId() string {
+	if x != nil {
+		return x.SettlementDomainId
+	}
+	return ""
+}
+
+func (x *GetWholesaleFundingReceiptRequest) GetWholesaleAccountId() string {
+	if x != nil {
+		return x.WholesaleAccountId
+	}
+	return ""
+}
+
+func (x *GetWholesaleFundingReceiptRequest) GetFundingId() string {
+	if x != nil {
+		return x.FundingId
+	}
+	return ""
+}
+
 var File_livepeer_payments_v1_payee_daemon_proto protoreflect.FileDescriptor
 
 const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
@@ -3464,14 +3534,21 @@ const file_livepeer_payments_v1_payee_daemon_proto_rawDesc = "" +
 	"$CloseUnexecutedAuthorizationResponse\x120\n" +
 	"\x14wholesale_account_id\x18\x03 \x01(\tR\x12wholesaleAccountId\x120\n" +
 	"\x14settlement_domain_id\x18\x01 \x01(\tR\x12settlementDomainId\x12\x16\n" +
-	"\x06fenced\x18\x02 \x01(\bR\x06fenced2\x98\x15\n" +
+	"\x06fenced\x18\x02 \x01(\bR\x06fenced\"\xbc\x01\n" +
+	"!GetWholesaleFundingReceiptRequest\x12\x14\n" +
+	"\x05payer\x18\x01 \x01(\fR\x05payer\x120\n" +
+	"\x14settlement_domain_id\x18\x02 \x01(\tR\x12settlementDomainId\x120\n" +
+	"\x14wholesale_account_id\x18\x03 \x01(\tR\x12wholesaleAccountId\x12\x1d\n" +
+	"\n" +
+	"funding_id\x18\x04 \x01(\tR\tfundingId2\xa4\x16\n" +
 	"\vPayeeDaemon\x12Y\n" +
 	"\bGetQuote\x12%.livepeer.payments.v1.GetQuoteRequest\x1a&.livepeer.payments.v1.GetQuoteResponse\x12n\n" +
 	"\x0fGetTicketParams\x12,.livepeer.payments.v1.GetTicketParamsRequest\x1a-.livepeer.payments.v1.GetTicketParamsResponse\x12q\n" +
 	"\x10ListCapabilities\x12-.livepeer.payments.v1.ListCapabilitiesRequest\x1a..livepeer.payments.v1.ListCapabilitiesResponse\x12b\n" +
 	"\vOpenSession\x12(.livepeer.payments.v1.OpenSessionRequest\x1a).livepeer.payments.v1.OpenSessionResponse\x12k\n" +
 	"\x0eProcessPayment\x12+.livepeer.payments.v1.ProcessPaymentRequest\x1a,.livepeer.payments.v1.ProcessPaymentResponse\x12}\n" +
-	"\x14FundWholesaleAccount\x121.livepeer.payments.v1.FundWholesaleAccountRequest\x1a2.livepeer.payments.v1.FundWholesaleAccountResponse\x12w\n" +
+	"\x14FundWholesaleAccount\x121.livepeer.payments.v1.FundWholesaleAccountRequest\x1a2.livepeer.payments.v1.FundWholesaleAccountResponse\x12\x89\x01\n" +
+	"\x1aGetWholesaleFundingReceipt\x127.livepeer.payments.v1.GetWholesaleFundingReceiptRequest\x1a2.livepeer.payments.v1.FundWholesaleAccountResponse\x12w\n" +
 	"\x12AdmitAuthorization\x12/.livepeer.payments.v1.AdmitAuthorizationRequest\x1a0.livepeer.payments.v1.AdmitAuthorizationResponse\x12}\n" +
 	"\x14AdvanceAuthorization\x121.livepeer.payments.v1.AdvanceAuthorizationRequest\x1a2.livepeer.payments.v1.AdvanceAuthorizationResponse\x12z\n" +
 	"\x13SettleAuthorization\x120.livepeer.payments.v1.SettleAuthorizationRequest\x1a1.livepeer.payments.v1.SettleAuthorizationResponse\x12z\n" +
@@ -3504,7 +3581,7 @@ func file_livepeer_payments_v1_payee_daemon_proto_rawDescGZIP() []byte {
 }
 
 var file_livepeer_payments_v1_payee_daemon_proto_enumTypes = make([]protoimpl.EnumInfo, 3)
-var file_livepeer_payments_v1_payee_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 43)
+var file_livepeer_payments_v1_payee_daemon_proto_msgTypes = make([]protoimpl.MessageInfo, 44)
 var file_livepeer_payments_v1_payee_daemon_proto_goTypes = []any{
 	(OpenSessionResponse_Outcome)(0),             // 0: livepeer.payments.v1.OpenSessionResponse.Outcome
 	(CloseSessionResponse_Outcome)(0),            // 1: livepeer.payments.v1.CloseSessionResponse.Outcome
@@ -3552,54 +3629,55 @@ var file_livepeer_payments_v1_payee_daemon_proto_goTypes = []any{
 	(*RevenueSourceStatus)(nil),                  // 43: livepeer.payments.v1.RevenueSourceStatus
 	(*CloseUnexecutedAuthorizationRequest)(nil),  // 44: livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
 	(*CloseUnexecutedAuthorizationResponse)(nil), // 45: livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
-	(*TicketParams)(nil),                         // 46: livepeer.payments.v1.TicketParams
-	(*OfferingPrice)(nil),                        // 47: livepeer.payments.v1.OfferingPrice
-	(*CapabilityEntry)(nil),                      // 48: livepeer.payments.v1.CapabilityEntry
-	(*WholesaleAccountView)(nil),                 // 49: livepeer.payments.v1.WholesaleAccountView
-	(*BigUInt)(nil),                              // 50: livepeer.payments.v1.BigUInt
-	(*TicketStatus)(nil),                         // 51: livepeer.payments.v1.TicketStatus
-	(PaymentRejectionReason)(0),                  // 52: livepeer.payments.v1.PaymentRejectionReason
-	(SpendAuthorizationState)(0),                 // 53: livepeer.payments.v1.SpendAuthorizationState
-	(*PendingRedemption)(nil),                    // 54: livepeer.payments.v1.PendingRedemption
-	(*HealthRequest)(nil),                        // 55: livepeer.payments.v1.HealthRequest
-	(*HealthResponse)(nil),                       // 56: livepeer.payments.v1.HealthResponse
+	(*GetWholesaleFundingReceiptRequest)(nil),    // 46: livepeer.payments.v1.GetWholesaleFundingReceiptRequest
+	(*TicketParams)(nil),                         // 47: livepeer.payments.v1.TicketParams
+	(*OfferingPrice)(nil),                        // 48: livepeer.payments.v1.OfferingPrice
+	(*CapabilityEntry)(nil),                      // 49: livepeer.payments.v1.CapabilityEntry
+	(*WholesaleAccountView)(nil),                 // 50: livepeer.payments.v1.WholesaleAccountView
+	(*BigUInt)(nil),                              // 51: livepeer.payments.v1.BigUInt
+	(*TicketStatus)(nil),                         // 52: livepeer.payments.v1.TicketStatus
+	(PaymentRejectionReason)(0),                  // 53: livepeer.payments.v1.PaymentRejectionReason
+	(SpendAuthorizationState)(0),                 // 54: livepeer.payments.v1.SpendAuthorizationState
+	(*PendingRedemption)(nil),                    // 55: livepeer.payments.v1.PendingRedemption
+	(*HealthRequest)(nil),                        // 56: livepeer.payments.v1.HealthRequest
+	(*HealthResponse)(nil),                       // 57: livepeer.payments.v1.HealthResponse
 }
 var file_livepeer_payments_v1_payee_daemon_proto_depIdxs = []int32{
-	46, // 0: livepeer.payments.v1.GetQuoteResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	47, // 1: livepeer.payments.v1.GetQuoteResponse.offering_prices:type_name -> livepeer.payments.v1.OfferingPrice
-	46, // 2: livepeer.payments.v1.GetTicketParamsResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
-	48, // 3: livepeer.payments.v1.ListCapabilitiesResponse.capabilities:type_name -> livepeer.payments.v1.CapabilityEntry
+	47, // 0: livepeer.payments.v1.GetQuoteResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	48, // 1: livepeer.payments.v1.GetQuoteResponse.offering_prices:type_name -> livepeer.payments.v1.OfferingPrice
+	47, // 2: livepeer.payments.v1.GetTicketParamsResponse.ticket_params:type_name -> livepeer.payments.v1.TicketParams
+	49, // 3: livepeer.payments.v1.ListCapabilitiesResponse.capabilities:type_name -> livepeer.payments.v1.CapabilityEntry
 	0,  // 4: livepeer.payments.v1.OpenSessionResponse.outcome:type_name -> livepeer.payments.v1.OpenSessionResponse.Outcome
-	49, // 5: livepeer.payments.v1.FundWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	50, // 6: livepeer.payments.v1.FundWholesaleAccountResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	51, // 7: livepeer.payments.v1.ProcessPaymentResponse.ticket_status:type_name -> livepeer.payments.v1.TicketStatus
-	52, // 8: livepeer.payments.v1.ProcessPaymentResponse.dominant_rejection:type_name -> livepeer.payments.v1.PaymentRejectionReason
-	50, // 9: livepeer.payments.v1.AdmitAuthorizationRequest.reservation_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 10: livepeer.payments.v1.AdvanceAuthorizationRequest.target_reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	53, // 11: livepeer.payments.v1.AdvanceAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	49, // 12: livepeer.payments.v1.AdvanceAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	50, // 13: livepeer.payments.v1.AdvanceAuthorizationResponse.billed_delta_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 14: livepeer.payments.v1.AdvanceAuthorizationResponse.cumulative_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 15: livepeer.payments.v1.AdvanceAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 16: livepeer.payments.v1.AdvanceAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	53, // 17: livepeer.payments.v1.AdmitAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	49, // 18: livepeer.payments.v1.AdmitAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	50, // 19: livepeer.payments.v1.AdmitAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 20: livepeer.payments.v1.AdmitAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	53, // 21: livepeer.payments.v1.SettleAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	49, // 22: livepeer.payments.v1.SettleAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	50, // 23: livepeer.payments.v1.SettleAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 24: livepeer.payments.v1.SettleAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	49, // 25: livepeer.payments.v1.GetWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	53, // 26: livepeer.payments.v1.GetSpendAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
-	50, // 27: livepeer.payments.v1.GetSpendAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 28: livepeer.payments.v1.GetSpendAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
-	50, // 29: livepeer.payments.v1.GetSpendAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 5: livepeer.payments.v1.FundWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	51, // 6: livepeer.payments.v1.FundWholesaleAccountResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	52, // 7: livepeer.payments.v1.ProcessPaymentResponse.ticket_status:type_name -> livepeer.payments.v1.TicketStatus
+	53, // 8: livepeer.payments.v1.ProcessPaymentResponse.dominant_rejection:type_name -> livepeer.payments.v1.PaymentRejectionReason
+	51, // 9: livepeer.payments.v1.AdmitAuthorizationRequest.reservation_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 10: livepeer.payments.v1.AdvanceAuthorizationRequest.target_reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	54, // 11: livepeer.payments.v1.AdvanceAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	50, // 12: livepeer.payments.v1.AdvanceAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	51, // 13: livepeer.payments.v1.AdvanceAuthorizationResponse.billed_delta_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 14: livepeer.payments.v1.AdvanceAuthorizationResponse.cumulative_billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 15: livepeer.payments.v1.AdvanceAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 16: livepeer.payments.v1.AdvanceAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	54, // 17: livepeer.payments.v1.AdmitAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	50, // 18: livepeer.payments.v1.AdmitAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	51, // 19: livepeer.payments.v1.AdmitAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 20: livepeer.payments.v1.AdmitAuthorizationResponse.credited_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	54, // 21: livepeer.payments.v1.SettleAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	50, // 22: livepeer.payments.v1.SettleAuthorizationResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	51, // 23: livepeer.payments.v1.SettleAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 24: livepeer.payments.v1.SettleAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 25: livepeer.payments.v1.GetWholesaleAccountResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	54, // 26: livepeer.payments.v1.GetSpendAuthorizationResponse.state:type_name -> livepeer.payments.v1.SpendAuthorizationState
+	51, // 27: livepeer.payments.v1.GetSpendAuthorizationResponse.reserved_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 28: livepeer.payments.v1.GetSpendAuthorizationResponse.billed_value_wei:type_name -> livepeer.payments.v1.BigUInt
+	51, // 29: livepeer.payments.v1.GetSpendAuthorizationResponse.released_value_wei:type_name -> livepeer.payments.v1.BigUInt
 	24, // 30: livepeer.payments.v1.CancelAuthorizationAdmissionResponse.authorization:type_name -> livepeer.payments.v1.GetSpendAuthorizationResponse
-	49, // 31: livepeer.payments.v1.CancelAuthorizationAdmissionResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
-	50, // 32: livepeer.payments.v1.DebitBalanceResponse.debited_wei:type_name -> livepeer.payments.v1.BigUInt
+	50, // 31: livepeer.payments.v1.CancelAuthorizationAdmissionResponse.account:type_name -> livepeer.payments.v1.WholesaleAccountView
+	51, // 32: livepeer.payments.v1.DebitBalanceResponse.debited_wei:type_name -> livepeer.payments.v1.BigUInt
 	1,  // 33: livepeer.payments.v1.CloseSessionResponse.outcome:type_name -> livepeer.payments.v1.CloseSessionResponse.Outcome
-	54, // 34: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
+	55, // 34: livepeer.payments.v1.ListPendingRedemptionsResponse.redemptions:type_name -> livepeer.payments.v1.PendingRedemption
 	2,  // 35: livepeer.payments.v1.GetRedemptionStatusResponse.status:type_name -> livepeer.payments.v1.GetRedemptionStatusResponse.Status
 	3,  // 36: livepeer.payments.v1.PayeeDaemon.GetQuote:input_type -> livepeer.payments.v1.GetQuoteRequest
 	5,  // 37: livepeer.payments.v1.PayeeDaemon.GetTicketParams:input_type -> livepeer.payments.v1.GetTicketParamsRequest
@@ -3607,48 +3685,50 @@ var file_livepeer_payments_v1_payee_daemon_proto_depIdxs = []int32{
 	9,  // 39: livepeer.payments.v1.PayeeDaemon.OpenSession:input_type -> livepeer.payments.v1.OpenSessionRequest
 	11, // 40: livepeer.payments.v1.PayeeDaemon.ProcessPayment:input_type -> livepeer.payments.v1.ProcessPaymentRequest
 	12, // 41: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:input_type -> livepeer.payments.v1.FundWholesaleAccountRequest
-	15, // 42: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:input_type -> livepeer.payments.v1.AdmitAuthorizationRequest
-	16, // 43: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:input_type -> livepeer.payments.v1.AdvanceAuthorizationRequest
-	19, // 44: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:input_type -> livepeer.payments.v1.SettleAuthorizationRequest
-	21, // 45: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:input_type -> livepeer.payments.v1.GetWholesaleAccountRequest
-	23, // 46: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:input_type -> livepeer.payments.v1.GetSpendAuthorizationRequest
-	25, // 47: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:input_type -> livepeer.payments.v1.CancelAuthorizationAdmissionRequest
-	27, // 48: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
-	29, // 49: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
-	31, // 50: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
-	33, // 51: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
-	35, // 52: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
-	37, // 53: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
-	39, // 54: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
-	41, // 55: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:input_type -> livepeer.payments.v1.FreezeRevenueSourceRequest
-	42, // 56: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:input_type -> livepeer.payments.v1.GetRevenueSourceStatusRequest
-	44, // 57: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:input_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
-	55, // 58: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
-	4,  // 59: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
-	6,  // 60: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
-	8,  // 61: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
-	10, // 62: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
-	14, // 63: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
-	13, // 64: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:output_type -> livepeer.payments.v1.FundWholesaleAccountResponse
-	18, // 65: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:output_type -> livepeer.payments.v1.AdmitAuthorizationResponse
-	17, // 66: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:output_type -> livepeer.payments.v1.AdvanceAuthorizationResponse
-	20, // 67: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:output_type -> livepeer.payments.v1.SettleAuthorizationResponse
-	22, // 68: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:output_type -> livepeer.payments.v1.GetWholesaleAccountResponse
-	24, // 69: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:output_type -> livepeer.payments.v1.GetSpendAuthorizationResponse
-	26, // 70: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:output_type -> livepeer.payments.v1.CancelAuthorizationAdmissionResponse
-	28, // 71: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
-	30, // 72: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
-	32, // 73: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
-	34, // 74: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
-	36, // 75: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
-	38, // 76: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
-	40, // 77: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
-	43, // 78: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:output_type -> livepeer.payments.v1.RevenueSourceStatus
-	43, // 79: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:output_type -> livepeer.payments.v1.RevenueSourceStatus
-	45, // 80: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:output_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
-	56, // 81: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
-	59, // [59:82] is the sub-list for method output_type
-	36, // [36:59] is the sub-list for method input_type
+	46, // 42: livepeer.payments.v1.PayeeDaemon.GetWholesaleFundingReceipt:input_type -> livepeer.payments.v1.GetWholesaleFundingReceiptRequest
+	15, // 43: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:input_type -> livepeer.payments.v1.AdmitAuthorizationRequest
+	16, // 44: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:input_type -> livepeer.payments.v1.AdvanceAuthorizationRequest
+	19, // 45: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:input_type -> livepeer.payments.v1.SettleAuthorizationRequest
+	21, // 46: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:input_type -> livepeer.payments.v1.GetWholesaleAccountRequest
+	23, // 47: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:input_type -> livepeer.payments.v1.GetSpendAuthorizationRequest
+	25, // 48: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:input_type -> livepeer.payments.v1.CancelAuthorizationAdmissionRequest
+	27, // 49: livepeer.payments.v1.PayeeDaemon.DebitBalance:input_type -> livepeer.payments.v1.DebitBalanceRequest
+	29, // 50: livepeer.payments.v1.PayeeDaemon.SufficientBalance:input_type -> livepeer.payments.v1.SufficientBalanceRequest
+	31, // 51: livepeer.payments.v1.PayeeDaemon.GetBalance:input_type -> livepeer.payments.v1.GetBalanceRequest
+	33, // 52: livepeer.payments.v1.PayeeDaemon.CloseSession:input_type -> livepeer.payments.v1.CloseSessionRequest
+	35, // 53: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:input_type -> livepeer.payments.v1.ListPendingRedemptionsRequest
+	37, // 54: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:input_type -> livepeer.payments.v1.GetRedemptionStatusRequest
+	39, // 55: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:input_type -> livepeer.payments.v1.GetRoundRevenueRequest
+	41, // 56: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:input_type -> livepeer.payments.v1.FreezeRevenueSourceRequest
+	42, // 57: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:input_type -> livepeer.payments.v1.GetRevenueSourceStatusRequest
+	44, // 58: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:input_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationRequest
+	56, // 59: livepeer.payments.v1.PayeeDaemon.Health:input_type -> livepeer.payments.v1.HealthRequest
+	4,  // 60: livepeer.payments.v1.PayeeDaemon.GetQuote:output_type -> livepeer.payments.v1.GetQuoteResponse
+	6,  // 61: livepeer.payments.v1.PayeeDaemon.GetTicketParams:output_type -> livepeer.payments.v1.GetTicketParamsResponse
+	8,  // 62: livepeer.payments.v1.PayeeDaemon.ListCapabilities:output_type -> livepeer.payments.v1.ListCapabilitiesResponse
+	10, // 63: livepeer.payments.v1.PayeeDaemon.OpenSession:output_type -> livepeer.payments.v1.OpenSessionResponse
+	14, // 64: livepeer.payments.v1.PayeeDaemon.ProcessPayment:output_type -> livepeer.payments.v1.ProcessPaymentResponse
+	13, // 65: livepeer.payments.v1.PayeeDaemon.FundWholesaleAccount:output_type -> livepeer.payments.v1.FundWholesaleAccountResponse
+	13, // 66: livepeer.payments.v1.PayeeDaemon.GetWholesaleFundingReceipt:output_type -> livepeer.payments.v1.FundWholesaleAccountResponse
+	18, // 67: livepeer.payments.v1.PayeeDaemon.AdmitAuthorization:output_type -> livepeer.payments.v1.AdmitAuthorizationResponse
+	17, // 68: livepeer.payments.v1.PayeeDaemon.AdvanceAuthorization:output_type -> livepeer.payments.v1.AdvanceAuthorizationResponse
+	20, // 69: livepeer.payments.v1.PayeeDaemon.SettleAuthorization:output_type -> livepeer.payments.v1.SettleAuthorizationResponse
+	22, // 70: livepeer.payments.v1.PayeeDaemon.GetWholesaleAccount:output_type -> livepeer.payments.v1.GetWholesaleAccountResponse
+	24, // 71: livepeer.payments.v1.PayeeDaemon.GetSpendAuthorization:output_type -> livepeer.payments.v1.GetSpendAuthorizationResponse
+	26, // 72: livepeer.payments.v1.PayeeDaemon.CancelAuthorizationAdmission:output_type -> livepeer.payments.v1.CancelAuthorizationAdmissionResponse
+	28, // 73: livepeer.payments.v1.PayeeDaemon.DebitBalance:output_type -> livepeer.payments.v1.DebitBalanceResponse
+	30, // 74: livepeer.payments.v1.PayeeDaemon.SufficientBalance:output_type -> livepeer.payments.v1.SufficientBalanceResponse
+	32, // 75: livepeer.payments.v1.PayeeDaemon.GetBalance:output_type -> livepeer.payments.v1.GetBalanceResponse
+	34, // 76: livepeer.payments.v1.PayeeDaemon.CloseSession:output_type -> livepeer.payments.v1.CloseSessionResponse
+	36, // 77: livepeer.payments.v1.PayeeDaemon.ListPendingRedemptions:output_type -> livepeer.payments.v1.ListPendingRedemptionsResponse
+	38, // 78: livepeer.payments.v1.PayeeDaemon.GetRedemptionStatus:output_type -> livepeer.payments.v1.GetRedemptionStatusResponse
+	40, // 79: livepeer.payments.v1.PayeeDaemon.GetRoundRevenue:output_type -> livepeer.payments.v1.GetRoundRevenueResponse
+	43, // 80: livepeer.payments.v1.PayeeDaemon.FreezeRevenueSource:output_type -> livepeer.payments.v1.RevenueSourceStatus
+	43, // 81: livepeer.payments.v1.PayeeDaemon.GetRevenueSourceStatus:output_type -> livepeer.payments.v1.RevenueSourceStatus
+	45, // 82: livepeer.payments.v1.PayeeDaemon.CloseUnexecutedAuthorization:output_type -> livepeer.payments.v1.CloseUnexecutedAuthorizationResponse
+	57, // 83: livepeer.payments.v1.PayeeDaemon.Health:output_type -> livepeer.payments.v1.HealthResponse
+	60, // [60:84] is the sub-list for method output_type
+	36, // [36:60] is the sub-list for method input_type
 	36, // [36:36] is the sub-list for extension type_name
 	36, // [36:36] is the sub-list for extension extendee
 	0,  // [0:36] is the sub-list for field type_name
@@ -3666,7 +3746,7 @@ func file_livepeer_payments_v1_payee_daemon_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_livepeer_payments_v1_payee_daemon_proto_rawDesc), len(file_livepeer_payments_v1_payee_daemon_proto_rawDesc)),
 			NumEnums:      3,
-			NumMessages:   43,
+			NumMessages:   44,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

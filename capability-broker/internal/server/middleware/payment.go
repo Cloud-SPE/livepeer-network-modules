@@ -13,7 +13,6 @@ import (
 	"math/big"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync/atomic"
 	"time"
 
@@ -23,8 +22,6 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/receipts"
 	paymentsv1 "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/crypto"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -242,23 +239,53 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 			return
 		}
 	}
+	life := JobLifecycleFrom(r.Context())
+	seed := &PendingDebit{ReservedValueWei: new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue()), WholesaleAccountID: p.GetWholesaleAccountId(), AuthorizationBytes: authBytes, Sender: p.GetPayer(), WorkID: p.GetAuthorizationId(), DebitSeq: 1, WorkUnitName: spec.WorkUnit, JobID: w.Header().Get(livepeerheader.JobID), RequestID: requestID}
+	if life != nil {
+		if err := life.Prepare(seed, topup); err != nil {
+			if errors.Is(err, ErrJobCapacity) {
+				w.Header().Set(livepeerheader.Backoff, "5")
+				livepeerheader.WriteError(w, 503, livepeerheader.ErrCapacityExhausted, "no runner capacity")
+				return
+			}
+			livepeerheader.WriteError(w, 503, livepeerheader.ErrAccountingPending, "could not persist admission intent")
+			return
+		}
+	}
 	admitted, err := account.AdmitAuthorization(r.Context(), payment.AdmitAuthorizationRequest{AuthorizationBytes: authBytes, PaymentBytes: topup, Reservation: new(big.Int).SetBytes(p.GetMaxDebitWei().GetValue())})
 	if err != nil {
-		// A transport error is ambiguous. Only this definitive receiver result
-		// establishes that this invocation never reached execution.
-		if status.Code(err) == codes.FailedPrecondition && strings.HasPrefix(status.Convert(err).Message(), "insufficient wholesale account balance:") {
+		if life != nil {
+			recoveryErr := life.Refused(r.Context(), err)
+			if errors.Is(recoveryErr, ErrJobNotAdmitted) {
+				code, errorCode := http.StatusUnauthorized, livepeerheader.ErrPaymentInvalid
+				if payment.AdmissionFailureReason(err) == "INSUFFICIENT_WHOLESALE_CREDIT" {
+					code, errorCode = http.StatusPaymentRequired, livepeerheader.ErrInsufficientBalance
+				}
+				livepeerheader.WriteError(w, code, errorCode, "authorization was not admitted")
+				return
+			}
+			livepeerheader.WriteError(w, 503, livepeerheader.ErrAccountingPending, "authorization admission requires reconciliation")
+			return
+		}
+		if payment.AdmissionRefused(err) {
 			recordAdmissionFailure(r.Context(), authBytes)
 		}
 		code, errCode := mapClientErr(err)
-		if status.Code(err) == codes.FailedPrecondition {
-			code, errCode = http.StatusPaymentRequired, livepeerheader.ErrInsufficientBalance
-		}
-		livepeerheader.WriteError(w, code, errCode, "admit authorization: "+err.Error())
+		livepeerheader.WriteError(w, code, errCode, "authorization admission failed")
 		return
 	}
 	if admitted == nil || admitted.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_ADMITTED) || admitted.Account == nil || !bytes.Equal(admitted.Account.Payer, p.GetPayer()) || admitted.Account.WholesaleAccountID != p.GetWholesaleAccountId() || admitted.Account.SettlementDomainID != p.GetSettlementDomainId() {
-		livepeerheader.WriteError(w, http.StatusInternalServerError, livepeerheader.ErrInternalError, "payment daemon returned an invalid account admission")
+		if life != nil {
+			_ = life.Refused(r.Context(), errors.New("invalid admission"))
+		}
+		livepeerheader.WriteError(w, 503, livepeerheader.ErrAccountingPending, "invalid admission result")
 		return
+	}
+	if life != nil {
+		if err := life.Admitted(admitted); err != nil {
+			livepeerheader.WriteError(w, 503, livepeerheader.ErrAccountingPending, "could not record admission")
+			return
+		}
 	}
 	state := &SessionState{}
 	state.SetReceiptMeta(ReceiptMeta{WorkID: p.GetAuthorizationId(), RequestID: requestID, CapabilityID: capability, OfferingID: offering, ExpectedMaxUnits: p.GetMaxTotalUnits()})
@@ -278,6 +305,15 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 	if billable > p.GetMaxTotalUnits() {
 		billable = p.GetMaxTotalUnits()
 	}
+	pending := &PendingDebit{WholesaleAccountID: p.GetWholesaleAccountId(), AuthorizationBytes: authBytes, Sender: p.GetPayer(), WorkID: p.GetAuthorizationId(), DebitSeq: 1, ActualUnits: billable, MeasuredUnits: actual, WorkUnitName: spec.WorkUnit, JobID: rec.Header().Get(livepeerheader.JobID), RequestID: requestID, ReservedValueWei: admitted.Reserved, AccountFundingWei: admitted.Credited, AccountVersion: admitted.Account.Version}
+	if life != nil {
+		if err := life.Settlement(pending, rec.statusCode); err != nil {
+			rec.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+			rec.Header().Del(livepeerheader.Settlement)
+			rec.Header().Set(livepeerheader.WorkUnits, "0")
+			return
+		}
+	}
 	settled, settleErr := account.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: p.GetWholesaleAccountId(), Payer: p.GetPayer(), AuthorizationID: p.GetAuthorizationId(), ActualUnits: billable, SettlementSeq: 1})
 	if settleErr == nil && (settled == nil || settled.State != int32(paymentsv1.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil) {
 		settleErr = errors.New("payment daemon returned invalid authorization settlement state")
@@ -293,9 +329,15 @@ func handleAccountAuthorizedJob(w http.ResponseWriter, r *http.Request, next htt
 	}
 	rec.Header().Set(livepeerheader.WorkUnits, strconv.FormatUint(actual, 10))
 	settlement := BuildAuthorizationSettlement(p, admitted.Reserved, settled.Billed, settled.Released, admitted.Credited, settled.Account.Version, actual, billable, rec.Header().Get(livepeerheader.JobID))
-	if encoded, err := encode(settlement); err == nil {
+	encodeResult := encode
+	if life != nil {
+		encodeResult = life.Complete
+	}
+	if encoded, err := encodeResult(settlement); err == nil {
 		rec.Header().Set(livepeerheader.Settlement, encoded)
 	} else {
+		rec.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+		rec.Header().Set(livepeerheader.WorkUnits, "0")
 		log.Printf("warning: authorization settlement encode failed: %v", err)
 	}
 	if receiptSink != nil && actual > 0 {

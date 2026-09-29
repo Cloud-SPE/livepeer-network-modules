@@ -21,6 +21,12 @@ concurrent-open refusal, no-queue semantics and resource ownership through
 restart and settlement. The broker's capacity regression tests consume it and
 exercise unary, multipart and streaming exchanges, including WebSocket streams.
 
+The [paid-job recovery fixture](fixtures/paid-job-recovery.json) pins durable
+admission, settlement and unknown-execution outcomes. The broker's real-receiver
+fault tests consume it, restart both ledgers, and check repeated lookup/replay and
+isolation of another account using the same payer and authorization ID. Run
+`make -C capability-broker test-revisions` from the repository root.
+
 ## Auto mode (default)
 
 Runs against the in-repo reference broker:

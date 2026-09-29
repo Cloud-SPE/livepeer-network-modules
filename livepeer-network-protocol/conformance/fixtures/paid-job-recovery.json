@@ -1,0 +1,33 @@
+{
+  "description": "Durable paid-job/v1 recovery under v3 account-scoped authorization; exercised against the real receiver by TestPaidJobRealReceiverRecovery.",
+  "scenarios": [
+    "lost_admission",
+    "unaccepted",
+    "lost_settlement",
+    "prepare_write",
+    "admitted_write",
+    "execution_write",
+    "usage_write",
+    "terminal_write",
+    "lost_funded_admission"
+  ],
+  "admission_intent": "sealed exact authorization and optional funding bytes persisted before receiver admission",
+  "known_unexecuted_admitted": "settle zero only when durable dispatch marker is absent and receiver confirms admission",
+  "ambiguous_admission": {
+    "http_status": 503,
+    "error": "accounting_pending",
+    "signed_evidence": false
+  },
+  "unknown_execution": {
+    "lookup_status": 202,
+    "outcome": "ADMITTED_OUTCOME_UNKNOWN",
+    "replay_status": 202,
+    "signed_evidence": false,
+    "rerun": false
+  },
+  "measured_units": 42,
+  "terminal_sequence": 1,
+  "terminal_replay": "byte-identical signed evidence across lookup, retry and restart",
+  "other_account": "same payer and authorization ID remains admitted, reserved=100, billed=0",
+  "funding_recovery": "Read existing exact-wire receipt only; missing receipt or unsupported RPC stays pending and never processes tickets"
+}

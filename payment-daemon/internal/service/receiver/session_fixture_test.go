@@ -16,6 +16,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/service/receiver"
 	"github.com/Cloud-SPE/livepeer-network-modules/payment-daemon/internal/store"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 )
 
 // Compiled by capability-broker/scripts/test-session-revisions.sh. Only fixture
@@ -48,7 +49,13 @@ func TestSessionReceiverFixture(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			digest := sha256.Sum256([]byte(accountID))
+			// Synthetic treasury receipt, also readable through the public recovery
+			// RPC. No test bypasses validation to submit a new funding ticket.
+			wire, err := proto.MarshalOptions{Deterministic: true}.Marshal(&pb.Payment{Sender: payer, TicketParams: &pb.TicketParams{Recipient: payee, RecipientRandHash: []byte(accountID)}, TicketSenderParams: []*pb.TicketSenderParams{{SenderNonce: 1}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			digest := sha256.Sum256(wire)
 			if _, _, err = st.ApplyWholesaleFunding(payer, payee, accountID, work, hex.EncodeToString(digest[:]), []store.FundingTicket{{Nonce: 1, Credit: big.NewInt(1_000_000_000_000_000)}}, time.Now()); err != nil {
 				t.Fatal(err)
 			}

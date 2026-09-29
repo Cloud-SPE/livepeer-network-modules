@@ -41,6 +41,7 @@ const (
 	PayeeDaemon_OpenSession_FullMethodName                  = "/livepeer.payments.v1.PayeeDaemon/OpenSession"
 	PayeeDaemon_ProcessPayment_FullMethodName               = "/livepeer.payments.v1.PayeeDaemon/ProcessPayment"
 	PayeeDaemon_FundWholesaleAccount_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/FundWholesaleAccount"
+	PayeeDaemon_GetWholesaleFundingReceipt_FullMethodName   = "/livepeer.payments.v1.PayeeDaemon/GetWholesaleFundingReceipt"
 	PayeeDaemon_AdmitAuthorization_FullMethodName           = "/livepeer.payments.v1.PayeeDaemon/AdmitAuthorization"
 	PayeeDaemon_AdvanceAuthorization_FullMethodName         = "/livepeer.payments.v1.PayeeDaemon/AdvanceAuthorization"
 	PayeeDaemon_SettleAuthorization_FullMethodName          = "/livepeer.payments.v1.PayeeDaemon/SettleAuthorization"
@@ -96,6 +97,10 @@ type PayeeDaemonClient interface {
 	// admitting work. This lets an out-of-path payer replenish aggregate float
 	// independently of the caller or SDK that invokes a live session.
 	FundWholesaleAccount(ctx context.Context, in *FundWholesaleAccountRequest, opts ...grpc.CallOption) (*FundWholesaleAccountResponse, error)
+	// Read-only recovery of an exact funding receipt. Never validates/processes
+	// tickets or creates credit. NotFound means no receipt, not authority to fund.
+	// Available while new source admission/funding is frozen.
+	GetWholesaleFundingReceipt(ctx context.Context, in *GetWholesaleFundingReceiptRequest, opts ...grpc.CallOption) (*FundWholesaleAccountResponse, error)
 	// Apply optional account funding and atomically reserve a single-purpose
 	// authorization before backend work starts.
 	AdmitAuthorization(ctx context.Context, in *AdmitAuthorizationRequest, opts ...grpc.CallOption) (*AdmitAuthorizationResponse, error)
@@ -210,6 +215,16 @@ func (c *payeeDaemonClient) FundWholesaleAccount(ctx context.Context, in *FundWh
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(FundWholesaleAccountResponse)
 	err := c.cc.Invoke(ctx, PayeeDaemon_FundWholesaleAccount_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *payeeDaemonClient) GetWholesaleFundingReceipt(ctx context.Context, in *GetWholesaleFundingReceiptRequest, opts ...grpc.CallOption) (*FundWholesaleAccountResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(FundWholesaleAccountResponse)
+	err := c.cc.Invoke(ctx, PayeeDaemon_GetWholesaleFundingReceipt_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -422,6 +437,10 @@ type PayeeDaemonServer interface {
 	// admitting work. This lets an out-of-path payer replenish aggregate float
 	// independently of the caller or SDK that invokes a live session.
 	FundWholesaleAccount(context.Context, *FundWholesaleAccountRequest) (*FundWholesaleAccountResponse, error)
+	// Read-only recovery of an exact funding receipt. Never validates/processes
+	// tickets or creates credit. NotFound means no receipt, not authority to fund.
+	// Available while new source admission/funding is frozen.
+	GetWholesaleFundingReceipt(context.Context, *GetWholesaleFundingReceiptRequest) (*FundWholesaleAccountResponse, error)
 	// Apply optional account funding and atomically reserve a single-purpose
 	// authorization before backend work starts.
 	AdmitAuthorization(context.Context, *AdmitAuthorizationRequest) (*AdmitAuthorizationResponse, error)
@@ -499,6 +518,9 @@ func (UnimplementedPayeeDaemonServer) ProcessPayment(context.Context, *ProcessPa
 }
 func (UnimplementedPayeeDaemonServer) FundWholesaleAccount(context.Context, *FundWholesaleAccountRequest) (*FundWholesaleAccountResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method FundWholesaleAccount not implemented")
+}
+func (UnimplementedPayeeDaemonServer) GetWholesaleFundingReceipt(context.Context, *GetWholesaleFundingReceiptRequest) (*FundWholesaleAccountResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetWholesaleFundingReceipt not implemented")
 }
 func (UnimplementedPayeeDaemonServer) AdmitAuthorization(context.Context, *AdmitAuthorizationRequest) (*AdmitAuthorizationResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AdmitAuthorization not implemented")
@@ -676,6 +698,24 @@ func _PayeeDaemon_FundWholesaleAccount_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(PayeeDaemonServer).FundWholesaleAccount(ctx, req.(*FundWholesaleAccountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _PayeeDaemon_GetWholesaleFundingReceipt_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetWholesaleFundingReceiptRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(PayeeDaemonServer).GetWholesaleFundingReceipt(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: PayeeDaemon_GetWholesaleFundingReceipt_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(PayeeDaemonServer).GetWholesaleFundingReceipt(ctx, req.(*GetWholesaleFundingReceiptRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1016,6 +1056,10 @@ var PayeeDaemon_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "FundWholesaleAccount",
 			Handler:    _PayeeDaemon_FundWholesaleAccount_Handler,
+		},
+		{
+			MethodName: "GetWholesaleFundingReceipt",
+			Handler:    _PayeeDaemon_GetWholesaleFundingReceipt_Handler,
 		},
 		{
 			MethodName: "AdmitAuthorization",

@@ -18,7 +18,18 @@
     "one_stopped_settlement_pending": 1,
     "all_stopped": 0
   },
-  "job_transports": ["unary", "multipart", "stream"],
+  "job_transports": [
+    "unary",
+    "multipart",
+    "stream"
+  ],
   "unknown_create_outcome": "retain_opening_reservation_and_slot",
-  "stopped_settlement_pending": "free_slot_withhold_terminal_settlement"
+  "stopped_settlement_pending": "free_slot_withhold_terminal_settlement",
+  "job_broker_capacity_refusal": {
+    "status": 503,
+    "error": "capacity_exhausted",
+    "receiver_admissions": 0,
+    "runner_invocations": 0,
+    "signed_settlement": false
+  }
 }

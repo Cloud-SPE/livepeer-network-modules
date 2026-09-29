@@ -23,6 +23,7 @@ const (
 // state. Started only when the broker has both a durable job store and
 // a payment client.
 func (s *Server) runDebitRetry(ctx context.Context) {
+	s.sweepPendingDebits(ctx)
 	t := time.NewTicker(debitRetryInterval)
 	defer t.Stop()
 	for {
@@ -36,13 +37,32 @@ func (s *Server) runDebitRetry(ctx context.Context) {
 }
 
 func (s *Server) sweepPendingDebits(ctx context.Context) {
+	s.jobRecoveryMu.Lock()
+	defer s.jobRecoveryMu.Unlock()
 	now := time.Now().UTC()
+	recoverable, scanErr := s.sessionStore.RecoverableJobs()
+	if scanErr != nil {
+		log.Printf("warning: job recovery scan: %v", scanErr)
+		return
+	}
+	for _, r := range recoverable {
+		if _, active := s.activeJobs.Load(r.RequestID); active {
+			continue
+		}
+		if err := s.recoverJobAdmission(ctx, r); err != nil {
+			log.Printf("job recovery pending request_id=%s: %v", r.RequestID, err)
+		}
+	}
+
 	due, err := s.sessionStore.DuePendingDebits(now, debitRetryBatch)
 	if err != nil {
 		log.Printf("warning: pending debit scan failed: %v", err)
 		return
 	}
 	for _, rec := range due {
+		if _, active := s.activeJobs.Load(rec.RequestID); active {
+			continue
+		}
 		select {
 		case <-ctx.Done():
 			return
@@ -53,6 +73,8 @@ func (s *Server) sweepPendingDebits(ctx context.Context) {
 }
 
 func (s *Server) retryOneDebit(ctx context.Context, rec *sessionstore.JobRecord, now time.Time) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	pd := rec.Pending
 	if pd == nil {
 		return
@@ -63,19 +85,19 @@ func (s *Server) retryOneDebit(ctx context.Context, rec *sessionstore.JobRecord,
 	// after delivered work or strands reusable payer credit.
 	ac, ok := s.payment.(payment.AccountClient)
 	if !ok {
-		_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "wholesale account extension unavailable")
+		_ = s.recordJobRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "wholesale account extension unavailable")
 		return
 	}
 	settled, err := ac.SettleAuthorization(ctx, payment.SettleAuthorizationRequest{WholesaleAccountID: pd.WholesaleAccountID, Payer: pd.Sender, AuthorizationID: pd.WorkID, ActualUnits: pd.ActualUnits, SettlementSeq: pd.DebitSeq})
 	if err != nil {
-		if rerr := s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), err.Error()); rerr != nil {
+		if rerr := s.recordJobRetryFailure(rec.RequestID, now.Add(debitRetryInterval), err.Error()); rerr != nil {
 			log.Printf("warning: recording debit retry failure failed request_id=%s: %v",
 				rec.RequestID, rerr)
 		}
 		return
 	}
 	if settled == nil || settled.State != int32(pb.SpendAuthorizationState_SPEND_AUTHORIZATION_SETTLED) || settled.Account == nil {
-		_ = s.sessionStore.RecordDebitRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "payment daemon returned invalid authorization settlement state")
+		_ = s.recordJobRetryFailure(rec.RequestID, now.Add(debitRetryInterval), "payment daemon returned invalid authorization settlement state")
 		return
 	}
 	s.settlePendingAccount(rec, settled)
@@ -107,6 +129,12 @@ func (s *Server) settlePendingAccount(rec *sessionstore.JobRecord, res *payment.
 		measured = pd.ActualUnits
 	}
 	set := middleware.BuildAuthorizationSettlement(auth.GetPayload(), reserved, res.Billed, res.Released, funding, version, measured, pd.ActualUnits, pd.JobID)
+	if rec.Recovery != nil {
+		if _, err := s.completeJobSettlement(rec.RequestID, set); err != nil {
+			log.Printf("persist job settlement request_id=%s: %v", rec.RequestID, err)
+		}
+		return
+	}
 	encoded, err := settlement.Encode(set, s.settlementSigner)
 	if err != nil {
 		log.Printf("warning: encode account settlement request_id=%s: %v", rec.RequestID, err)
@@ -115,4 +143,21 @@ func (s *Server) settlePendingAccount(rec *sessionstore.JobRecord, res *payment.
 	if err := s.sessionStore.SettleJobWithUnits(rec.RequestID, pd.ActualUnits, encoded); err != nil {
 		log.Printf("warning: persist account settlement request_id=%s: %v", rec.RequestID, err)
 	}
+}
+
+func (s *Server) recordJobRetryFailure(id string, next time.Time, cause string) error {
+	return s.jobIdem.UpdateJob(id, func(r *sessionstore.JobRecord) error {
+		if r.Pending == nil {
+			return sessionstore.ErrNotFound
+		}
+		cp := *r.Pending
+		cp.Attempts++
+		cp.NextAttemptAt = next
+		cp.LastError = cause
+		if cp.FirstFailedAt.IsZero() {
+			cp.FirstFailedAt = time.Now().UTC()
+		}
+		r.Pending = &cp
+		return nil
+	})
 }

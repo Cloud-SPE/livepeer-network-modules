@@ -205,6 +205,13 @@ func (s *Server) writeExchangeState(w http.ResponseWriter, rec *sessionstore.Job
 		writeJSON(w, http.StatusAccepted, body)
 	default:
 		body["outcome"] = "IN_FLIGHT"
+		if _, active := s.activeJobs.Load(rec.RequestID); !active && rec.Recovery != nil {
+			body["outcome"] = "ACCOUNTING_PENDING"
+			if rec.Recovery.ExecutionStarted && !rec.Recovery.UsageRecorded {
+				body["outcome"] = "ADMITTED_OUTCOME_UNKNOWN"
+			}
+			w.Header().Set(livepeerheader.Error, livepeerheader.ErrAccountingPending)
+		}
 		if !rec.Deadline.IsZero() {
 			body["deadline"] = rec.Deadline.Format(time.RFC3339Nano)
 		}

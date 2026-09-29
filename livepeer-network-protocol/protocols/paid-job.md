@@ -1,8 +1,8 @@
 ---
 spec_name: paid-job
-version: 1.3.0-draft
+version: 1.4.0-draft
 status: draft
-last_updated: 2026-09-13
+last_updated: 2026-09-26
 ---
 
 # Protocol: `paid-job/v1`
@@ -141,6 +141,21 @@ the signed maximum. It atomically:
 - marks the authorization terminal; and
 - returns the resulting account version.
 
+Before receiver admission, the broker MUST reserve a runner slot and durably
+seal the exact signed authorization, optional funding bytes and account scope.
+It MUST durably record dispatch intent before calling the runner, then record
+measured usage and the exact settlement inputs before calling
+`SettleAuthorization`. A local persistence failure MUST prevent the next side
+effect. Recovery MUST preserve the signed accepted price.
+
+After an uncertain admission, the broker MUST reconcile using the receiver's
+atomic admission cancellation/status operation. Only confirmed unused fencing
+establishes non-admission. A confirmed admission with no durable dispatch intent
+can settle zero; a dispatch intent without durable measured usage is an unknown
+execution outcome. It MUST remain pending, never be rerun or become zero-use
+evidence merely because a deadline or retention window elapsed. The exchange
+lookup reports `202 ADMITTED_OUTCOME_UNKNOWN` until execution is reconciled.
+
 If settlement is temporarily unavailable after output was delivered, the
 exchange is `accounting_pending`. The broker MUST durably retry the same
 authorization settlement until it reaches the daemon's recorded result.
@@ -155,6 +170,11 @@ The signed `SettlementRecord` MUST preserve:
   quantities;
 - authorization ID, caller request ID, broker job ID, and account version;
 - issuance time and terminal outcome.
+
+Terminal jobs use settlement sequence `1`. The complete signed envelope MUST be
+persisted before publication; repeated response/lookup/restart replay returns
+those same bytes. Read-only `GetWholesaleFundingReceipt` may recover admission metadata;
+recovery MUST NOT construct a new funding request or spend another ticket.
 
 For a job, `work_id` carries the authorization ID for wire compatibility; it
 is not a recipient-random ticket-session identity.
@@ -196,6 +216,12 @@ The broker fails closed before runner execution for:
 
 Malformed optional funding MUST fail the whole admission without losing an
 already-recorded idempotent credit.
+
+A broker-local full runner pool MUST return `503 capacity_exhausted` with
+`Livepeer-Backoff` before receiver admission or runner execution. This refusal
+has no settlement. It retains the request identity and does not enqueue work;
+replay must not retry admission under that identity. A signed non-admission
+still requires the scoped expiry/fencing proof contract.
 
 A runner response of `429` with `error: capacity_reached` means no workload
 execution began. The broker MUST normalize it to `503 capacity_exhausted` with
@@ -241,6 +267,7 @@ Conformance covers:
 
 | Version | Date | Change |
 |---|---|---|
+| 1.4.0-draft | 2026-09-26 | Requires pre-admission capacity, sealed pre-RPC intents, conservative execution recovery and durable stable terminal job evidence. |
 | 1.3.0-draft | 2026-09-13 | Defines runner capacity refusal after authorization admission as public 503 plus a durable signed zero-use settlement. |
 | 1.2.0-draft | 2026-09-11 | Makes single-purpose spend authorization and stable wholesale-account settlement the only paid-job path. Tickets are funding instruments only; payment-only workload admission and bounded debit write-off are removed. |
 | 1.1.0-draft | 2026-08-21 | Added durable settlement lookup, request binding, and non-admission evidence. |

@@ -623,6 +623,13 @@ Every paid workload reaches one of the account RPCs:
 - `SettleAuthorization` commits terminal actual usage and releases unused
   reservation.
 - `FundWholesaleAccount` credits aggregate float without admitting work.
+- `GetWholesaleFundingReceipt` reads an existing receipt by payer, account,
+  settlement domain and the lowercase hex SHA-256 of the exact original funding
+  bytes. It never processes tickets, creates credit or changes account state;
+  it remains available while new source admission is frozen. `NotFound` means
+  missing evidence, not permission to fund again. Upgrade receivers before brokers
+  that use this RPC for uncertain paid-job admission recovery; older receivers
+  leave that recovery pending with `Unimplemented`.
 
 The broker has no interim-debit CLI flags and never invokes
 `DebitBalance`, `SufficientBalance`, or `CloseSession` for workload

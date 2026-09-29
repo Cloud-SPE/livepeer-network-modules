@@ -807,5 +807,5 @@ func (m *Mock) CancelAuthorizationAdmission(_ context.Context, wire []byte) (*Ca
 		return nil, errors.New("authorization fingerprint mismatch")
 	}
 	m.canceledAdmissions[key] = fp[:]
-	return &CanceledAdmission{Canceled: true}, nil
+	return &CanceledAdmission{Canceled: true, Account: cloneWholesaleAccount(m.mockAccountLocked(p.GetPayer(), p.GetPayee(), p.GetWholesaleAccountId()))}, nil
 }

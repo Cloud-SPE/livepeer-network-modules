@@ -21,6 +21,7 @@ import (
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/sessionstore"
 	pb "github.com/Cloud-SPE/livepeer-network-modules/livepeer-network-protocol/proto-go/livepeer/payments/v1"
 	"github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
@@ -39,7 +40,14 @@ func (p *refusingAdmission) AdmitAuthorization(context.Context, payment.AdmitAut
 	if p.ambiguous {
 		return nil, status.Error(codes.Unavailable, "connection lost")
 	}
-	return nil, status.Error(codes.FailedPrecondition, "insufficient wholesale account balance: available=0 required=100")
+	st, _ := status.New(codes.FailedPrecondition, "receiver refuses admission").WithDetails(&errdetails.ErrorInfo{Domain: "payments.livepeer.org", Reason: "INSUFFICIENT_WHOLESALE_CREDIT"})
+	return nil, st.Err()
+}
+func (p *refusingAdmission) CancelAuthorizationAdmission(ctx context.Context, wire []byte) (*payment.CanceledAdmission, error) {
+	if p.ambiguous {
+		return nil, status.Error(codes.Unavailable, "receiver recovery unavailable")
+	}
+	return p.Mock.CancelAuthorizationAdmission(ctx, wire)
 }
 func (p *refusingAdmission) CloseUnexecutedAuthorization(_ context.Context, payer []byte, id, reason string, wholesaleAccountID string) error {
 	p.fences.Add(1)

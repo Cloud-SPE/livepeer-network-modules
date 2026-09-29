@@ -60,6 +60,10 @@ service PayeeDaemon {
   // admitting work. This lets an out-of-path payer replenish aggregate float
   // independently of the caller or SDK that invokes a live session.
   rpc FundWholesaleAccount(FundWholesaleAccountRequest) returns (FundWholesaleAccountResponse);
+  // Read-only recovery of an exact funding receipt. Never validates/processes
+  // tickets or creates credit. NotFound means no receipt, not authority to fund.
+  // Available while new source admission/funding is frozen.
+  rpc GetWholesaleFundingReceipt(GetWholesaleFundingReceiptRequest) returns (FundWholesaleAccountResponse);
 
   // Apply optional account funding and atomically reserve a single-purpose
   // authorization before backend work starts.
@@ -620,4 +624,13 @@ message CloseUnexecutedAuthorizationResponse {
  string wholesale_account_id = 3;
  string settlement_domain_id = 1;
  bool fenced = 2;
+}
+
+// funding_id is the lowercase hex SHA-256 of the exact original Payment bytes.
+// The payer, receiver settlement domain and account bind the receipt lookup.
+message GetWholesaleFundingReceiptRequest {
+  bytes payer = 1;
+  string settlement_domain_id = 2;
+  string wholesale_account_id = 3;
+  string funding_id = 4;
 }

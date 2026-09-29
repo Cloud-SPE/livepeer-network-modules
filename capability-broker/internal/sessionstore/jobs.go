@@ -27,7 +27,7 @@ const (
 	JobInFlight        = "in_flight"
 	JobTerminal        = "terminal"
 	JobPaymentRejected = "payment_rejected"
-	// JobAccountingPending: the work was delivered and the exchange is
+	// JobAccountingPending: usage is durably recorded and the exchange is
 	// over, but its debit has not landed and is being retried. It is
 	// deliberately NOT terminal — a terminal record asserts the
 	// accounting is settled, and reporting that while a debit is still
@@ -52,10 +52,13 @@ var ErrRequestIDReuse = errors.New("sessionstore: request id reused with differe
 
 // JobRecord is the durable idempotency record for one exchange.
 type JobRecord struct {
-	RejectedAuthorization []byte `json:"rejected_authorization,omitempty"`
-	RequestID             string `json:"request_id"`
-	JobID                 string `json:"job_id"`
-	Fingerprint           []byte `json:"fingerprint"`
+	AdmissionFailureReason string       `json:"admission_failure_reason,omitempty"`
+	Recovery               *JobRecovery `json:"-"`
+	RecoverySealed         []byte       `json:"recovery_sealed,omitempty"`
+	RejectedAuthorization  []byte       `json:"rejected_authorization,omitempty"`
+	RequestID              string       `json:"request_id"`
+	JobID                  string       `json:"job_id"`
+	Fingerprint            []byte       `json:"fingerprint"`
 	// BodyDigest is sha256 of the request body, recorded when the
 	// exchange finishes. The envelope fingerprint above is known before
 	// the body has streamed; this is the half that can only be known
@@ -80,8 +83,8 @@ type JobRecord struct {
 	Pending *PendingDebit `json:"pending,omitempty"`
 }
 
-// PendingDebit is an authorization settlement whose daemon response was
-// uncertain. Retrying the same authorization id and settlement sequence is
+// PendingDebit is a durable authorization settlement intent, written before
+// calling the daemon. Its response may be uncertain. Retrying the same authorization id and settlement sequence is
 // idempotent, so the reservation remains encumbered until reconciliation.
 type PendingDebit struct {
 	WholesaleAccountID string `json:"wholesale_account_id,omitempty"`
@@ -120,7 +123,7 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 		}
 		if raw := b.Get([]byte(requestID)); raw != nil {
 			var existing JobRecord
-			if e := json.Unmarshal(raw, &existing); e != nil {
+			if e := s.decodeJob(raw, &existing); e != nil {
 				return e
 			}
 			if !bytes.Equal(existing.Fingerprint, fingerprint) {
@@ -166,7 +169,7 @@ func (s *Store) JobBegin(requestID string, fingerprint []byte, jobID string, dea
 			Deadline:    deadline,
 			CreatedAt:   time.Now().UTC(),
 		}
-		raw, e := json.Marshal(&fresh)
+		raw, e := s.encodeJob(&fresh)
 		if e != nil {
 			return e
 		}
@@ -209,7 +212,7 @@ func (s *Store) JobByID(jobID string) (*JobRecord, error) {
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+		if err := s.decodeJob(raw, &rec); err != nil {
 			return err
 		}
 		out = &rec
@@ -235,7 +238,7 @@ func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit s
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+		if err := s.decodeJob(raw, &rec); err != nil {
 			return err
 		}
 		rec.State = JobTerminal
@@ -245,7 +248,7 @@ func (s *Store) JobFinish(requestID string, status int, workUnits uint64, unit s
 		rec.BodyDigest = bytes.Clone(bodyDigest)
 		rec.Settlement = settlement
 		rec.EndedAt = time.Now().UTC()
-		out, err := json.Marshal(&rec)
+		out, err := s.encodeJob(&rec)
 		if err != nil {
 			return err
 		}
@@ -272,7 +275,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 		var abandon [][]byte
 		if err := b.ForEach(func(k, raw []byte) error {
 			var rec JobRecord
-			if err := json.Unmarshal(raw, &rec); err != nil {
+			if err := s.decodeJob(raw, &rec); err != nil {
 				return err
 			}
 			switch rec.State {
@@ -281,6 +284,8 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 					evict = append(evict, bytes.Clone(k))
 				}
 			case JobInFlight:
+				// Recovery intents remain pending until authoritative reconciliation.
+				// Legacy records without intents retain the old abandoned behavior.
 				// NOT evicted. An in-flight record past its deadline is
 				// a crash leftover, and deleting it destroys the only
 				// detailed evidence that the exchange was admitted —
@@ -297,7 +302,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 				// job_in_flight for days. Closeout is about the
 				// exchange's own deadline; retention is about how long
 				// its record is kept, and they are different clocks.
-				if rec.Deadline.Before(now) {
+				if rec.Recovery == nil && rec.Deadline.Before(now) {
 					abandon = append(abandon, bytes.Clone(k))
 				}
 			case JobAbandoned:
@@ -324,12 +329,12 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 				continue
 			}
 			var rec JobRecord
-			if uerr := json.Unmarshal(raw, &rec); uerr != nil {
+			if uerr := s.decodeJob(raw, &rec); uerr != nil {
 				continue
 			}
 			rec.State = JobAbandoned
 			rec.EndedAt = time.Now().UTC()
-			out, merr := json.Marshal(&rec)
+			out, merr := s.encodeJob(&rec)
 			if merr != nil {
 				continue
 			}
@@ -342,7 +347,7 @@ func (s *Store) EvictJobs(cutoff time.Time) (int, error) {
 		for _, k := range evict {
 			if raw := b.Get(k); raw != nil && idx != nil {
 				var rec JobRecord
-				if err := json.Unmarshal(raw, &rec); err == nil && rec.JobID != "" {
+				if err := s.decodeJob(raw, &rec); err == nil && rec.JobID != "" {
 					// The index outliving its record would answer a
 					// query with "unknown" instead of "expired".
 					_ = idx.Delete([]byte(rec.JobID))
@@ -377,7 +382,7 @@ func (s *Store) JobFinishPendingAccounting(requestID string, status int, workUni
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+		if err := s.decodeJob(raw, &rec); err != nil {
 			return err
 		}
 		rec.State = JobAccountingPending
@@ -387,7 +392,7 @@ func (s *Store) JobFinishPendingAccounting(requestID string, status int, workUni
 		rec.BodyDigest = bytes.Clone(bodyDigest)
 		rec.EndedAt = time.Now().UTC()
 		rec.Pending = pending
-		out, err := json.Marshal(&rec)
+		out, err := s.encodeJob(&rec)
 		if err != nil {
 			return err
 		}
@@ -409,7 +414,7 @@ func (s *Store) DuePendingDebits(now time.Time, limit int) ([]*JobRecord, error)
 				return nil
 			}
 			var rec JobRecord
-			if err := json.Unmarshal(raw, &rec); err != nil {
+			if err := s.decodeJob(raw, &rec); err != nil {
 				return nil // a record we cannot read is not due
 			}
 			if rec.State != JobAccountingPending || rec.Pending == nil {
@@ -485,13 +490,13 @@ func (s *Store) mutateJob(requestID string, fn func(*JobRecord) error) error {
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+		if err := s.decodeJob(raw, &rec); err != nil {
 			return err
 		}
 		if err := fn(&rec); err != nil {
 			return err
 		}
-		out, err := json.Marshal(&rec)
+		out, err := s.encodeJob(&rec)
 		if err != nil {
 			return err
 		}
@@ -517,7 +522,7 @@ func (s *Store) JobByRequestID(requestID string) (*JobRecord, error) {
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(raw, &rec); err != nil {
+		if err := s.decodeJob(raw, &rec); err != nil {
 			return err
 		}
 		out = &rec
@@ -539,7 +544,7 @@ func (s *Store) JobFinishPaymentRejected(id string, status int, digest, authoriz
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(b.Get([]byte(id)), &rec); err != nil {
+		if err := s.decodeJob(b.Get([]byte(id)), &rec); err != nil {
 			return err
 		}
 		if rec.State != JobInFlight || len(authorization) == 0 {
@@ -550,7 +555,7 @@ func (s *Store) JobFinishPaymentRejected(id string, status int, digest, authoriz
 		rec.BodyDigest = bytes.Clone(digest)
 		rec.RejectedAuthorization = bytes.Clone(authorization)
 		rec.EndedAt = time.Now().UTC()
-		raw, err := json.Marshal(&rec)
+		raw, err := s.encodeJob(&rec)
 		if err != nil {
 			return err
 		}
@@ -567,7 +572,7 @@ func (s *Store) RecordRejectedNonAdmission(id string, authorization []byte, enve
 			return ErrNotFound
 		}
 		var rec JobRecord
-		if err := json.Unmarshal(jobs.Get([]byte(id)), &rec); err != nil {
+		if err := s.decodeJob(jobs.Get([]byte(id)), &rec); err != nil {
 			return err
 		}
 		if rec.State != JobPaymentRejected || !bytes.Equal(rec.RejectedAuthorization, authorization) || len(authorization) == 0 || rec.WorkUnits != 0 || rec.Settlement != "" || rec.Pending != nil {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/config"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/livepeerheader"
+	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/payment"
 	"github.com/Cloud-SPE/livepeer-network-modules/capability-broker/internal/workerconn"
 )
 
@@ -40,7 +41,8 @@ func testPaidWSStream(t *testing.T, interrupted bool) {
 	if interrupted {
 		fixture.Chunks[1] = strings.ReplaceAll(fixture.Chunks[1], "data: [DONE]\n\n", "")
 	}
-	ts, s := newJobOfferBrokerBare(t, nil, "", func(c *config.Config) { c.Offers[0].Capacity.MaxInFlight = 1 })
+	receiver := &countJobAdmissions{Mock: payment.NewMock()}
+	ts, s := newJobOfferBrokerBare(t, receiver, "", func(c *config.Config) { c.Offers[0].Capacity.MaxInFlight = 1 })
 	_, enr, _ := adminReq(t, s, http.MethodPost, "/admin/v1/enroll", `{"host_id":"stream-host"}`, nil)
 	token := enr["credential"].(map[string]any)["token"].(string)
 	conn := dialAttach(t, ts)
@@ -133,6 +135,9 @@ func testPaidWSStream(t *testing.T, interrupted bool) {
 		t.Fatalf("stream occupancy=%d", got)
 	}
 	blocked := jobReq(t, ts, "stream-at-capacity", "text/event-stream")
+	if receiver.calls.Load() != 1 {
+		t.Fatal("capacity refusal reached payment admission")
+	}
 	blocked.Body.Close()
 	if blocked.StatusCode != 503 || blocked.Header.Get(livepeerheader.Backoff) == "" {
 		t.Fatalf("at capacity: %d %v", blocked.StatusCode, blocked.Header)
